@@ -1,0 +1,18 @@
+[package]
+name = "trading-engine"
+version = "0.1.0"
+edition = "2021"
+authors = ["Samuel Tosin"]
+description = "High-performance technical indicators engine via gRPC"
+
+[dependencies]
+tokio = { version = "1.35", features = ["full"] }
+tonic = "0.10"
+prost = "0.12"
+
+[build-dependencies]
+tonic-build = "0.10"
+
+[[bin]]
+name = "trading-engine"
+path = "src/main.rs"

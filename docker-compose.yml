@@ -1,0 +1,119 @@
+version: '3.8'
+
+services:
+  # postgresql with timescaledb extension for time-series data
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    container_name: trading-bot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-trading_bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trading_bot_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-trading_bot}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trading_bot} -d ${POSTGRES_DB:-trading_bot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - trading-bot-network
+
+  # redis for caching, rate limiting, and pub/sub
+  redis:
+    image: redis:7-alpine
+    container_name: trading-bot-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_secret}
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_secret}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - trading-bot-network
+
+  # go bot - main orchestrator
+  go-bot:
+    build:
+      context: ./go-bot
+      dockerfile: Dockerfile
+    container_name: trading-bot-go
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-trading_bot}:${POSTGRES_PASSWORD:-trading_bot_secret}@postgres:5432/${POSTGRES_DB:-trading_bot}?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379/0
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
+      - BINANCE_TESTNET=${BINANCE_TESTNET:-true}
+      - MASTER_ENCRYPTION_KEY=${MASTER_ENCRYPTION_KEY}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    ports:
+      - "${GO_BOT_PORT:-8080}:8080"
+    networks:
+      - trading-bot-network
+    profiles:
+      - full
+
+  # rust engine - technical indicators via grpc 
+  rust-engine:
+    build:
+      context: ./rust-engine
+      dockerfile: Dockerfile
+    container_name: trading-bot-rust
+    restart: unless-stopped
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+      - GRPC_PORT=50051
+    ports:
+      - "${RUST_GRPC_PORT:-50051}:50051"
+    networks:
+      - trading-bot-network
+    profiles:
+      - full
+
+  # python ml service - lstm predictions + sentiment
+  ml-service:
+    build:
+      context: ./ml-service
+      dockerfile: Dockerfile
+    container_name: trading-bot-ml
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MODEL_PATH=/app/models
+      - API_PORT=8000
+    ports:
+      - "${ML_SERVICE_PORT:-8000}:8000"
+    volumes:
+      - ml_models:/app/models
+    networks:
+      - trading-bot-network
+    profiles:
+      - full
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  ml_models:
+    driver: local
+
+networks:
+  trading-bot-network:
+    driver: bridge

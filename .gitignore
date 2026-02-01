@@ -1,0 +1,124 @@
+
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+secrets/
+credentials/
+
+# go
+go-bot/bot
+go-bot/trading-bot
+go-bot/*.exe
+go-bot/bin/
+go-bot/vendor/
+go-bot/coverage.out
+go-bot/coverage.html
+
+# rust
+rust-engine/target/
+rust-engine/Cargo.lock
+rust-engine/*.rs.bk
+rust-engine/**/*.rs.bk
+**/*.rs.bk
+
+# python
+ml-service/__pycache__/
+ml-service/**/__pycache__/
+ml-service/*.py[cod]
+ml-service/*$py.class
+ml-service/.Python
+ml-service/venv/
+ml-service/.venv/
+ml-service/env/
+ml-service/.env/
+ml-service/ENV/
+ml-service/pip-log.txt
+ml-service/pip-delete-this-directory.txt
+*.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+venv/
+.venv/
+ENV/
+env/
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
+
+# ml models
+ml-service/models/*.h5
+ml-service/models/*.pkl
+ml-service/models/*.pt
+ml-service/models/*.pth
+ml-service/models/*.onnx
+ml-service/models/*.joblib
+*.h5
+*.pkl
+*.pt
+*.pth
+*.onnx
+*.joblib
+!ml-service/models/.gitkeep
+
+# docker
+.docker/
+
+# database
+*.sql.gz
+*.dump
+backups/
+*.sqlite3
+*.db
+
+# logs
+logs/
+*.log
+*.log.*
+
+# ide / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# os generated
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# test coverage
+coverage/
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+
+# node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

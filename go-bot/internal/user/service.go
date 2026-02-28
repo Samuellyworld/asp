@@ -10,20 +10,41 @@ import (
 	"github.com/trading-bot/go-bot/internal/security"
 )
 
+// userRepository defines the data operations for user management
+type userRepository interface {
+	FindByTelegramID(ctx context.Context, telegramID int64) (*User, error)
+	Create(ctx context.Context, telegramID int64, username string) (*User, error)
+	CreateDefaultPreferences(ctx context.Context, userID int) error
+	UpdateLastActive(ctx context.Context, userID int, channel string) error
+	Activate(ctx context.Context, userID int) error
+	SaveCredentials(ctx context.Context, cred *Credentials) (*Credentials, error)
+	HasValidCredentials(ctx context.Context, userID int) (bool, error)
+}
+
+// keyValidator validates exchange api keys
+type keyValidator interface {
+	ValidateKeys(ctx context.Context, apiKey, apiSecret string) (*binance.APIPermissions, error)
+}
+
+// encryptor encrypts sensitive data with per-user salts
+type encryptor interface {
+	Encrypt(plaintext []byte, salt []byte) ([]byte, error)
+}
+
 // service handles user registration, api key onboarding, and activation
 type Service struct {
-	repo      *Repository
-	encryptor *security.Encryptor
+	repo      userRepository
+	encryptor encryptor
 	audit     *security.AuditLogger
-	binance   *binance.Client
+	binance   keyValidator
 	isTestnet bool
 }
 
 func NewService(
-	repo *Repository,
-	encryptor *security.Encryptor,
+	repo userRepository,
+	encryptor encryptor,
 	audit *security.AuditLogger,
-	binanceClient *binance.Client,
+	binanceClient keyValidator,
 	isTestnet bool,
 ) *Service {
 	return &Service{

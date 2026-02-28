@@ -1,0 +1,133 @@
+syntax = "proto3";
+
+package indicators;
+
+option go_package = "github.com/trading-bot/go-bot/internal/analysis/proto";
+
+// candle data for indicator calculations
+message Candle {
+  double open = 1;
+  double high = 2;
+  double low = 3;
+  double close = 4;
+  double volume = 5;
+  int64 timestamp = 6;
+}
+
+// rsi
+
+message RSIRequest {
+  repeated Candle candles = 1;
+  int32 period = 2; // default 14
+}
+
+message RSIResponse {
+  double value = 1;
+  string signal = 2;   // OVERSOLD, NEUTRAL, OVERBOUGHT
+  repeated double series = 3; // full rsi series
+}
+
+// macd
+
+message MACDRequest {
+  repeated Candle candles = 1;
+  int32 fast_period = 2;   // default 12
+  int32 slow_period = 3;   // default 26
+  int32 signal_period = 4; // default 9
+}
+
+message MACDResponse {
+  double macd_line = 1;
+  double signal_line = 2;
+  double histogram = 3;
+  string signal = 4; // BULLISH, BEARISH, NEUTRAL
+  bool crossover = 5;
+  repeated double macd_series = 6;
+  repeated double signal_series = 7;
+  repeated double histogram_series = 8;
+}
+
+// bollinger bands
+
+message BollingerRequest {
+  repeated Candle candles = 1;
+  int32 period = 2;        // default 20
+  double std_dev = 3;      // default 2.0
+}
+
+message BollingerResponse {
+  double upper = 1;
+  double middle = 2;
+  double lower = 3;
+  double bandwidth = 4;
+  double percent_b = 5;   // where price sits relative to bands (0-1)
+  string signal = 6;      // UPPER_BAND, MIDDLE, LOWER_BAND, SQUEEZE
+  repeated double upper_series = 7;
+  repeated double middle_series = 8;
+  repeated double lower_series = 9;
+}
+
+// ema
+
+message EMARequest {
+  repeated Candle candles = 1;
+  int32 period = 2; // e.g. 9, 21, 50, 200
+}
+
+message EMAResponse {
+  double value = 1;
+  string trend = 2; // ABOVE (price > ema), BELOW (price < ema)
+  repeated double series = 3;
+}
+
+// volume spike detection
+
+message VolumeRequest {
+  repeated Candle candles = 1;
+  int32 lookback = 2;       // default 20
+  double threshold = 3;     // default 2.0 (2x average volume)
+}
+
+message VolumeResponse {
+  bool is_spike = 1;
+  double current_volume = 2;
+  double average_volume = 3;
+  double ratio = 4;
+  string signal = 5; // SPIKE, NORMAL, LOW
+}
+
+// combined analysis
+
+message AnalyzeAllRequest {
+  repeated Candle candles = 1;
+  int32 rsi_period = 2;
+  int32 macd_fast = 3;
+  int32 macd_slow = 4;
+  int32 macd_signal = 5;
+  int32 bb_period = 6;
+  double bb_std_dev = 7;
+  int32 ema_period = 8;
+  int32 volume_lookback = 9;
+  double volume_threshold = 10;
+}
+
+message AnalyzeAllResponse {
+  RSIResponse rsi = 1;
+  MACDResponse macd = 2;
+  BollingerResponse bollinger = 3;
+  EMAResponse ema = 4;
+  VolumeResponse volume = 5;
+  string overall_signal = 6;  // STRONG_BUY, BUY, NEUTRAL, SELL, STRONG_SELL
+  int32 bullish_count = 7;
+  int32 bearish_count = 8;
+}
+
+// grpc service
+service TechnicalIndicators {
+  rpc CalculateRSI(RSIRequest) returns (RSIResponse);
+  rpc CalculateMACD(MACDRequest) returns (MACDResponse);
+  rpc CalculateBollingerBands(BollingerRequest) returns (BollingerResponse);
+  rpc CalculateEMA(EMARequest) returns (EMAResponse);
+  rpc DetectVolumeSpike(VolumeRequest) returns (VolumeResponse);
+  rpc AnalyzeAll(AnalyzeAllRequest) returns (AnalyzeAllResponse);
+}

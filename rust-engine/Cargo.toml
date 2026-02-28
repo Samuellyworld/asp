@@ -11,7 +11,7 @@ tonic = "0.10"
 prost = "0.12"
 
 [build-dependencies]
-tonic-build = "0.10"
+tonic-build = { version = "0.10", features = ["prost"] }
 
 [[bin]]
 name = "trading-engine"

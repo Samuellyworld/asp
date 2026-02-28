@@ -1,4 +1,4 @@
-// telegram message handler for user registration, setup, watchlist, and preferences
+// telegram message handler for user registration, setup, watchlist, preferences, and exchange data
 package telegram
 
 import (
@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/trading-bot/go-bot/internal/exchange"
 	"github.com/trading-bot/go-bot/internal/preferences"
 	"github.com/trading-bot/go-bot/internal/user"
 	"github.com/trading-bot/go-bot/internal/watchlist"
@@ -16,7 +17,17 @@ import (
 // botClient defines the interface for sending telegram messages
 type botClient interface {
 	SendMessage(chatID int64, text string) error
+	SendMessageWithKeyboard(chatID int64, text string, keyboard *InlineKeyboardMarkup) error
+	EditMessageText(chatID int64, messageID int, text string, keyboard *InlineKeyboardMarkup) error
+	AnswerCallbackQuery(queryID string, text string) error
 	DeleteMessage(chatID int64, messageID int) error
+}
+
+// exchangeClient defines the interface for fetching market data
+type exchangeClient interface {
+	GetPrice(ctx context.Context, symbol string) (*exchange.Ticker, error)
+	GetOrderBook(ctx context.Context, symbol string, depth int) (*exchange.OrderBook, error)
+	GetBalance(ctx context.Context, apiKey, apiSecret string) ([]exchange.Balance, error)
 }
 
 // Handler processes incoming telegram messages
@@ -26,6 +37,7 @@ type Handler struct {
 	wizard    *user.SetupWizard
 	watchSvc  *watchlist.Service
 	prefsSvc  *preferences.Service
+	exchange  exchangeClient
 }
 
 func NewHandler(
@@ -34,6 +46,7 @@ func NewHandler(
 	wizard *user.SetupWizard,
 	watchSvc *watchlist.Service,
 	prefsSvc *preferences.Service,
+	exch exchangeClient,
 ) *Handler {
 	return &Handler{
 		bot:      bot,
@@ -41,11 +54,18 @@ func NewHandler(
 		wizard:   wizard,
 		watchSvc: watchSvc,
 		prefsSvc: prefsSvc,
+		exchange: exch,
 	}
 }
 
 //  routes an incoming update to the appropriate handler
 func (h *Handler) HandleUpdate(ctx context.Context, update Update) {
+	// handle callback queries from inline keyboard buttons
+	if update.CallbackQuery != nil {
+		h.handleCallback(ctx, update.CallbackQuery)
+		return
+	}
+
 	if update.Message == nil || update.Message.From == nil || update.Message.From.IsBot {
 		return
 	}
@@ -87,6 +107,15 @@ func (h *Handler) HandleUpdate(ctx context.Context, update Update) {
 		h.handleSettings(ctx, telegramID, chatID)
 	case "set":
 		h.handleSet(ctx, msg, telegramID, chatID)
+	// exchange data commands
+	case "price", "p":
+		h.handlePrice(ctx, msg, chatID)
+	case "balance", "bal":
+		h.handleBalance(ctx, telegramID, chatID)
+	case "orderbook", "ob":
+		h.handleOrderBook(ctx, msg, chatID)
+	case "portfolio", "pf":
+		h.handlePortfolio(ctx, telegramID, chatID)
 	default:
 		if command != "" {
 			h.send(chatID, "unknown command. type /help for available commands.")
@@ -282,6 +311,11 @@ func (h *Handler) handleHelp(chatID int64) {
 			"/setup - connect binance api keys\n"+
 			"/status - check your account status\n"+
 			"/cancel - cancel current setup\n\n"+
+			"*exchange*\n"+
+			"/price <symbol> - get current price (e.g. /price BTC)\n"+
+			"/balance - show your account balances\n"+
+			"/portfolio - portfolio overview with value estimate\n"+
+			"/orderbook <symbol> - show order book (e.g. /ob BTC)\n\n"+
 			"*watchlist*\n"+
 			"/watchlist - view your watchlist\n"+
 			"/watchadd <symbol> - add a symbol (e.g. /watchadd BTCUSDT)\n"+
@@ -330,12 +364,36 @@ func (h *Handler) handleWatchlist(ctx context.Context, telegramID int64, chatID 
 	}
 
 	msg := fmt.Sprintf("📋 *your watchlist* (%d symbols)\n\n", len(items))
+	var buttons [][]InlineKeyboardButton
+
 	for i, item := range items {
-		msg += fmt.Sprintf("%d. `%s`\n", i+1, item.Symbol)
+		// try to get live price for each symbol
+		ticker, err := h.exchange.GetPrice(ctx, item.Symbol)
+		if err == nil && ticker != nil {
+			changeEmoji := "📈"
+			if ticker.ChangePct < 0 {
+				changeEmoji = "📉"
+			}
+			msg += fmt.Sprintf("%d. `%s` — `$%s` %s `%.2f%%`\n", i+1, item.Symbol, formatPrice(ticker.Price), changeEmoji, ticker.ChangePct)
+		} else {
+			msg += fmt.Sprintf("%d. `%s`\n", i+1, item.Symbol)
+		}
+
+		// add a button row for every 3 symbols (compact layout)
+		if i%3 == 0 {
+			buttons = append(buttons, []InlineKeyboardButton{})
+		}
+		row := len(buttons) - 1
+		buttons[row] = append(buttons[row], InlineKeyboardButton{
+			Text:         item.Symbol,
+			CallbackData: "wl_price:" + item.Symbol,
+		})
 	}
+
 	msg += "\nuse /watchadd, /watchremove, or /watchreset to manage."
 
-	h.send(chatID, msg)
+	keyboard := &InlineKeyboardMarkup{InlineKeyboard: buttons}
+	h.sendWithKeyboard(chatID, msg, keyboard)
 }
 
 func (h *Handler) handleWatchAdd(ctx context.Context, msg *Message, telegramID int64, chatID int64) {
@@ -381,18 +439,24 @@ func (h *Handler) handleWatchRemove(ctx context.Context, msg *Message, telegramI
 }
 
 func (h *Handler) handleWatchReset(ctx context.Context, telegramID int64, chatID int64) {
-	userID, ok := h.getUserID(ctx, telegramID, chatID)
+	_, ok := h.getUserID(ctx, telegramID, chatID)
 	if !ok {
 		return
 	}
 
-	if err := h.watchSvc.Reset(ctx, userID); err != nil {
-		log.Printf("error resetting watchlist for user %d: %v", userID, err)
-		h.send(chatID, "failed to reset watchlist. please try again.")
-		return
+	keyboard := &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "✅ Yes, reset", CallbackData: "watchreset_confirm"},
+				{Text: "❌ Cancel", CallbackData: "watchreset_cancel"},
+			},
+		},
 	}
 
-	h.send(chatID, "✅ watchlist reset to default top-10 symbols.\n\nuse /watchlist to see them.")
+	h.sendWithKeyboard(chatID,
+		"⚠️ *are you sure?*\n\nthis will replace your current watchlist with the default top-10 symbols.",
+		keyboard,
+	)
 }
 
 // preferences handlers
@@ -581,9 +645,568 @@ func (h *Handler) handleSet(ctx context.Context, msg *Message, telegramID int64,
 	h.send(chatID, fmt.Sprintf("✅ %s updated. use /settings to see all preferences.", key))
 }
 
+// exchange data handlers
+
+func (h *Handler) handlePrice(ctx context.Context, msg *Message, chatID int64) {
+	_, args := ParseCommand(msg.Text)
+	if args == "" {
+		h.send(chatID, "usage: /price <symbol>\n\nexamples:\n/price BTC\n/price ETHUSDT\n/price SOL/USDT")
+		return
+	}
+
+	symbol := normalizeSymbolForExchange(args)
+
+	ticker, err := h.exchange.GetPrice(ctx, symbol)
+	if err != nil {
+		h.send(chatID, fmt.Sprintf("❌ failed to get price: %s", err.Error()))
+		return
+	}
+
+	text := formatTickerMessage(ticker)
+
+	keyboard := &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "🔄 Refresh", CallbackData: "price:" + symbol},
+				{Text: "📊 Order Book", CallbackData: "ob:" + symbol},
+			},
+			{
+				{Text: "⭐ Add to Watchlist", CallbackData: "wa:" + symbol},
+			},
+		},
+	}
+
+	h.sendWithKeyboard(chatID, text, keyboard)
+}
+
+func (h *Handler) handleBalance(ctx context.Context, telegramID int64, chatID int64) {
+	userID, ok := h.getUserID(ctx, telegramID, chatID)
+	if !ok {
+		return
+	}
+
+	apiKey, apiSecret, err := h.userSvc.GetDecryptedCredentials(ctx, userID)
+	if err != nil {
+		h.send(chatID, "❌ failed to retrieve your api keys. try /setup to reconfigure.")
+		return
+	}
+
+	balances, err := h.exchange.GetBalance(ctx, apiKey, apiSecret)
+	if err != nil {
+		h.send(chatID, fmt.Sprintf("❌ failed to get balance: %s", err.Error()))
+		return
+	}
+
+	if len(balances) == 0 {
+		h.send(chatID, "💼 your account has no balances.")
+		return
+	}
+
+	text := "💼 *your balances*\n\n"
+	for _, b := range balances {
+		line := fmt.Sprintf("• *%s*: `%s`", b.Asset, formatBalance(b.Free))
+		if b.Locked > 0 {
+			line += fmt.Sprintf(" (locked: `%s`)", formatBalance(b.Locked))
+		}
+		text += line + "\n"
+	}
+
+	keyboard := &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "🔄 Refresh", CallbackData: "refresh_balance"},
+				{Text: "📊 Portfolio", CallbackData: "portfolio"},
+			},
+		},
+	}
+
+	h.sendWithKeyboard(chatID, text, keyboard)
+}
+
+func (h *Handler) handleOrderBook(ctx context.Context, msg *Message, chatID int64) {
+	_, args := ParseCommand(msg.Text)
+	if args == "" {
+		h.send(chatID, "usage: /orderbook <symbol>\n\nexamples:\n/orderbook BTC\n/ob ETHUSDT")
+		return
+	}
+
+	parts := strings.Fields(args)
+	symbol := normalizeSymbolForExchange(parts[0])
+	depth := 5
+	if len(parts) > 1 {
+		if d, err := strconv.Atoi(parts[1]); err == nil && d > 0 && d <= 20 {
+			depth = d
+		}
+	}
+
+	book, err := h.exchange.GetOrderBook(ctx, symbol, depth)
+	if err != nil {
+		h.send(chatID, fmt.Sprintf("❌ failed to get order book: %s", err.Error()))
+		return
+	}
+
+	text := formatOrderBookMessage(book)
+
+	keyboard := &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "🔄 Refresh", CallbackData: fmt.Sprintf("ob:%s:%d", symbol, depth)},
+				{Text: "💰 Price", CallbackData: "price:" + symbol},
+			},
+		},
+	}
+
+	h.sendWithKeyboard(chatID, text, keyboard)
+}
+
+func (h *Handler) handlePortfolio(ctx context.Context, telegramID int64, chatID int64) {
+	userID, ok := h.getUserID(ctx, telegramID, chatID)
+	if !ok {
+		return
+	}
+
+	apiKey, apiSecret, err := h.userSvc.GetDecryptedCredentials(ctx, userID)
+	if err != nil {
+		h.send(chatID, "❌ failed to retrieve your api keys. try /setup to reconfigure.")
+		return
+	}
+
+	balances, err := h.exchange.GetBalance(ctx, apiKey, apiSecret)
+	if err != nil {
+		h.send(chatID, fmt.Sprintf("❌ failed to get balance: %s", err.Error()))
+		return
+	}
+
+	if len(balances) == 0 {
+		h.send(chatID, "💼 your portfolio is empty.")
+		return
+	}
+
+	text, _ := h.buildPortfolioText(ctx, balances)
+
+	keyboard := &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "🔄 Refresh", CallbackData: "portfolio"},
+				{Text: "💼 Balances", CallbackData: "refresh_balance"},
+			},
+		},
+	}
+
+	h.sendWithKeyboard(chatID, text, keyboard)
+}
+
+// builds portfolio text with estimated usd values
+func (h *Handler) buildPortfolioText(ctx context.Context, balances []exchange.Balance) (string, float64) {
+	text := "📊 *portfolio overview*\n\n"
+	totalUSD := 0.0
+
+	type assetLine struct {
+		asset  string
+		amount float64
+		usd    float64
+		priced bool
+	}
+	var lines []assetLine
+
+	for _, b := range balances {
+		total := b.Free + b.Locked
+		if total == 0 {
+			continue
+		}
+
+		line := assetLine{asset: b.Asset, amount: total}
+
+		// stablecoins are 1:1 usd
+		if isStablecoin(b.Asset) {
+			line.usd = total
+			line.priced = true
+		} else {
+			// try to fetch price
+			symbol := b.Asset + "/USDT"
+			ticker, err := h.exchange.GetPrice(ctx, symbol)
+			if err == nil && ticker != nil {
+				line.usd = total * ticker.Price
+				line.priced = true
+			}
+		}
+
+		if line.priced {
+			totalUSD += line.usd
+		}
+		lines = append(lines, line)
+	}
+
+	for _, l := range lines {
+		if l.priced {
+			text += fmt.Sprintf("• *%s*: `%s` ≈ `$%s`\n", l.asset, formatBalance(l.amount), formatPrice(l.usd))
+		} else {
+			text += fmt.Sprintf("• *%s*: `%s`\n", l.asset, formatBalance(l.amount))
+		}
+	}
+
+	text += fmt.Sprintf("\n💰 *estimated total*: `$%s`", formatPrice(totalUSD))
+	return text, totalUSD
+}
+
+// callback query handler — routes button presses to appropriate actions
+func (h *Handler) handleCallback(ctx context.Context, cb *CallbackQuery) {
+	if cb.From == nil || cb.Message == nil {
+		return
+	}
+
+	telegramID := cb.From.ID
+	chatID := cb.Message.Chat.ID
+	messageID := cb.Message.MessageID
+	data := cb.Data
+
+	switch {
+	case strings.HasPrefix(data, "price:"):
+		symbol := strings.TrimPrefix(data, "price:")
+		h.callbackPrice(ctx, cb.ID, chatID, messageID, symbol)
+
+	case strings.HasPrefix(data, "ob:"):
+		h.callbackOrderBook(ctx, cb.ID, chatID, messageID, data)
+
+	case strings.HasPrefix(data, "wa:"):
+		symbol := strings.TrimPrefix(data, "wa:")
+		h.callbackWatchAdd(ctx, cb.ID, telegramID, chatID, symbol)
+
+	case data == "refresh_balance":
+		h.callbackBalance(ctx, cb.ID, telegramID, chatID, messageID)
+
+	case data == "portfolio":
+		h.callbackPortfolio(ctx, cb.ID, telegramID, chatID, messageID)
+
+	case data == "watchreset_confirm":
+		h.callbackWatchResetConfirm(ctx, cb.ID, telegramID, chatID, messageID)
+
+	case data == "watchreset_cancel":
+		h.answerCallback(cb.ID, "cancelled")
+		h.editMessage(chatID, messageID, "watchlist reset cancelled.", nil)
+
+	case strings.HasPrefix(data, "wl_price:"):
+		symbol := strings.TrimPrefix(data, "wl_price:")
+		h.callbackPrice(ctx, cb.ID, chatID, messageID, symbol)
+
+	default:
+		h.answerCallback(cb.ID, "")
+	}
+}
+
+// refreshes price data in-place via inline button
+func (h *Handler) callbackPrice(ctx context.Context, queryID string, chatID int64, messageID int, symbol string) {
+	ticker, err := h.exchange.GetPrice(ctx, symbol)
+	if err != nil {
+		h.answerCallback(queryID, "failed to refresh price")
+		return
+	}
+
+	text := formatTickerMessage(ticker)
+	keyboard := &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "🔄 Refresh", CallbackData: "price:" + symbol},
+				{Text: "📊 Order Book", CallbackData: "ob:" + symbol},
+			},
+			{
+				{Text: "⭐ Add to Watchlist", CallbackData: "wa:" + symbol},
+			},
+		},
+	}
+
+	h.answerCallback(queryID, "price updated")
+	h.editMessage(chatID, messageID, text, keyboard)
+}
+
+// refreshes order book data in-place via inline button
+func (h *Handler) callbackOrderBook(ctx context.Context, queryID string, chatID int64, messageID int, data string) {
+	// format: "ob:SYMBOL" or "ob:SYMBOL:DEPTH"
+	parts := strings.Split(strings.TrimPrefix(data, "ob:"), ":")
+	symbol := parts[0]
+	depth := 5
+	if len(parts) > 1 {
+		if d, err := strconv.Atoi(parts[1]); err == nil && d > 0 {
+			depth = d
+		}
+	}
+
+	book, err := h.exchange.GetOrderBook(ctx, symbol, depth)
+	if err != nil {
+		h.answerCallback(queryID, "failed to refresh order book")
+		return
+	}
+
+	text := formatOrderBookMessage(book)
+	keyboard := &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "🔄 Refresh", CallbackData: fmt.Sprintf("ob:%s:%d", symbol, depth)},
+				{Text: "💰 Price", CallbackData: "price:" + symbol},
+			},
+		},
+	}
+
+	h.answerCallback(queryID, "order book updated")
+	h.editMessage(chatID, messageID, text, keyboard)
+}
+
+// adds symbol to watchlist from inline button
+func (h *Handler) callbackWatchAdd(ctx context.Context, queryID string, telegramID int64, chatID int64, symbol string) {
+	result, err := h.userSvc.Register(ctx, telegramID, "")
+	if err != nil {
+		h.answerCallback(queryID, "account error")
+		return
+	}
+	activated, hasKeys, _ := h.userSvc.GetStatus(ctx, result.User.ID)
+	if !activated || !hasKeys {
+		h.answerCallback(queryID, "complete setup first")
+		return
+	}
+
+	if err := h.watchSvc.Add(ctx, result.User.ID, symbol); err != nil {
+		h.answerCallback(queryID, err.Error())
+		return
+	}
+
+	h.answerCallback(queryID, fmt.Sprintf("%s added to watchlist", symbol))
+}
+
+// refreshes balance in-place via inline button
+func (h *Handler) callbackBalance(ctx context.Context, queryID string, telegramID int64, chatID int64, messageID int) {
+	result, err := h.userSvc.Register(ctx, telegramID, "")
+	if err != nil {
+		h.answerCallback(queryID, "account error")
+		return
+	}
+	userID := result.User.ID
+
+	apiKey, apiSecret, err := h.userSvc.GetDecryptedCredentials(ctx, userID)
+	if err != nil {
+		h.answerCallback(queryID, "failed to get credentials")
+		return
+	}
+
+	balances, err := h.exchange.GetBalance(ctx, apiKey, apiSecret)
+	if err != nil {
+		h.answerCallback(queryID, "failed to refresh balance")
+		return
+	}
+
+	if len(balances) == 0 {
+		h.answerCallback(queryID, "no balances")
+		h.editMessage(chatID, messageID, "💼 your account has no balances.", nil)
+		return
+	}
+
+	text := "💼 *your balances*\n\n"
+	for _, b := range balances {
+		line := fmt.Sprintf("• *%s*: `%s`", b.Asset, formatBalance(b.Free))
+		if b.Locked > 0 {
+			line += fmt.Sprintf(" (locked: `%s`)", formatBalance(b.Locked))
+		}
+		text += line + "\n"
+	}
+
+	keyboard := &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "🔄 Refresh", CallbackData: "refresh_balance"},
+				{Text: "📊 Portfolio", CallbackData: "portfolio"},
+			},
+		},
+	}
+
+	h.answerCallback(queryID, "balance updated")
+	h.editMessage(chatID, messageID, text, keyboard)
+}
+
+// refreshes portfolio in-place via inline button
+func (h *Handler) callbackPortfolio(ctx context.Context, queryID string, telegramID int64, chatID int64, messageID int) {
+	result, err := h.userSvc.Register(ctx, telegramID, "")
+	if err != nil {
+		h.answerCallback(queryID, "account error")
+		return
+	}
+	userID := result.User.ID
+
+	apiKey, apiSecret, err := h.userSvc.GetDecryptedCredentials(ctx, userID)
+	if err != nil {
+		h.answerCallback(queryID, "failed to get credentials")
+		return
+	}
+
+	balances, err := h.exchange.GetBalance(ctx, apiKey, apiSecret)
+	if err != nil {
+		h.answerCallback(queryID, "failed to refresh portfolio")
+		return
+	}
+
+	text, _ := h.buildPortfolioText(ctx, balances)
+	keyboard := &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "🔄 Refresh", CallbackData: "portfolio"},
+				{Text: "💼 Balances", CallbackData: "refresh_balance"},
+			},
+		},
+	}
+
+	h.answerCallback(queryID, "portfolio updated")
+	h.editMessage(chatID, messageID, text, keyboard)
+}
+
+// confirms watchlist reset via inline button
+func (h *Handler) callbackWatchResetConfirm(ctx context.Context, queryID string, telegramID int64, chatID int64, messageID int) {
+	result, err := h.userSvc.Register(ctx, telegramID, "")
+	if err != nil {
+		h.answerCallback(queryID, "account error")
+		return
+	}
+	userID := result.User.ID
+
+	if err := h.watchSvc.Reset(ctx, userID); err != nil {
+		h.answerCallback(queryID, "failed to reset watchlist")
+		return
+	}
+
+	h.answerCallback(queryID, "watchlist reset")
+	h.editMessage(chatID, messageID, "✅ watchlist reset to default top-10 symbols.\n\nuse /watchlist to see them.", nil)
+}
+
+// formats a complete ticker message
+func formatTickerMessage(ticker *exchange.Ticker) string {
+	changeEmoji := "📈"
+	if ticker.ChangePct < 0 {
+		changeEmoji = "📉"
+	}
+
+	return fmt.Sprintf(
+		"💰 *%s*\n\n"+
+			"price: `$%s`\n"+
+			"24h change: %s `%s (%.2f%%)`\n"+
+			"24h volume: `%s`",
+		ticker.Symbol,
+		formatPrice(ticker.Price),
+		changeEmoji,
+		formatPriceChange(ticker.PriceChange),
+		ticker.ChangePct,
+		formatVolume(ticker.QuoteVolume),
+	)
+}
+
+// formats a complete order book message
+func formatOrderBookMessage(book *exchange.OrderBook) string {
+	text := fmt.Sprintf("📊 *order book — %s*\n\n", book.Symbol)
+
+	text += "*asks (sell)*\n"
+	for i := len(book.Asks) - 1; i >= 0; i-- {
+		a := book.Asks[i]
+		text += fmt.Sprintf("`$%s` × `%s`\n", formatPrice(a.Price), formatBalance(a.Quantity))
+	}
+
+	text += "————————\n"
+
+	text += "*bids (buy)*\n"
+	for _, b := range book.Bids {
+		text += fmt.Sprintf("`$%s` × `%s`\n", formatPrice(b.Price), formatBalance(b.Quantity))
+	}
+
+	return text
+}
+
+// returns true for known stablecoin tickers
+func isStablecoin(asset string) bool {
+	switch asset {
+	case "USDT", "USDC", "BUSD", "DAI", "TUSD", "USDP", "FDUSD":
+		return true
+	}
+	return false
+}
+
+// normalizes user input like "BTC" or "BTCUSDT" to "BTC/USDT"
+func normalizeSymbolForExchange(input string) string {
+	input = strings.ToUpper(strings.TrimSpace(input))
+
+	// already has slash
+	if strings.Contains(input, "/") {
+		return input
+	}
+
+	// try to split at known quote currencies
+	for _, quote := range []string{"USDT", "BUSD", "USDC", "BTC", "ETH", "BNB"} {
+		if strings.HasSuffix(input, quote) {
+			base := strings.TrimSuffix(input, quote)
+			if len(base) > 0 {
+				return base + "/" + quote
+			}
+		}
+	}
+
+	// assume USDT pair if no quote currency detected
+	return input + "/USDT"
+}
+
+// formats a price for display (removes trailing zeros)
+func formatPrice(price float64) string {
+	if price >= 1 {
+		return fmt.Sprintf("%.2f", price)
+	}
+	// for sub-dollar prices, show more decimals
+	return strconv.FormatFloat(price, 'f', -1, 64)
+}
+
+// formats a price change with sign
+func formatPriceChange(change float64) string {
+	if change >= 0 {
+		return "+" + formatPrice(change)
+	}
+	return formatPrice(change)
+}
+
+// formats large volumes with K/M/B suffixes
+func formatVolume(vol float64) string {
+	switch {
+	case vol >= 1_000_000_000:
+		return fmt.Sprintf("$%.1fB", vol/1_000_000_000)
+	case vol >= 1_000_000:
+		return fmt.Sprintf("$%.1fM", vol/1_000_000)
+	case vol >= 1_000:
+		return fmt.Sprintf("$%.1fK", vol/1_000)
+	default:
+		return fmt.Sprintf("$%.2f", vol)
+	}
+}
+
+// formats a balance value
+func formatBalance(val float64) string {
+	if val == 0 {
+		return "0"
+	}
+	return strconv.FormatFloat(val, 'f', -1, 64)
+}
+
 func (h *Handler) send(chatID int64, text string) {
 	if err := h.bot.SendMessage(chatID, text); err != nil {
 		log.Printf("error sending message to chat %d: %v", chatID, err)
+	}
+}
+
+func (h *Handler) sendWithKeyboard(chatID int64, text string, keyboard *InlineKeyboardMarkup) {
+	if err := h.bot.SendMessageWithKeyboard(chatID, text, keyboard); err != nil {
+		log.Printf("error sending message with keyboard to chat %d: %v", chatID, err)
+	}
+}
+
+func (h *Handler) editMessage(chatID int64, messageID int, text string, keyboard *InlineKeyboardMarkup) {
+	if err := h.bot.EditMessageText(chatID, messageID, text, keyboard); err != nil {
+		log.Printf("error editing message %d in chat %d: %v", messageID, chatID, err)
+	}
+}
+
+func (h *Handler) answerCallback(queryID string, text string) {
+	if err := h.bot.AnswerCallbackQuery(queryID, text); err != nil {
+		log.Printf("error answering callback query %s: %v", queryID, err)
 	}
 }
 

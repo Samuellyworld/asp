@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/trading-bot/go-bot/internal/binance"
+	"github.com/trading-bot/go-bot/internal/exchange"
 	"github.com/trading-bot/go-bot/internal/preferences"
 	"github.com/trading-bot/go-bot/internal/user"
 	"github.com/trading-bot/go-bot/internal/watchlist"
@@ -20,10 +21,31 @@ type sentMessage struct {
 	text   string
 }
 
+type editedMessage struct {
+	chatID    int64
+	messageID int
+	text      string
+	keyboard  *InlineKeyboardMarkup
+}
+
+type keyboardMessage struct {
+	chatID   int64
+	text     string
+	keyboard *InlineKeyboardMarkup
+}
+
+type answeredCallback struct {
+	queryID string
+	text    string
+}
+
 type mockBot struct {
-	messages []sentMessage
-	deletes  []int
-	sendErr  error
+	messages  []sentMessage
+	keyboards []keyboardMessage
+	edits     []editedMessage
+	callbacks []answeredCallback
+	deletes   []int
+	sendErr   error
 }
 
 func (m *mockBot) SendMessage(chatID int64, text string) error {
@@ -31,6 +53,27 @@ func (m *mockBot) SendMessage(chatID int64, text string) error {
 		return m.sendErr
 	}
 	m.messages = append(m.messages, sentMessage{chatID, text})
+	return nil
+}
+
+func (m *mockBot) SendMessageWithKeyboard(chatID int64, text string, keyboard *InlineKeyboardMarkup) error {
+	if m.sendErr != nil {
+		return m.sendErr
+	}
+	m.keyboards = append(m.keyboards, keyboardMessage{chatID, text, keyboard})
+	return nil
+}
+
+func (m *mockBot) EditMessageText(chatID int64, messageID int, text string, keyboard *InlineKeyboardMarkup) error {
+	if m.sendErr != nil {
+		return m.sendErr
+	}
+	m.edits = append(m.edits, editedMessage{chatID, messageID, text, keyboard})
+	return nil
+}
+
+func (m *mockBot) AnswerCallbackQuery(queryID string, text string) error {
+	m.callbacks = append(m.callbacks, answeredCallback{queryID, text})
 	return nil
 }
 
@@ -46,8 +89,32 @@ func (m *mockBot) lastMessage() string {
 	return m.messages[len(m.messages)-1].text
 }
 
+func (m *mockBot) lastKeyboardMessage() string {
+	if len(m.keyboards) == 0 {
+		return ""
+	}
+	return m.keyboards[len(m.keyboards)-1].text
+}
+
+func (m *mockBot) lastKeyboard() *InlineKeyboardMarkup {
+	if len(m.keyboards) == 0 {
+		return nil
+	}
+	return m.keyboards[len(m.keyboards)-1].keyboard
+}
+
+func (m *mockBot) lastEdit() *editedMessage {
+	if len(m.edits) == 0 {
+		return nil
+	}
+	return &m.edits[len(m.edits)-1]
+}
+
 func (m *mockBot) reset() {
 	m.messages = nil
+	m.keyboards = nil
+	m.edits = nil
+	m.callbacks = nil
 	m.deletes = nil
 }
 
@@ -123,6 +190,25 @@ func (m *mockUserRepo) SaveCredentials(_ context.Context, cred *user.Credentials
 
 func (m *mockUserRepo) HasValidCredentials(_ context.Context, userID int) (bool, error) {
 	return m.credentials[userID], nil
+}
+
+func (m *mockUserRepo) GetCredentials(_ context.Context, userID int, _ string) (*user.Credentials, error) {
+	for _, u := range m.users {
+		if u.ID == userID {
+			if m.credentials[userID] {
+				return &user.Credentials{
+					ID:                 1,
+					UserID:             userID,
+					Exchange:           "binance",
+					APIKeyEncrypted:    []byte("test-key"),
+					APISecretEncrypted: []byte("test-secret"),
+					Salt:               []byte("salt"),
+					IsValid:            true,
+				}, nil
+			}
+		}
+	}
+	return nil, nil
 }
 
 func (m *mockUserRepo) seed(telegramID int64, username string, activated bool) *user.User {
@@ -301,6 +387,85 @@ func (m *mockEncryptor) Encrypt(plaintext []byte, _ []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
+func (m *mockEncryptor) Decrypt(ciphertext []byte, _ []byte) ([]byte, error) {
+	return ciphertext, nil
+}
+
+// --- mock exchange (satisfies exchangeClient) ---
+
+type mockExchange struct {
+	priceErr   error
+	balanceErr error
+	bookErr    error
+}
+
+func (m *mockExchange) GetPrice(_ context.Context, symbol string) (*exchange.Ticker, error) {
+	if m.priceErr != nil {
+		return nil, m.priceErr
+	}
+	prices := map[string]*exchange.Ticker{
+		"BTC/USDT":  {Symbol: "BTC/USDT", Price: 42000.00, PriceChange: -850.00, ChangePct: -1.98, Volume: 28500.5, QuoteVolume: 1197021000},
+		"ETH/USDT":  {Symbol: "ETH/USDT", Price: 2280.00, PriceChange: 45.00, ChangePct: 2.01, Volume: 185000.0, QuoteVolume: 421800000},
+		"DOGE/USDT": {Symbol: "DOGE/USDT", Price: 0.0825, PriceChange: 0.0015, ChangePct: 1.85, Volume: 980000000.0, QuoteVolume: 80850000},
+	}
+	t, ok := prices[symbol]
+	if !ok {
+		return nil, fmt.Errorf("symbol not found: %s", symbol)
+	}
+	return t, nil
+}
+
+func (m *mockExchange) GetBalance(_ context.Context, apiKey, apiSecret string) ([]exchange.Balance, error) {
+	if m.balanceErr != nil {
+		return nil, m.balanceErr
+	}
+	if apiKey == "" || apiSecret == "" {
+		return nil, fmt.Errorf("missing credentials")
+	}
+	return []exchange.Balance{
+		{Asset: "USDT", Free: 1000.00, Locked: 0},
+		{Asset: "BTC", Free: 0.05, Locked: 0},
+		{Asset: "ETH", Free: 1.5, Locked: 0.5},
+	}, nil
+}
+
+func (m *mockExchange) GetOrderBook(_ context.Context, symbol string, depth int) (*exchange.OrderBook, error) {
+	if m.bookErr != nil {
+		return nil, m.bookErr
+	}
+	books := map[string]*exchange.OrderBook{
+		"BTC/USDT": {
+			Symbol: "BTC/USDT",
+			Bids: []exchange.OrderBookEntry{
+				{Price: 41999.00, Quantity: 0.500},
+				{Price: 41998.00, Quantity: 1.200},
+				{Price: 41995.00, Quantity: 0.350},
+			},
+			Asks: []exchange.OrderBookEntry{
+				{Price: 42001.00, Quantity: 0.800},
+				{Price: 42002.00, Quantity: 0.450},
+				{Price: 42005.00, Quantity: 1.500},
+			},
+		},
+	}
+	ob, ok := books[symbol]
+	if !ok {
+		return nil, fmt.Errorf("symbol not found: %s", symbol)
+	}
+	result := &exchange.OrderBook{Symbol: ob.Symbol}
+	bids := ob.Bids
+	asks := ob.Asks
+	if depth > 0 && depth < len(bids) {
+		bids = bids[:depth]
+	}
+	if depth > 0 && depth < len(asks) {
+		asks = asks[:depth]
+	}
+	result.Bids = bids
+	result.Asks = asks
+	return result, nil
+}
+
 // --- test helpers ---
 
 func makeUpdate(tid, cid int64, text string) Update {
@@ -334,12 +499,14 @@ func newTestEnv() *testEnv {
 		perms: &binance.APIPermissions{Spot: true, Futures: false, Withdraw: false},
 	}
 
+	exch := &mockExchange{}
+
 	userSvc := user.NewService(userRepo, &mockEncryptor{}, nil, validator, false)
 	wizard := user.NewSetupWizard()
 	watchSvc := watchlist.NewService(watchRepo)
 	prefsSvc := preferences.NewService(prefsRepo)
 
-	handler := NewHandler(bot, userSvc, wizard, watchSvc, prefsSvc)
+	handler := NewHandler(bot, userSvc, wizard, watchSvc, prefsSvc, exch)
 
 	return &testEnv{
 		bot:       bot,
@@ -577,12 +744,19 @@ func TestWatchlist_WithItems(t *testing.T) {
 
 	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/watchlist"))
 
-	msg := env.bot.lastMessage()
+	msg := env.bot.lastKeyboardMessage()
 	if !strings.Contains(msg, "BTC/USDT") {
 		t.Errorf("expected BTC/USDT in watchlist, got: %s", msg)
 	}
 	if !strings.Contains(msg, "ETH/USDT") {
 		t.Errorf("expected ETH/USDT in watchlist, got: %s", msg)
+	}
+	kb := env.bot.lastKeyboard()
+	if kb == nil {
+		t.Fatal("expected inline keyboard on watchlist")
+	}
+	if len(kb.InlineKeyboard) == 0 {
+		t.Error("expected at least one row of buttons")
 	}
 }
 
@@ -689,15 +863,30 @@ func TestWatchRemove_NoArgs(t *testing.T) {
 
 // --- /watchreset ---
 
-func TestWatchReset_Success(t *testing.T) {
+func TestWatchReset_ShowsConfirmation(t *testing.T) {
 	env := newTestEnv()
 	env.seedActivatedUser(12345)
 
 	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/watchreset"))
 
-	msg := env.bot.lastMessage()
-	if !strings.Contains(msg, "reset") {
-		t.Errorf("expected reset message, got: %s", msg)
+	msg := env.bot.lastKeyboardMessage()
+	if !strings.Contains(msg, "are you sure") {
+		t.Errorf("expected confirmation prompt, got: %s", msg)
+	}
+	kb := env.bot.lastKeyboard()
+	if kb == nil {
+		t.Fatal("expected inline keyboard for confirmation")
+	}
+	found := false
+	for _, row := range kb.InlineKeyboard {
+		for _, btn := range row {
+			if btn.CallbackData == "watchreset_confirm" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("expected watchreset_confirm callback data in buttons")
 	}
 }
 
@@ -1061,4 +1250,794 @@ func TestSendError_DoesNotPanic(t *testing.T) {
 
 	// should not panic even if send fails
 	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/help"))
+}
+
+// --- /price tests ---
+
+func TestPrice_BTC(t *testing.T) {
+	env := newTestEnv()
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/price BTC"))
+
+	msg := env.bot.lastKeyboardMessage()
+	if !strings.Contains(msg, "BTC/USDT") {
+		t.Errorf("expected BTC/USDT in message, got: %s", msg)
+	}
+	if !strings.Contains(msg, "42000") {
+		t.Errorf("expected price in message, got: %s", msg)
+	}
+	kb := env.bot.lastKeyboard()
+	if kb == nil {
+		t.Fatal("expected inline keyboard on price")
+	}
+	// should have refresh and order book buttons
+	foundRefresh := false
+	foundOB := false
+	for _, row := range kb.InlineKeyboard {
+		for _, btn := range row {
+			if btn.CallbackData == "price:BTC/USDT" {
+				foundRefresh = true
+			}
+			if btn.CallbackData == "ob:BTC/USDT" {
+				foundOB = true
+			}
+		}
+	}
+	if !foundRefresh {
+		t.Error("expected refresh button")
+	}
+	if !foundOB {
+		t.Error("expected order book button")
+	}
+}
+
+func TestPrice_WithUSDTSuffix(t *testing.T) {
+	env := newTestEnv()
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/price ETHUSDT"))
+
+	msg := env.bot.lastKeyboardMessage()
+	if !strings.Contains(msg, "ETH/USDT") {
+		t.Errorf("expected ETH/USDT in message, got: %s", msg)
+	}
+	if !strings.Contains(msg, "2280") {
+		t.Errorf("expected price in message, got: %s", msg)
+	}
+}
+
+func TestPrice_WithSlash(t *testing.T) {
+	env := newTestEnv()
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/price ETH/USDT"))
+
+	msg := env.bot.lastKeyboardMessage()
+	if !strings.Contains(msg, "ETH/USDT") {
+		t.Errorf("expected ETH/USDT, got: %s", msg)
+	}
+}
+
+func TestPrice_Alias(t *testing.T) {
+	env := newTestEnv()
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/p BTC"))
+
+	msg := env.bot.lastKeyboardMessage()
+	if !strings.Contains(msg, "BTC/USDT") {
+		t.Errorf("expected /p to work as alias, got: %s", msg)
+	}
+}
+
+func TestPrice_NoArgs(t *testing.T) {
+	env := newTestEnv()
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/price"))
+
+	msg := env.bot.lastMessage()
+	if !strings.Contains(msg, "usage") {
+		t.Errorf("expected usage message, got: %s", msg)
+	}
+}
+
+func TestPrice_UnknownSymbol(t *testing.T) {
+	env := newTestEnv()
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/price ZZZZZ"))
+
+	msg := env.bot.lastMessage()
+	if !strings.Contains(msg, "❌") {
+		t.Errorf("expected error for unknown symbol, got: %s", msg)
+	}
+}
+
+func TestPrice_LowercaseNormalized(t *testing.T) {
+	env := newTestEnv()
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/price btc"))
+
+	msg := env.bot.lastKeyboardMessage()
+	if !strings.Contains(msg, "BTC/USDT") {
+		t.Errorf("expected lowercase to be normalized, got: %s", msg)
+	}
+}
+
+func TestPrice_SubDollarPrice(t *testing.T) {
+	env := newTestEnv()
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/price DOGE"))
+
+	msg := env.bot.lastKeyboardMessage()
+	if !strings.Contains(msg, "DOGE/USDT") {
+		t.Errorf("expected DOGE/USDT, got: %s", msg)
+	}
+	if !strings.Contains(msg, "0.0825") {
+		t.Errorf("expected sub-dollar price display, got: %s", msg)
+	}
+}
+
+func TestPrice_ShowsChangeDirection(t *testing.T) {
+	env := newTestEnv()
+
+	// BTC has negative change
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/price BTC"))
+	msg := env.bot.lastKeyboardMessage()
+	if !strings.Contains(msg, "📉") {
+		t.Errorf("expected down emoji for negative change, got: %s", msg)
+	}
+
+	env.bot.reset()
+
+	// ETH has positive change
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/price ETH"))
+	msg = env.bot.lastKeyboardMessage()
+	if !strings.Contains(msg, "📈") {
+		t.Errorf("expected up emoji for positive change, got: %s", msg)
+	}
+}
+
+// --- /balance tests ---
+
+func TestBalance_Success(t *testing.T) {
+	env := newTestEnv()
+	env.seedActivatedUser(12345)
+
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/balance"))
+
+	msg := env.bot.lastKeyboardMessage()
+	if !strings.Contains(msg, "balances") {
+		t.Errorf("expected balances header, got: %s", msg)
+	}
+	if !strings.Contains(msg, "USDT") {
+		t.Errorf("expected USDT in balances, got: %s", msg)
+	}
+	if !strings.Contains(msg, "BTC") {
+		t.Errorf("expected BTC in balances, got: %s", msg)
+	}
+	if !strings.Contains(msg, "ETH") {
+		t.Errorf("expected ETH in balances, got: %s", msg)
+	}
+	kb := env.bot.lastKeyboard()
+	if kb == nil {
+		t.Fatal("expected inline keyboard on balance")
+	}
+	foundRefresh := false
+	for _, row := range kb.InlineKeyboard {
+		for _, btn := range row {
+			if btn.CallbackData == "refresh_balance" {
+				foundRefresh = true
+			}
+		}
+	}
+	if !foundRefresh {
+		t.Error("expected refresh_balance callback button")
+	}
+}
+
+func TestBalance_Alias(t *testing.T) {
+	env := newTestEnv()
+	env.seedActivatedUser(12345)
+
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/bal"))
+
+	msg := env.bot.lastKeyboardMessage()
+	if !strings.Contains(msg, "balances") {
+		t.Errorf("expected /bal to work as alias, got: %s", msg)
+	}
+}
+
+func TestBalance_ShowsLockedAmount(t *testing.T) {
+	env := newTestEnv()
+	env.seedActivatedUser(12345)
+
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/balance"))
+
+	msg := env.bot.lastKeyboardMessage()
+	if !strings.Contains(msg, "locked") {
+		t.Errorf("expected locked amount display for ETH, got: %s", msg)
+	}
+}
+
+func TestBalance_NotSetup(t *testing.T) {
+	env := newTestEnv()
+	env.userRepo.seed(12345, "testuser", false)
+
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/balance"))
+
+	msg := env.bot.lastMessage()
+	if !strings.Contains(msg, "setup") {
+		t.Errorf("expected setup prompt, got: %s", msg)
+	}
+}
+
+// --- /orderbook tests ---
+
+func TestOrderBook_Success(t *testing.T) {
+	env := newTestEnv()
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/orderbook BTC"))
+
+	msg := env.bot.lastKeyboardMessage()
+	if !strings.Contains(msg, "order book") {
+		t.Errorf("expected order book header, got: %s", msg)
+	}
+	if !strings.Contains(msg, "BTC/USDT") {
+		t.Errorf("expected BTC/USDT in order book, got: %s", msg)
+	}
+	if !strings.Contains(msg, "bids") {
+		t.Errorf("expected bids section, got: %s", msg)
+	}
+	if !strings.Contains(msg, "asks") {
+		t.Errorf("expected asks section, got: %s", msg)
+	}
+	kb := env.bot.lastKeyboard()
+	if kb == nil {
+		t.Fatal("expected inline keyboard on order book")
+	}
+}
+
+func TestOrderBook_Alias(t *testing.T) {
+	env := newTestEnv()
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/ob BTC"))
+
+	msg := env.bot.lastKeyboardMessage()
+	if !strings.Contains(msg, "order book") {
+		t.Errorf("expected /ob to work as alias, got: %s", msg)
+	}
+}
+
+func TestOrderBook_NoArgs(t *testing.T) {
+	env := newTestEnv()
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/orderbook"))
+
+	msg := env.bot.lastMessage()
+	if !strings.Contains(msg, "usage") {
+		t.Errorf("expected usage message, got: %s", msg)
+	}
+}
+
+func TestOrderBook_UnknownSymbol(t *testing.T) {
+	env := newTestEnv()
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/orderbook ZZZZZ"))
+
+	msg := env.bot.lastMessage()
+	if !strings.Contains(msg, "❌") {
+		t.Errorf("expected error for unknown symbol, got: %s", msg)
+	}
+}
+
+func TestOrderBook_WithDepth(t *testing.T) {
+	env := newTestEnv()
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/ob BTC 2"))
+
+	msg := env.bot.lastKeyboardMessage()
+	if !strings.Contains(msg, "BTC/USDT") {
+		t.Errorf("expected BTC/USDT with depth, got: %s", msg)
+	}
+}
+
+// --- format helpers tests ---
+
+func TestNormalizeSymbolForExchange(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"BTC", "BTC/USDT"},
+		{"btc", "BTC/USDT"},
+		{"BTCUSDT", "BTC/USDT"},
+		{"BTC/USDT", "BTC/USDT"},
+		{"ethusdt", "ETH/USDT"},
+		{"ETHBTC", "ETH/BTC"},
+		{"SOL", "SOL/USDT"},
+		{"DOGEUSDT", "DOGE/USDT"},
+	}
+
+	for _, tt := range tests {
+		got := normalizeSymbolForExchange(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizeSymbolForExchange(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestFormatPrice(t *testing.T) {
+	tests := []struct {
+		price float64
+		want  string
+	}{
+		{42000.00, "42000.00"},
+		{2280.50, "2280.50"},
+		{0.0825, "0.0825"},
+		{0.00001234, "0.00001234"},
+	}
+
+	for _, tt := range tests {
+		got := formatPrice(tt.price)
+		if got != tt.want {
+			t.Errorf("formatPrice(%v) = %q, want %q", tt.price, got, tt.want)
+		}
+	}
+}
+
+func TestFormatVolume(t *testing.T) {
+	tests := []struct {
+		vol  float64
+		want string
+	}{
+		{1197021000, "$1.2B"},
+		{421800000, "$421.8M"},
+		{50000, "$50.0K"},
+		{500, "$500.00"},
+	}
+
+	for _, tt := range tests {
+		got := formatVolume(tt.vol)
+		if got != tt.want {
+			t.Errorf("formatVolume(%v) = %q, want %q", tt.vol, got, tt.want)
+		}
+	}
+}
+
+func TestFormatBalance(t *testing.T) {
+	tests := []struct {
+		val  float64
+		want string
+	}{
+		{0, "0"},
+		{1000.00, "1000"},
+		{0.05, "0.05"},
+		{1.5, "1.5"},
+	}
+
+	for _, tt := range tests {
+		got := formatBalance(tt.val)
+		if got != tt.want {
+			t.Errorf("formatBalance(%v) = %q, want %q", tt.val, got, tt.want)
+		}
+	}
+}
+
+func TestFormatTickerMessage(t *testing.T) {
+	ticker := &exchange.Ticker{
+		Symbol:      "BTC/USDT",
+		Price:       42000.00,
+		PriceChange: -850.00,
+		ChangePct:   -1.98,
+		QuoteVolume: 1197021000,
+	}
+	msg := formatTickerMessage(ticker)
+	if !strings.Contains(msg, "BTC/USDT") {
+		t.Error("expected symbol in ticker message")
+	}
+	if !strings.Contains(msg, "42000") {
+		t.Error("expected price in ticker message")
+	}
+	if !strings.Contains(msg, "📉") {
+		t.Error("expected down emoji for negative change")
+	}
+}
+
+func TestFormatOrderBookMessage(t *testing.T) {
+	book := &exchange.OrderBook{
+		Symbol: "BTC/USDT",
+		Bids: []exchange.OrderBookEntry{
+			{Price: 41999.00, Quantity: 0.5},
+		},
+		Asks: []exchange.OrderBookEntry{
+			{Price: 42001.00, Quantity: 0.8},
+		},
+	}
+	msg := formatOrderBookMessage(book)
+	if !strings.Contains(msg, "BTC/USDT") {
+		t.Error("expected symbol in order book message")
+	}
+	if !strings.Contains(msg, "bids") {
+		t.Error("expected bids section")
+	}
+	if !strings.Contains(msg, "asks") {
+		t.Error("expected asks section")
+	}
+}
+
+func TestIsStablecoin(t *testing.T) {
+	stables := []string{"USDT", "USDC", "BUSD", "DAI", "TUSD", "USDP", "FDUSD"}
+	for _, s := range stables {
+		if !isStablecoin(s) {
+			t.Errorf("expected %s to be a stablecoin", s)
+		}
+	}
+	nonStables := []string{"BTC", "ETH", "SOL", "DOGE"}
+	for _, s := range nonStables {
+		if isStablecoin(s) {
+			t.Errorf("expected %s to NOT be a stablecoin", s)
+		}
+	}
+}
+
+// --- callback query helpers ---
+
+func makeCallbackQuery(tid, cid int64, msgID int, data string) Update {
+	return Update{
+		UpdateID: 1,
+		CallbackQuery: &CallbackQuery{
+			ID:   "cb-123",
+			From: &From{ID: tid, Username: "testuser"},
+			Message: &Message{
+				MessageID: msgID,
+				Chat:      &Chat{ID: cid},
+			},
+			Data: data,
+		},
+	}
+}
+
+// --- callback query tests ---
+
+func TestCallback_RefreshPrice(t *testing.T) {
+	env := newTestEnv()
+
+	env.handler.HandleUpdate(context.Background(), makeCallbackQuery(12345, 100, 42, "price:BTC/USDT"))
+
+	if len(env.bot.callbacks) == 0 {
+		t.Fatal("expected callback to be answered")
+	}
+	if env.bot.callbacks[0].text != "price updated" {
+		t.Errorf("expected 'price updated' callback, got: %s", env.bot.callbacks[0].text)
+	}
+
+	edit := env.bot.lastEdit()
+	if edit == nil {
+		t.Fatal("expected message to be edited")
+	}
+	if edit.messageID != 42 {
+		t.Errorf("expected message ID 42, got: %d", edit.messageID)
+	}
+	if !strings.Contains(edit.text, "BTC/USDT") {
+		t.Errorf("expected BTC/USDT in edited message, got: %s", edit.text)
+	}
+	if edit.keyboard == nil {
+		t.Error("expected keyboard in edited message")
+	}
+}
+
+func TestCallback_RefreshPrice_Error(t *testing.T) {
+	env := newTestEnv()
+
+	env.handler.HandleUpdate(context.Background(), makeCallbackQuery(12345, 100, 42, "price:ZZZZZ/USDT"))
+
+	if len(env.bot.callbacks) == 0 {
+		t.Fatal("expected callback to be answered")
+	}
+	if !strings.Contains(env.bot.callbacks[0].text, "failed") {
+		t.Errorf("expected failure callback, got: %s", env.bot.callbacks[0].text)
+	}
+	if len(env.bot.edits) != 0 {
+		t.Error("expected no edit on error")
+	}
+}
+
+func TestCallback_OrderBook(t *testing.T) {
+	env := newTestEnv()
+
+	env.handler.HandleUpdate(context.Background(), makeCallbackQuery(12345, 100, 42, "ob:BTC/USDT:5"))
+
+	if len(env.bot.callbacks) == 0 {
+		t.Fatal("expected callback to be answered")
+	}
+	edit := env.bot.lastEdit()
+	if edit == nil {
+		t.Fatal("expected message to be edited")
+	}
+	if !strings.Contains(edit.text, "order book") {
+		t.Error("expected order book in edited message")
+	}
+}
+
+func TestCallback_OrderBook_NoDepth(t *testing.T) {
+	env := newTestEnv()
+
+	env.handler.HandleUpdate(context.Background(), makeCallbackQuery(12345, 100, 42, "ob:BTC/USDT"))
+
+	edit := env.bot.lastEdit()
+	if edit == nil {
+		t.Fatal("expected message to be edited")
+	}
+	if !strings.Contains(edit.text, "BTC/USDT") {
+		t.Error("expected BTC/USDT in edited message")
+	}
+}
+
+func TestCallback_WatchAdd(t *testing.T) {
+	env := newTestEnv()
+	env.seedActivatedUser(12345)
+
+	env.handler.HandleUpdate(context.Background(), makeCallbackQuery(12345, 100, 42, "wa:BTC/USDT"))
+
+	if len(env.bot.callbacks) == 0 {
+		t.Fatal("expected callback to be answered")
+	}
+	if !strings.Contains(env.bot.callbacks[0].text, "added to watchlist") {
+		t.Errorf("expected 'added to watchlist' callback, got: %s", env.bot.callbacks[0].text)
+	}
+}
+
+func TestCallback_WatchAdd_NotSetup(t *testing.T) {
+	env := newTestEnv()
+	env.userRepo.seed(12345, "testuser", false)
+
+	env.handler.HandleUpdate(context.Background(), makeCallbackQuery(12345, 100, 42, "wa:BTC/USDT"))
+
+	if len(env.bot.callbacks) == 0 {
+		t.Fatal("expected callback to be answered")
+	}
+	if !strings.Contains(env.bot.callbacks[0].text, "complete setup") {
+		t.Errorf("expected 'complete setup' callback, got: %s", env.bot.callbacks[0].text)
+	}
+}
+
+func TestCallback_RefreshBalance(t *testing.T) {
+	env := newTestEnv()
+	env.seedActivatedUser(12345)
+
+	env.handler.HandleUpdate(context.Background(), makeCallbackQuery(12345, 100, 42, "refresh_balance"))
+
+	if len(env.bot.callbacks) == 0 {
+		t.Fatal("expected callback to be answered")
+	}
+	edit := env.bot.lastEdit()
+	if edit == nil {
+		t.Fatal("expected message to be edited")
+	}
+	if !strings.Contains(edit.text, "balances") {
+		t.Error("expected balances in edited message")
+	}
+}
+
+func TestCallback_Portfolio(t *testing.T) {
+	env := newTestEnv()
+	env.seedActivatedUser(12345)
+
+	env.handler.HandleUpdate(context.Background(), makeCallbackQuery(12345, 100, 42, "portfolio"))
+
+	if len(env.bot.callbacks) == 0 {
+		t.Fatal("expected callback to be answered")
+	}
+	edit := env.bot.lastEdit()
+	if edit == nil {
+		t.Fatal("expected message to be edited")
+	}
+	if !strings.Contains(edit.text, "portfolio") {
+		t.Error("expected portfolio in edited message")
+	}
+}
+
+func TestCallback_WatchResetConfirm(t *testing.T) {
+	env := newTestEnv()
+	env.seedActivatedUser(12345)
+
+	env.handler.HandleUpdate(context.Background(), makeCallbackQuery(12345, 100, 42, "watchreset_confirm"))
+
+	if len(env.bot.callbacks) == 0 {
+		t.Fatal("expected callback to be answered")
+	}
+	edit := env.bot.lastEdit()
+	if edit == nil {
+		t.Fatal("expected message to be edited")
+	}
+	if !strings.Contains(edit.text, "reset") {
+		t.Error("expected reset confirmation in edited message")
+	}
+}
+
+func TestCallback_WatchResetCancel(t *testing.T) {
+	env := newTestEnv()
+
+	env.handler.HandleUpdate(context.Background(), makeCallbackQuery(12345, 100, 42, "watchreset_cancel"))
+
+	if len(env.bot.callbacks) == 0 {
+		t.Fatal("expected callback to be answered")
+	}
+	edit := env.bot.lastEdit()
+	if edit == nil {
+		t.Fatal("expected message to be edited")
+	}
+	if !strings.Contains(edit.text, "cancelled") {
+		t.Error("expected cancelled message in edited text")
+	}
+}
+
+func TestCallback_WatchlistPrice(t *testing.T) {
+	env := newTestEnv()
+
+	env.handler.HandleUpdate(context.Background(), makeCallbackQuery(12345, 100, 42, "wl_price:BTC/USDT"))
+
+	edit := env.bot.lastEdit()
+	if edit == nil {
+		t.Fatal("expected message to be edited with price")
+	}
+	if !strings.Contains(edit.text, "BTC/USDT") {
+		t.Error("expected BTC/USDT in edited message")
+	}
+}
+
+func TestCallback_NilFrom(t *testing.T) {
+	env := newTestEnv()
+	update := Update{
+		CallbackQuery: &CallbackQuery{
+			ID:   "cb-123",
+			From: nil,
+			Message: &Message{
+				MessageID: 42,
+				Chat:      &Chat{ID: 100},
+			},
+			Data: "price:BTC/USDT",
+		},
+	}
+	env.handler.HandleUpdate(context.Background(), update)
+	if len(env.bot.edits) != 0 {
+		t.Error("expected no action when From is nil")
+	}
+}
+
+func TestCallback_NilMessage(t *testing.T) {
+	env := newTestEnv()
+	update := Update{
+		CallbackQuery: &CallbackQuery{
+			ID:      "cb-123",
+			From:    &From{ID: 12345},
+			Message: nil,
+			Data:    "price:BTC/USDT",
+		},
+	}
+	env.handler.HandleUpdate(context.Background(), update)
+	if len(env.bot.edits) != 0 {
+		t.Error("expected no action when Message is nil")
+	}
+}
+
+func TestCallback_UnknownData(t *testing.T) {
+	env := newTestEnv()
+
+	env.handler.HandleUpdate(context.Background(), makeCallbackQuery(12345, 100, 42, "unknown_action"))
+
+	if len(env.bot.callbacks) == 0 {
+		t.Fatal("expected callback to be answered even for unknown data")
+	}
+}
+
+// --- /portfolio tests ---
+
+func TestPortfolio_Success(t *testing.T) {
+	env := newTestEnv()
+	env.seedActivatedUser(12345)
+
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/portfolio"))
+
+	msg := env.bot.lastKeyboardMessage()
+	if !strings.Contains(msg, "portfolio") {
+		t.Errorf("expected portfolio header, got: %s", msg)
+	}
+	if !strings.Contains(msg, "estimated total") {
+		t.Errorf("expected estimated total, got: %s", msg)
+	}
+}
+
+func TestPortfolio_Alias(t *testing.T) {
+	env := newTestEnv()
+	env.seedActivatedUser(12345)
+
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/pf"))
+
+	msg := env.bot.lastKeyboardMessage()
+	if !strings.Contains(msg, "portfolio") {
+		t.Errorf("expected /pf to work as alias, got: %s", msg)
+	}
+}
+
+func TestPortfolio_NotSetup(t *testing.T) {
+	env := newTestEnv()
+	env.userRepo.seed(12345, "testuser", false)
+
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/portfolio"))
+
+	msg := env.bot.lastMessage()
+	if !strings.Contains(msg, "setup") {
+		t.Errorf("expected setup prompt, got: %s", msg)
+	}
+}
+
+func TestPortfolio_ShowsUSDValues(t *testing.T) {
+	env := newTestEnv()
+	env.seedActivatedUser(12345)
+
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/portfolio"))
+
+	msg := env.bot.lastKeyboardMessage()
+	// USDT is a stablecoin, should show 1:1 usd value
+	if !strings.Contains(msg, "USDT") {
+		t.Errorf("expected USDT in portfolio, got: %s", msg)
+	}
+	// should contain dollar sign for estimated values
+	if !strings.Contains(msg, "$") {
+		t.Errorf("expected dollar values in portfolio, got: %s", msg)
+	}
+}
+
+func TestPortfolio_HasRefreshButton(t *testing.T) {
+	env := newTestEnv()
+	env.seedActivatedUser(12345)
+
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/portfolio"))
+
+	kb := env.bot.lastKeyboard()
+	if kb == nil {
+		t.Fatal("expected inline keyboard on portfolio")
+	}
+	found := false
+	for _, row := range kb.InlineKeyboard {
+		for _, btn := range row {
+			if btn.CallbackData == "portfolio" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("expected portfolio refresh button")
+	}
+}
+
+// --- help includes portfolio ---
+
+func TestHelp_IncludesPortfolio(t *testing.T) {
+	env := newTestEnv()
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/help"))
+
+	msg := env.bot.lastMessage()
+	if !strings.Contains(msg, "portfolio") {
+		t.Errorf("expected portfolio in help text, got: %s", msg)
+	}
+}
+
+// --- callback query takes priority over message ---
+
+func TestCallbackQuery_TakesPriority(t *testing.T) {
+	env := newTestEnv()
+
+	// update has both a message and a callback query
+	update := Update{
+		UpdateID: 1,
+		Message:  &Message{MessageID: 1, From: &From{ID: 12345}, Chat: &Chat{ID: 100}, Text: "/help"},
+		CallbackQuery: &CallbackQuery{
+			ID:      "cb-456",
+			From:    &From{ID: 12345},
+			Message: &Message{MessageID: 42, Chat: &Chat{ID: 100}},
+			Data:    "price:BTC/USDT",
+		},
+	}
+	env.handler.HandleUpdate(context.Background(), update)
+
+	// callback should be processed, not the /help message
+	if len(env.bot.edits) == 0 {
+		t.Error("expected callback to be processed (edit message)")
+	}
+	// /help would use SendMessage, should not have triggered
+	helpFound := false
+	for _, m := range env.bot.messages {
+		if strings.Contains(m.text, "available commands") {
+			helpFound = true
+		}
+	}
+	if helpFound {
+		t.Error("expected /help NOT to be processed when callback query is present")
+	}
 }

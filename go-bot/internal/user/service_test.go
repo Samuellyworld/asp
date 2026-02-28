@@ -11,26 +11,30 @@ import (
 
 // mock user repository
 type mockUserRepo struct {
-	users       map[int64]*User
-	credentials map[int]*Credentials
-	nextID      int
+	users          map[int64]*User
+	discordUsers   map[int64]*User
+	credentials    map[int]*Credentials
+	nextID         int
 
-	findErr     error
-	createErr   error
-	prefsErr    error
-	activeErr   error
-	activateErr error
-	saveCredErr error
-	hasCredsErr error
-	hasCredsVal bool
-	getCredErr  error
+	findErr        error
+	findDiscordErr error
+	createErr      error
+	createDiscErr  error
+	prefsErr       error
+	activeErr      error
+	activateErr    error
+	saveCredErr    error
+	hasCredsErr    error
+	hasCredsVal    bool
+	getCredErr     error
 }
 
 func newMockUserRepo() *mockUserRepo {
 	return &mockUserRepo{
-		users:       make(map[int64]*User),
-		credentials: make(map[int]*Credentials),
-		nextID:      1,
+		users:        make(map[int64]*User),
+		discordUsers: make(map[int64]*User),
+		credentials:  make(map[int]*Credentials),
+		nextID:       1,
 	}
 }
 
@@ -39,6 +43,13 @@ func (m *mockUserRepo) FindByTelegramID(_ context.Context, telegramID int64) (*U
 		return nil, m.findErr
 	}
 	return m.users[telegramID], nil
+}
+
+func (m *mockUserRepo) FindByDiscordID(_ context.Context, discordID int64) (*User, error) {
+	if m.findDiscordErr != nil {
+		return nil, m.findDiscordErr
+	}
+	return m.discordUsers[discordID], nil
 }
 
 func (m *mockUserRepo) Create(_ context.Context, telegramID int64, username string) (*User, error) {
@@ -56,6 +67,24 @@ func (m *mockUserRepo) Create(_ context.Context, telegramID int64, username stri
 	}
 	m.nextID++
 	m.users[telegramID] = u
+	return u, nil
+}
+
+func (m *mockUserRepo) CreateFromDiscord(_ context.Context, discordID int64, username string) (*User, error) {
+	if m.createDiscErr != nil {
+		return nil, m.createDiscErr
+	}
+	u := &User{
+		ID:          m.nextID,
+		UUID:        fmt.Sprintf("uuid-%d", m.nextID),
+		DiscordID:   &discordID,
+		Username:    &username,
+		TradingMode: "paper",
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	m.nextID++
+	m.discordUsers[discordID] = u
 	return u, nil
 }
 
@@ -121,6 +150,22 @@ func (m *mockUserRepo) seed(telegramID int64, username string) *User {
 	}
 	m.nextID++
 	m.users[telegramID] = u
+	return u
+}
+
+// seed an existing discord user
+func (m *mockUserRepo) seedDiscord(discordID int64, username string) *User {
+	u := &User{
+		ID:          m.nextID,
+		UUID:        fmt.Sprintf("uuid-%d", m.nextID),
+		DiscordID:   &discordID,
+		Username:    &username,
+		TradingMode: "paper",
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	m.nextID++
+	m.discordUsers[discordID] = u
 	return u
 }
 
@@ -615,5 +660,159 @@ func TestGetDecryptedCredentials_DecryptKeyError(t *testing.T) {
 	_, _, err := svc.GetDecryptedCredentials(context.Background(), 1)
 	if err == nil {
 		t.Fatal("expected error when decrypt fails")
+	}
+}
+
+// --- RegisterDiscord tests ---
+
+func TestRegisterDiscord_NewUser(t *testing.T) {
+	repo := newMockUserRepo()
+	svc := newTestService(repo, &mockValidator{}, &mockEncryptor{})
+
+	result, err := svc.RegisterDiscord(context.Background(), 99999, "discorduser")
+	if err != nil {
+		t.Fatalf("RegisterDiscord() error: %v", err)
+	}
+	if !result.IsNewUser {
+		t.Error("expected IsNewUser to be true")
+	}
+	if result.User.ID == 0 {
+		t.Error("expected user to have an ID")
+	}
+	if result.User.DiscordID == nil {
+		t.Error("expected DiscordID to be set")
+	}
+}
+
+func TestRegisterDiscord_ExistingUser(t *testing.T) {
+	repo := newMockUserRepo()
+	repo.seedDiscord(99999, "discorduser")
+	svc := newTestService(repo, &mockValidator{}, &mockEncryptor{})
+
+	result, err := svc.RegisterDiscord(context.Background(), 99999, "discorduser")
+	if err != nil {
+		t.Fatalf("RegisterDiscord() error: %v", err)
+	}
+	if result.IsNewUser {
+		t.Error("expected IsNewUser to be false for existing user")
+	}
+}
+
+func TestRegisterDiscord_FindError(t *testing.T) {
+	repo := newMockUserRepo()
+	repo.findDiscordErr = fmt.Errorf("db connection failed")
+	svc := newTestService(repo, &mockValidator{}, &mockEncryptor{})
+
+	_, err := svc.RegisterDiscord(context.Background(), 99999, "discorduser")
+	if err == nil {
+		t.Fatal("RegisterDiscord() expected error when find fails")
+	}
+}
+
+func TestRegisterDiscord_CreateError(t *testing.T) {
+	repo := newMockUserRepo()
+	repo.createDiscErr = fmt.Errorf("unique constraint violation")
+	svc := newTestService(repo, &mockValidator{}, &mockEncryptor{})
+
+	_, err := svc.RegisterDiscord(context.Background(), 99999, "discorduser")
+	if err == nil {
+		t.Fatal("RegisterDiscord() expected error when create fails")
+	}
+}
+
+func TestRegisterDiscord_UpdateLastActiveError_IsWarning(t *testing.T) {
+	repo := newMockUserRepo()
+	repo.seedDiscord(99999, "discorduser")
+	repo.activeErr = fmt.Errorf("update failed")
+	svc := newTestService(repo, &mockValidator{}, &mockEncryptor{})
+
+	result, err := svc.RegisterDiscord(context.Background(), 99999, "discorduser")
+	if err != nil {
+		t.Fatalf("RegisterDiscord() should not fail for UpdateLastActive error: %v", err)
+	}
+	if result.IsNewUser {
+		t.Error("expected existing user")
+	}
+}
+
+func TestRegisterDiscord_CreateDefaultPrefsError_IsWarning(t *testing.T) {
+	repo := newMockUserRepo()
+	repo.prefsErr = fmt.Errorf("insert default prefs failed")
+	svc := newTestService(repo, &mockValidator{}, &mockEncryptor{})
+
+	result, err := svc.RegisterDiscord(context.Background(), 99999, "discorduser")
+	if err != nil {
+		t.Fatalf("RegisterDiscord() should not fail for prefs error: %v", err)
+	}
+	if !result.IsNewUser {
+		t.Error("expected new user")
+	}
+}
+
+func TestRegisterDiscord_ThenSetup_FullFlow(t *testing.T) {
+	repo := newMockUserRepo()
+	validator := &mockValidator{
+		perms: &binance.APIPermissions{Spot: true, Futures: false, Withdraw: false},
+	}
+	svc := newTestService(repo, validator, &mockEncryptor{})
+
+	// register via discord
+	regResult, err := svc.RegisterDiscord(context.Background(), 99999, "discorduser")
+	if err != nil {
+		t.Fatalf("RegisterDiscord() error: %v", err)
+	}
+	if !regResult.IsNewUser {
+		t.Error("expected new user")
+	}
+
+	// check status before setup
+	activated, hasKeys, err := svc.GetStatus(context.Background(), regResult.User.ID)
+	if err != nil {
+		t.Fatalf("GetStatus() error: %v", err)
+	}
+	if activated || hasKeys {
+		t.Error("expected not activated and no keys before setup")
+	}
+
+	// setup keys
+	setupResult, err := svc.SetupAPIKeys(context.Background(), regResult.User.ID, "my-key", "my-secret")
+	if err != nil {
+		t.Fatalf("SetupAPIKeys() error: %v", err)
+	}
+	if !setupResult.Activated {
+		t.Error("expected activated after setup")
+	}
+
+	// check status after setup
+	activated, hasKeys, err = svc.GetStatus(context.Background(), regResult.User.ID)
+	if err != nil {
+		t.Fatalf("GetStatus() error: %v", err)
+	}
+	if !activated || !hasKeys {
+		t.Error("expected activated and has keys after setup")
+	}
+}
+
+func TestRegisterDiscord_SameUserTwice(t *testing.T) {
+	repo := newMockUserRepo()
+	svc := newTestService(repo, &mockValidator{}, &mockEncryptor{})
+
+	r1, err := svc.RegisterDiscord(context.Background(), 99999, "discorduser")
+	if err != nil {
+		t.Fatalf("first RegisterDiscord() error: %v", err)
+	}
+	if !r1.IsNewUser {
+		t.Error("first registration should be new")
+	}
+
+	r2, err := svc.RegisterDiscord(context.Background(), 99999, "discorduser")
+	if err != nil {
+		t.Fatalf("second RegisterDiscord() error: %v", err)
+	}
+	if r2.IsNewUser {
+		t.Error("second registration should not be new")
+	}
+	if r1.User.ID != r2.User.ID {
+		t.Error("both registrations should return same user")
 	}
 }

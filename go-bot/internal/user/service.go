@@ -13,7 +13,9 @@ import (
 // userRepository defines the data operations for user management
 type userRepository interface {
 	FindByTelegramID(ctx context.Context, telegramID int64) (*User, error)
+	FindByDiscordID(ctx context.Context, discordID int64) (*User, error)
 	Create(ctx context.Context, telegramID int64, username string) (*User, error)
+	CreateFromDiscord(ctx context.Context, discordID int64, username string) (*User, error)
 	CreateDefaultPreferences(ctx context.Context, userID int) error
 	UpdateLastActive(ctx context.Context, userID int, channel string) error
 	Activate(ctx context.Context, userID int) error
@@ -79,6 +81,32 @@ func (s *Service) Register(ctx context.Context, telegramID int64, username strin
 	}
 
 	newUser, err := s.repo.Create(ctx, telegramID, username)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create user: %w", err)
+	}
+
+	if err := s.repo.CreateDefaultPreferences(ctx, newUser.ID); err != nil {
+		log.Printf("warning: failed to create default preferences for user %d: %v", newUser.ID, err)
+	}
+
+	return &RegisterResult{User: newUser, IsNewUser: true}, nil
+}
+
+// registers or retrieves a user from a discord interaction
+func (s *Service) RegisterDiscord(ctx context.Context, discordID int64, username string) (*RegisterResult, error) {
+	existing, err := s.repo.FindByDiscordID(ctx, discordID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up user: %w", err)
+	}
+
+	if existing != nil {
+		if err := s.repo.UpdateLastActive(ctx, existing.ID, "discord"); err != nil {
+			log.Printf("warning: failed to update last active for user %d: %v", existing.ID, err)
+		}
+		return &RegisterResult{User: existing, IsNewUser: false}, nil
+	}
+
+	newUser, err := s.repo.CreateFromDiscord(ctx, discordID, username)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}

@@ -13,9 +13,11 @@ import (
 	"github.com/trading-bot/go-bot/internal/binance"
 	"github.com/trading-bot/go-bot/internal/config"
 	"github.com/trading-bot/go-bot/internal/database"
+	"github.com/trading-bot/go-bot/internal/preferences"
 	"github.com/trading-bot/go-bot/internal/security"
 	"github.com/trading-bot/go-bot/internal/telegram"
 	"github.com/trading-bot/go-bot/internal/user"
+	"github.com/trading-bot/go-bot/internal/watchlist"
 )
 
 func init() {
@@ -68,9 +70,15 @@ func runBot(cmd *cobra.Command, args []string) error {
 	userSvc := user.NewService(userRepo, encryptor, auditLogger, binanceClient, cfg.Binance.Testnet)
 	wizard := user.NewSetupWizard()
 
+	// set up watchlist and preferences services
+	watchRepo := watchlist.NewRepository(pg.Pool())
+	watchSvc := watchlist.NewService(watchRepo)
+	prefsRepo := preferences.NewRepository(pg.Pool())
+	prefsSvc := preferences.NewService(prefsRepo)
+
 	// set up telegram bot
 	bot := telegram.NewBot(cfg.Telegram.BotToken)
-	handler := telegram.NewHandler(bot, userSvc, wizard)
+	handler := telegram.NewHandler(bot, userSvc, wizard, watchSvc, prefsSvc)
 
 	log.Println("telegram bot started, polling for updates...")
 

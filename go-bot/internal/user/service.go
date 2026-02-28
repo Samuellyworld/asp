@@ -19,6 +19,7 @@ type userRepository interface {
 	Activate(ctx context.Context, userID int) error
 	SaveCredentials(ctx context.Context, cred *Credentials) (*Credentials, error)
 	HasValidCredentials(ctx context.Context, userID int) (bool, error)
+	GetCredentials(ctx context.Context, userID int, exchange string) (*Credentials, error)
 }
 
 // keyValidator validates exchange api keys
@@ -26,9 +27,10 @@ type keyValidator interface {
 	ValidateKeys(ctx context.Context, apiKey, apiSecret string) (*binance.APIPermissions, error)
 }
 
-// encryptor encrypts sensitive data with per-user salts
+// encryptor handles encryption and decryption of sensitive data with per-user salts
 type encryptor interface {
 	Encrypt(plaintext []byte, salt []byte) ([]byte, error)
+	Decrypt(ciphertext []byte, salt []byte) ([]byte, error)
 }
 
 // service handles user registration, api key onboarding, and activation
@@ -168,6 +170,32 @@ func (s *Service) GetStatus(ctx context.Context, userID int) (activated bool, ha
 	}
 	// if they have valid keys, they're activated
 	return hasKeys, hasKeys, nil
+}
+
+// decrypts and returns the user's api credentials for the given exchange
+func (s *Service) GetDecryptedCredentials(ctx context.Context, userID int) (string, string, error) {
+	cred, err := s.repo.GetCredentials(ctx, userID, "binance")
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get credentials: %w", err)
+	}
+	if cred == nil {
+		return "", "", fmt.Errorf("no credentials found for user %d", userID)
+	}
+
+	apiKey, err := s.encryptor.Decrypt(cred.APIKeyEncrypted, cred.Salt)
+	if err != nil {
+		s.logAudit(ctx, userID, cred.ID, "decrypt", false, err.Error())
+		return "", "", fmt.Errorf("failed to decrypt api key: %w", err)
+	}
+
+	apiSecret, err := s.encryptor.Decrypt(cred.APISecretEncrypted, cred.Salt)
+	if err != nil {
+		s.logAudit(ctx, userID, cred.ID, "decrypt", false, err.Error())
+		return "", "", fmt.Errorf("failed to decrypt api secret: %w", err)
+	}
+
+	s.logAudit(ctx, userID, cred.ID, "decrypt", true, "")
+	return string(apiKey), string(apiSecret), nil
 }
 
 func (s *Service) logAudit(ctx context.Context, userID, credentialID int, action string, success bool, errMsg string) {

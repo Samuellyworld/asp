@@ -2,6 +2,7 @@
 package telegram
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,8 +16,9 @@ const apiBase = "https://api.telegram.org/bot"
 
 // update represents an incoming telegram update
 type Update struct {
-	UpdateID int      `json:"update_id"`
-	Message  *Message `json:"message"`
+	UpdateID      int            `json:"update_id"`
+	Message       *Message       `json:"message"`
+	CallbackQuery *CallbackQuery `json:"callback_query"`
 }
 
 // message represents a telegram message
@@ -40,6 +42,26 @@ type From struct {
 type Chat struct {
 	ID   int64  `json:"id"`
 	Type string `json:"type"`
+}
+
+// callback query from an inline keyboard button press
+type CallbackQuery struct {
+	ID      string   `json:"id"`
+	From    *From    `json:"from"`
+	Message *Message `json:"message"`
+	Data    string   `json:"data"`
+}
+
+// inline keyboard button with callback data or url
+type InlineKeyboardButton struct {
+	Text         string `json:"text"`
+	CallbackData string `json:"callback_data,omitempty"`
+	URL          string `json:"url,omitempty"`
+}
+
+// inline keyboard markup containing rows of buttons
+type InlineKeyboardMarkup struct {
+	InlineKeyboard [][]InlineKeyboardButton `json:"inline_keyboard"`
 }
 
 // bot wraps the telegram bot api
@@ -74,6 +96,94 @@ func (b *Bot) SendMessage(chatID int64, text string) error {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("telegram api error (status %d): %s", resp.StatusCode, string(body))
 	}
+
+	return nil
+}
+
+// sends a message with an inline keyboard attached
+func (b *Bot) SendMessageWithKeyboard(chatID int64, text string, keyboard *InlineKeyboardMarkup) error {
+	endpoint := fmt.Sprintf("%s%s/sendMessage", apiBase, b.token)
+
+	payload := map[string]interface{}{
+		"chat_id":      chatID,
+		"text":         text,
+		"parse_mode":   "Markdown",
+		"reply_markup": keyboard,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	resp, err := b.client.Post(endpoint, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to send message with keyboard: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("telegram api error (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
+// edits the text (and optionally keyboard) of an existing message
+func (b *Bot) EditMessageText(chatID int64, messageID int, text string, keyboard *InlineKeyboardMarkup) error {
+	endpoint := fmt.Sprintf("%s%s/editMessageText", apiBase, b.token)
+
+	payload := map[string]interface{}{
+		"chat_id":    chatID,
+		"message_id": messageID,
+		"text":       text,
+		"parse_mode": "Markdown",
+	}
+	if keyboard != nil {
+		payload["reply_markup"] = keyboard
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	resp, err := b.client.Post(endpoint, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to edit message: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("telegram api error (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
+// answers a callback query to dismiss the loading indicator
+func (b *Bot) AnswerCallbackQuery(queryID string, text string) error {
+	endpoint := fmt.Sprintf("%s%s/answerCallbackQuery", apiBase, b.token)
+
+	payload := map[string]interface{}{
+		"callback_query_id": queryID,
+	}
+	if text != "" {
+		payload["text"] = text
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	resp, err := b.client.Post(endpoint, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to answer callback query: %w", err)
+	}
+	defer resp.Body.Close()
 
 	return nil
 }

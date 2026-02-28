@@ -78,7 +78,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 
 	// set up telegram bot
 	bot := telegram.NewBot(cfg.Telegram.BotToken)
-	handler := telegram.NewHandler(bot, userSvc, wizard, watchSvc, prefsSvc)
+	handler := telegram.NewHandler(bot, userSvc, wizard, watchSvc, prefsSvc, binanceClient)
 
 	log.Println("telegram bot started, polling for updates...")
 

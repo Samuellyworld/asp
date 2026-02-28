@@ -23,6 +23,7 @@ type mockUserRepo struct {
 	saveCredErr error
 	hasCredsErr error
 	hasCredsVal bool
+	getCredErr  error
 }
 
 func newMockUserRepo() *mockUserRepo {
@@ -100,6 +101,13 @@ func (m *mockUserRepo) HasValidCredentials(_ context.Context, userID int) (bool,
 	return ok, nil
 }
 
+func (m *mockUserRepo) GetCredentials(_ context.Context, userID int, _ string) (*Credentials, error) {
+	if m.getCredErr != nil {
+		return nil, m.getCredErr
+	}
+	return m.credentials[userID], nil
+}
+
 // seed an existing user
 func (m *mockUserRepo) seed(telegramID int64, username string) *User {
 	u := &User{
@@ -131,7 +139,8 @@ func (m *mockValidator) ValidateKeys(_ context.Context, _, _ string) (*binance.A
 
 // mock encryptor
 type mockEncryptor struct {
-	err error
+	err    error
+	decErr error
 }
 
 func (m *mockEncryptor) Encrypt(plaintext []byte, _ []byte) ([]byte, error) {
@@ -144,6 +153,18 @@ func (m *mockEncryptor) Encrypt(plaintext []byte, _ []byte) ([]byte, error) {
 		enc[len(plaintext)-1-i] = b
 	}
 	return enc, nil
+}
+
+func (m *mockEncryptor) Decrypt(ciphertext []byte, _ []byte) ([]byte, error) {
+	if m.decErr != nil {
+		return nil, m.decErr
+	}
+	// reverse to get back the original plaintext
+	dec := make([]byte, len(ciphertext))
+	for i, b := range ciphertext {
+		dec[len(ciphertext)-1-i] = b
+	}
+	return dec, nil
 }
 
 // helper to build a service with defaults
@@ -517,5 +538,82 @@ func TestSetupAPIKeys_WithdrawAndSpot_StillRejected(t *testing.T) {
 	_, err := svc.SetupAPIKeys(context.Background(), 1, "key", "secret")
 	if err == nil {
 		t.Fatal("keys with withdraw+trading should still be rejected")
+	}
+}
+
+// --- GetDecryptedCredentials tests ---
+
+func TestGetDecryptedCredentials_Success(t *testing.T) {
+	repo := newMockUserRepo()
+	enc := &mockEncryptor{}
+
+	// simulate stored credentials with "encrypted" key/secret
+	encKey, _ := enc.Encrypt([]byte("my-api-key"), []byte("salt"))
+	encSecret, _ := enc.Encrypt([]byte("my-api-secret"), []byte("salt"))
+	repo.credentials[1] = &Credentials{
+		ID:                 1,
+		UserID:             1,
+		Exchange:           "binance",
+		APIKeyEncrypted:    encKey,
+		APISecretEncrypted: encSecret,
+		Salt:               []byte("salt"),
+		IsValid:            true,
+	}
+
+	svc := newTestService(repo, &mockValidator{}, enc)
+
+	key, secret, err := svc.GetDecryptedCredentials(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("GetDecryptedCredentials() error: %v", err)
+	}
+	if key != "my-api-key" {
+		t.Errorf("key = %q, want %q", key, "my-api-key")
+	}
+	if secret != "my-api-secret" {
+		t.Errorf("secret = %q, want %q", secret, "my-api-secret")
+	}
+}
+
+func TestGetDecryptedCredentials_NoCredentials(t *testing.T) {
+	repo := newMockUserRepo()
+	svc := newTestService(repo, &mockValidator{}, &mockEncryptor{})
+
+	_, _, err := svc.GetDecryptedCredentials(context.Background(), 999)
+	if err == nil {
+		t.Fatal("expected error for missing credentials")
+	}
+}
+
+func TestGetDecryptedCredentials_RepoError(t *testing.T) {
+	repo := newMockUserRepo()
+	repo.getCredErr = fmt.Errorf("db connection lost")
+	svc := newTestService(repo, &mockValidator{}, &mockEncryptor{})
+
+	_, _, err := svc.GetDecryptedCredentials(context.Background(), 1)
+	if err == nil {
+		t.Fatal("expected error when repo fails")
+	}
+}
+
+func TestGetDecryptedCredentials_DecryptKeyError(t *testing.T) {
+	repo := newMockUserRepo()
+	enc := &mockEncryptor{}
+	encKey, _ := enc.Encrypt([]byte("key"), []byte("salt"))
+	encSecret, _ := enc.Encrypt([]byte("secret"), []byte("salt"))
+	repo.credentials[1] = &Credentials{
+		ID:                 1,
+		UserID:             1,
+		APIKeyEncrypted:    encKey,
+		APISecretEncrypted: encSecret,
+		Salt:               []byte("salt"),
+	}
+
+	// fail on decrypt
+	failEnc := &mockEncryptor{decErr: fmt.Errorf("decrypt failed")}
+	svc := newTestService(repo, &mockValidator{}, failEnc)
+
+	_, _, err := svc.GetDecryptedCredentials(context.Background(), 1)
+	if err == nil {
+		t.Fatal("expected error when decrypt fails")
 	}
 }

@@ -96,6 +96,16 @@ func (m *mockUserRepo) UpdateLastActive(_ context.Context, _ int, _ string) erro
 	return m.activeErr
 }
 
+func (m *mockUserRepo) LinkDiscordToTelegram(_ context.Context, telegramID, discordID int64) (*User, error) {
+	u, ok := m.users[telegramID]
+	if !ok {
+		return nil, nil
+	}
+	u.DiscordID = &discordID
+	m.discordUsers[discordID] = u
+	return u, nil
+}
+
 func (m *mockUserRepo) Activate(_ context.Context, userID int) error {
 	if m.activateErr != nil {
 		return m.activateErr
@@ -814,5 +824,92 @@ func TestRegisterDiscord_SameUserTwice(t *testing.T) {
 	}
 	if r1.User.ID != r2.User.ID {
 		t.Error("both registrations should return same user")
+	}
+}
+
+// --- link discord to telegram tests ---
+
+func TestLinkDiscordToTelegram_Success(t *testing.T) {
+	repo := newMockUserRepo()
+	svc := newTestService(repo, &mockValidator{}, &mockEncryptor{})
+
+	_, err := svc.Register(context.Background(), 99999, "tguser")
+	if err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+
+	linked, err := svc.LinkDiscordToTelegram(context.Background(), 99999, 88888)
+	if err != nil {
+		t.Fatalf("link failed: %v", err)
+	}
+	if linked.DiscordID == nil || *linked.DiscordID != 88888 {
+		t.Error("discord id not set after link")
+	}
+	if linked.TelegramID == nil || *linked.TelegramID != 99999 {
+		t.Error("telegram id lost after link")
+	}
+}
+
+func TestLinkDiscordToTelegram_NoTelegramUser(t *testing.T) {
+	repo := newMockUserRepo()
+	svc := newTestService(repo, &mockValidator{}, &mockEncryptor{})
+
+	_, err := svc.LinkDiscordToTelegram(context.Background(), 99999, 88888)
+	if err == nil {
+		t.Error("expected error for non-existent telegram user")
+	}
+}
+
+func TestLinkDiscordToTelegram_DiscordAlreadyLinked(t *testing.T) {
+	repo := newMockUserRepo()
+	svc := newTestService(repo, &mockValidator{}, &mockEncryptor{})
+
+	svc.Register(context.Background(), 11111, "user_one")
+	svc.Register(context.Background(), 22222, "user_two")
+
+	_, err := svc.LinkDiscordToTelegram(context.Background(), 11111, 88888)
+	if err != nil {
+		t.Fatalf("first link failed: %v", err)
+	}
+
+	_, err = svc.LinkDiscordToTelegram(context.Background(), 22222, 88888)
+	if err == nil {
+		t.Error("expected error when discord already linked to another user")
+	}
+}
+
+func TestLinkDiscordToTelegram_SameUserIdempotent(t *testing.T) {
+	repo := newMockUserRepo()
+	svc := newTestService(repo, &mockValidator{}, &mockEncryptor{})
+
+	svc.Register(context.Background(), 99999, "idem")
+
+	u1, err := svc.LinkDiscordToTelegram(context.Background(), 99999, 88888)
+	if err != nil {
+		t.Fatalf("first link failed: %v", err)
+	}
+
+	u2, err := svc.LinkDiscordToTelegram(context.Background(), 99999, 88888)
+	if err != nil {
+		t.Fatalf("second link failed: %v", err)
+	}
+
+	if u1.ID != u2.ID {
+		t.Errorf("idempotent link returned different ids: %d vs %d", u1.ID, u2.ID)
+	}
+}
+
+func TestLinkDiscordToTelegram_LookupByBothPlatforms(t *testing.T) {
+	repo := newMockUserRepo()
+	svc := newTestService(repo, &mockValidator{}, &mockEncryptor{})
+
+	svc.Register(context.Background(), 99999, "dual")
+	svc.LinkDiscordToTelegram(context.Background(), 99999, 88888)
+
+	tgResult, _ := svc.Register(context.Background(), 99999, "dual")
+	dcResult, _ := svc.RegisterDiscord(context.Background(), 88888, "dual")
+
+	if tgResult.User.ID != dcResult.User.ID {
+		t.Errorf("telegram id %d != discord id %d", tgResult.User.ID, dcResult.User.ID)
 	}
 }

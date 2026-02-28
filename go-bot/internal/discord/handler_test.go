@@ -168,11 +168,28 @@ func (m *mockUserRepo) UpdateLastActive(_ context.Context, _ int, _ string) erro
 	return m.activeErr
 }
 
+func (m *mockUserRepo) LinkDiscordToTelegram(_ context.Context, telegramID, discordID int64) (*user.User, error) {
+	// look in users map (telegram users)
+	for _, u := range m.users {
+		if u.TelegramID != nil && *u.TelegramID == telegramID {
+			u.DiscordID = &discordID
+			m.discordUsers[discordID] = u
+			return u, nil
+		}
+	}
+	return nil, nil
+}
+
 func (m *mockUserRepo) Activate(_ context.Context, userID int) error {
 	if m.activateErr != nil {
 		return m.activateErr
 	}
 	for _, u := range m.discordUsers {
+		if u.ID == userID {
+			u.IsActivated = true
+		}
+	}
+	for _, u := range m.users {
 		if u.ID == userID {
 			u.IsActivated = true
 		}
@@ -226,6 +243,28 @@ func (m *mockUserRepo) seedDiscord(discordID int64, username string) *user.User 
 
 func (m *mockUserRepo) seedActivatedDiscord(discordID int64, username string) *user.User {
 	u := m.seedDiscord(discordID, username)
+	u.IsActivated = true
+	m.hasCredsVal = true
+	return u
+}
+
+func (m *mockUserRepo) seedTelegram(telegramID int64, username string) *user.User {
+	u := &user.User{
+		ID:          m.nextID,
+		UUID:        fmt.Sprintf("uuid-%d", m.nextID),
+		TelegramID:  &telegramID,
+		Username:    &username,
+		TradingMode: "paper",
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	m.nextID++
+	m.users[telegramID] = u
+	return u
+}
+
+func (m *mockUserRepo) seedActivatedTelegram(telegramID int64, username string) *user.User {
+	u := m.seedTelegram(telegramID, username)
 	u.IsActivated = true
 	m.hasCredsVal = true
 	return u
@@ -1234,6 +1273,111 @@ func TestHandleInteraction_UnknownCommand(t *testing.T) {
 	}
 }
 
+// --- link command tests ---
+
+func TestHandleLink_Success(t *testing.T) {
+	repo := newMockUserRepo()
+	repo.seedActivatedTelegram(99999, "telegram_user")
+	handler, bot := newTestHandler(repo, &mockExchange{}, &mockWatchlistRepo{}, newMockPrefsRepo())
+
+	handler.HandleInteraction(context.Background(), makeInteraction("88888", "link", strOpt("telegram_id", "99999")))
+
+	if len(bot.embeds) == 0 {
+		t.Fatal("expected embed response")
+	}
+	if bot.embeds[0].Title != "🔗 Accounts Linked" {
+		t.Errorf("expected linked title, got: %s", bot.embeds[0].Title)
+	}
+}
+
+func TestHandleLink_InvalidTelegramID(t *testing.T) {
+	repo := newMockUserRepo()
+	handler, bot := newTestHandler(repo, &mockExchange{}, &mockWatchlistRepo{}, newMockPrefsRepo())
+
+	handler.HandleInteraction(context.Background(), makeInteraction("88888", "link", strOpt("telegram_id", "not_a_number")))
+
+	if len(bot.messages) == 0 {
+		t.Fatal("expected error message")
+	}
+	if bot.lastMessage() != "invalid telegram id. it should be a number." {
+		t.Errorf("expected invalid id message, got: %s", bot.lastMessage())
+	}
+}
+
+func TestHandleLink_TelegramUserNotFound(t *testing.T) {
+	repo := newMockUserRepo()
+	handler, bot := newTestHandler(repo, &mockExchange{}, &mockWatchlistRepo{}, newMockPrefsRepo())
+
+	handler.HandleInteraction(context.Background(), makeInteraction("88888", "link", strOpt("telegram_id", "99999")))
+
+	if len(bot.messages) == 0 {
+		t.Fatal("expected error message")
+	}
+	if !strings.Contains(bot.lastMessage(), "❌") {
+		t.Errorf("expected error with ❌, got: %s", bot.lastMessage())
+	}
+}
+
+func TestHandleLink_AlreadyLinkedToDifferentUser(t *testing.T) {
+	repo := newMockUserRepo()
+	repo.seedActivatedTelegram(11111, "user_one")
+	repo.seedActivatedTelegram(22222, "user_two")
+
+	// link discord to first user
+	discordID := int64(88888)
+	u := repo.users[int64(11111)]
+	u.DiscordID = &discordID
+	repo.discordUsers[discordID] = u
+
+	handler, bot := newTestHandler(repo, &mockExchange{}, &mockWatchlistRepo{}, newMockPrefsRepo())
+
+	// try to link same discord to second user
+	handler.HandleInteraction(context.Background(), makeInteraction("88888", "link", strOpt("telegram_id", "22222")))
+
+	if len(bot.messages) == 0 {
+		t.Fatal("expected error message")
+	}
+	if !strings.Contains(bot.lastMessage(), "❌") {
+		t.Errorf("expected error with ❌, got: %s", bot.lastMessage())
+	}
+}
+
+func TestHandleLink_Idempotent(t *testing.T) {
+	repo := newMockUserRepo()
+	repo.seedActivatedTelegram(99999, "idem_user")
+	handler, bot := newTestHandler(repo, &mockExchange{}, &mockWatchlistRepo{}, newMockPrefsRepo())
+
+	// link once
+	handler.HandleInteraction(context.Background(), makeInteraction("88888", "link", strOpt("telegram_id", "99999")))
+	if len(bot.embeds) == 0 {
+		t.Fatal("expected embed on first link")
+	}
+
+	// link again — should succeed
+	handler.HandleInteraction(context.Background(), makeInteraction("88888", "link", strOpt("telegram_id", "99999")))
+	if len(bot.embeds) < 2 {
+		t.Fatal("expected embed on second link")
+	}
+	if bot.embeds[1].Title != "🔗 Accounts Linked" {
+		t.Errorf("expected linked title on retry, got: %s", bot.embeds[1].Title)
+	}
+}
+
+func TestHandleLink_ViaGuild(t *testing.T) {
+	repo := newMockUserRepo()
+	repo.seedActivatedTelegram(99999, "guild_user")
+	handler, bot := newTestHandler(repo, &mockExchange{}, &mockWatchlistRepo{}, newMockPrefsRepo())
+
+	handler.HandleInteraction(context.Background(), makeGuildInteraction("88888", "link", strOpt("telegram_id", "99999")))
+
+	if len(bot.embeds) == 0 {
+		t.Fatal("expected embed on guild link")
+	}
+	if bot.embeds[0].Title != "🔗 Accounts Linked" {
+		t.Errorf("expected linked title, got: %s", bot.embeds[0].Title)
+	}
+}
+
 func TestHandleInteraction_NilData(t *testing.T) {
 	repo := newMockUserRepo()
 	handler, bot := newTestHandler(repo, &mockExchange{}, &mockWatchlistRepo{}, newMockPrefsRepo())
@@ -1256,7 +1400,7 @@ func TestSlashCommands_AllDefined(t *testing.T) {
 	expectedNames := []string{
 		"start", "setup", "status", "help", "price", "balance",
 		"portfolio", "orderbook", "watchlist", "watchadd", "watchremove",
-		"watchreset", "settings", "set",
+		"watchreset", "settings", "set", "link",
 	}
 
 	if len(commands) != len(expectedNames) {

@@ -86,6 +86,9 @@ func SlashCommands() []ApplicationCommand {
 			{Name: "key", Description: "preference key (e.g. confidence, stoploss)", Type: OptionString, Required: true},
 			{Name: "value", Description: "new value", Type: OptionString, Required: true},
 		}},
+		{Name: "link", Description: "link your discord to an existing telegram account", Type: 1, Options: []ApplicationCommandOptionDef{
+			{Name: "telegram_id", Description: "your telegram user id (find it with /start on telegram)", Type: OptionString, Required: true},
+		}},
 	}
 }
 
@@ -135,6 +138,8 @@ func (h *Handler) handleCommand(ctx context.Context, interaction *Interaction) {
 		h.handleSettings(ctx, interaction)
 	case "set":
 		h.handleSet(ctx, interaction)
+	case "link":
+		h.handleLink(ctx, interaction)
 	default:
 		h.respond(interaction, "unknown command. use /help for available commands.", nil, nil)
 	}
@@ -712,6 +717,50 @@ func (h *Handler) handleSet(ctx context.Context, interaction *Interaction) {
 	}
 
 	h.respond(interaction, fmt.Sprintf("✅ %s updated. use `/settings` to see all preferences.", key), nil, nil)
+}
+
+func (h *Handler) handleLink(ctx context.Context, interaction *Interaction) {
+	discordUser := getInteractionUser(interaction)
+	if discordUser == nil {
+		h.respondEphemeral(interaction, "could not identify your account.")
+		return
+	}
+
+	discordID, err := strconv.ParseInt(discordUser.ID, 10, 64)
+	if err != nil {
+		h.respondEphemeral(interaction, "invalid discord user id.")
+		return
+	}
+
+	telegramIDStr := getOption(interaction, "telegram_id")
+	if telegramIDStr == "" {
+		h.respondEphemeral(interaction, "please provide your telegram id. example: `/link telegram_id:99999`")
+		return
+	}
+
+	telegramID, err := strconv.ParseInt(telegramIDStr, 10, 64)
+	if err != nil {
+		h.respondEphemeral(interaction, "invalid telegram id. it should be a number.")
+		return
+	}
+
+	linked, err := h.userSvc.LinkDiscordToTelegram(ctx, telegramID, discordID)
+	if err != nil {
+		h.respondEphemeral(interaction, fmt.Sprintf("❌ %s", err.Error()))
+		return
+	}
+
+	embed := Embed{
+		Title:       "🔗 Accounts Linked",
+		Description: fmt.Sprintf("your discord account has been linked to telegram user (id: %d).\n\nyour watchlist, preferences, and api keys are now shared across both platforms.", telegramID),
+		Color:       ColorGreen,
+		Fields: []EmbedField{
+			{Name: "User ID", Value: fmt.Sprintf("%d", linked.ID), Inline: true},
+			{Name: "Status", Value: "✅ Linked", Inline: true},
+		},
+	}
+
+	h.respond(interaction, "", []Embed{embed}, nil)
 }
 
 // --- component (button) handlers ---

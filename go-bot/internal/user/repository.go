@@ -236,6 +236,31 @@ func (r *Repository) CreateFromDiscord(ctx context.Context, discordID int64, use
 	return u, nil
 }
 
+// links a discord id to an existing user found by telegram id
+func (r *Repository) LinkDiscordToTelegram(ctx context.Context, telegramID, discordID int64) (*User, error) {
+	query := `
+		UPDATE users SET discord_id = $2, last_active_channel = 'discord', updated_at = NOW()
+		WHERE telegram_id = $1
+		RETURNING id, uuid, telegram_id, discord_id, username, is_activated, is_banned,
+				  trading_mode, leverage_enabled, last_active_channel, last_active_at,
+				  created_at, updated_at
+	`
+
+	u := &User{}
+	err := r.pool.QueryRow(ctx, query, telegramID, discordID).Scan(
+		&u.ID, &u.UUID, &u.TelegramID, &u.DiscordID, &u.Username,
+		&u.IsActivated, &u.IsBanned, &u.TradingMode, &u.LeverageEnabled,
+		&u.LastActiveChannel, &u.LastActiveAt, &u.CreatedAt, &u.UpdatedAt,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to link discord to telegram user: %w", err)
+	}
+	return u, nil
+}
+
 // hasValidCredentials checks if a user has valid api credentials
 func (r *Repository) HasValidCredentials(ctx context.Context, userID int) (bool, error) {
 	var exists bool

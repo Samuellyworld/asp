@@ -18,6 +18,7 @@ type userRepository interface {
 	CreateFromDiscord(ctx context.Context, discordID int64, username string) (*User, error)
 	CreateDefaultPreferences(ctx context.Context, userID int) error
 	UpdateLastActive(ctx context.Context, userID int, channel string) error
+	LinkDiscordToTelegram(ctx context.Context, telegramID, discordID int64) (*User, error)
 	Activate(ctx context.Context, userID int) error
 	SaveCredentials(ctx context.Context, cred *Credentials) (*Credentials, error)
 	HasValidCredentials(ctx context.Context, userID int) (bool, error)
@@ -224,6 +225,41 @@ func (s *Service) GetDecryptedCredentials(ctx context.Context, userID int) (stri
 
 	s.logAudit(ctx, userID, cred.ID, "decrypt", true, "")
 	return string(apiKey), string(apiSecret), nil
+}
+
+// links a discord identity to an existing telegram user
+func (s *Service) LinkDiscordToTelegram(ctx context.Context, telegramID, discordID int64) (*User, error) {
+	// check that the telegram user exists
+	existing, err := s.repo.FindByTelegramID(ctx, telegramID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up telegram user: %w", err)
+	}
+	if existing == nil {
+		return nil, fmt.Errorf("no user found with telegram id %d", telegramID)
+	}
+
+	// check if discord id is already linked to another user
+	discordUser, err := s.repo.FindByDiscordID(ctx, discordID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check existing discord link: %w", err)
+	}
+	if discordUser != nil {
+		if discordUser.ID == existing.ID {
+			return existing, nil // already linked to this user
+		}
+		return nil, fmt.Errorf("this discord account is already linked to a different user")
+	}
+
+	// perform the link
+	linked, err := s.repo.LinkDiscordToTelegram(ctx, telegramID, discordID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to link accounts: %w", err)
+	}
+	if linked == nil {
+		return nil, fmt.Errorf("no user found with telegram id %d", telegramID)
+	}
+
+	return linked, nil
 }
 
 func (s *Service) logAudit(ctx context.Context, userID, credentialID int, action string, success bool, errMsg string) {

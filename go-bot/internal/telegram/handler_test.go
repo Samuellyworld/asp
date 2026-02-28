@@ -165,6 +165,8 @@ func (m *mockUserRepo) Create(_ context.Context, telegramID int64, username stri
 
 func (m *mockUserRepo) CreateDefaultPreferences(_ context.Context, _ int) error { return nil }
 func (m *mockUserRepo) UpdateLastActive(_ context.Context, _ int, _ string) error { return nil }
+func (m *mockUserRepo) FindByDiscordID(_ context.Context, _ int64) (*user.User, error) { return nil, nil }
+func (m *mockUserRepo) CreateFromDiscord(_ context.Context, _ int64, _ string) (*user.User, error) { return nil, nil }
 
 func (m *mockUserRepo) Activate(_ context.Context, userID int) error {
 	if m.activateErr != nil {

@@ -190,6 +190,52 @@ func (r *Repository) GetCredentials(ctx context.Context, userID int, exchange st
 	return c, nil
 }
 
+// findByDiscordID looks up a user by their discord id
+func (r *Repository) FindByDiscordID(ctx context.Context, discordID int64) (*User, error) {
+	query := `
+		SELECT id, uuid, telegram_id, discord_id, username, is_activated, is_banned,
+			   trading_mode, leverage_enabled, last_active_channel, last_active_at,
+			   created_at, updated_at
+		FROM users WHERE discord_id = $1
+	`
+
+	u := &User{}
+	err := r.pool.QueryRow(ctx, query, discordID).Scan(
+		&u.ID, &u.UUID, &u.TelegramID, &u.DiscordID, &u.Username,
+		&u.IsActivated, &u.IsBanned, &u.TradingMode, &u.LeverageEnabled,
+		&u.LastActiveChannel, &u.LastActiveAt, &u.CreatedAt, &u.UpdatedAt,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to find user by discord id: %w", err)
+	}
+	return u, nil
+}
+
+// createFromDiscord inserts a new user from discord and returns the user with populated id/uuid
+func (r *Repository) CreateFromDiscord(ctx context.Context, discordID int64, username string) (*User, error) {
+	query := `
+		INSERT INTO users (discord_id, username, last_active_channel, last_active_at)
+		VALUES ($1, $2, 'discord', NOW())
+		RETURNING id, uuid, discord_id, username, is_activated, is_banned,
+				  trading_mode, leverage_enabled, last_active_channel, last_active_at,
+				  created_at, updated_at
+	`
+
+	u := &User{}
+	err := r.pool.QueryRow(ctx, query, discordID, username).Scan(
+		&u.ID, &u.UUID, &u.DiscordID, &u.Username, &u.IsActivated,
+		&u.IsBanned, &u.TradingMode, &u.LeverageEnabled,
+		&u.LastActiveChannel, &u.LastActiveAt, &u.CreatedAt, &u.UpdatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create discord user: %w", err)
+	}
+	return u, nil
+}
+
 // hasValidCredentials checks if a user has valid api credentials
 func (r *Repository) HasValidCredentials(ctx context.Context, userID int) (bool, error) {
 	var exists bool

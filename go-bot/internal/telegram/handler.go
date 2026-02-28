@@ -13,9 +13,15 @@ import (
 	"github.com/trading-bot/go-bot/internal/watchlist"
 )
 
+// botClient defines the interface for sending telegram messages
+type botClient interface {
+	SendMessage(chatID int64, text string) error
+	DeleteMessage(chatID int64, messageID int) error
+}
+
 // Handler processes incoming telegram messages
 type Handler struct {
-	bot       *Bot
+	bot       botClient
 	userSvc   *user.Service
 	wizard    *user.SetupWizard
 	watchSvc  *watchlist.Service
@@ -23,7 +29,7 @@ type Handler struct {
 }
 
 func NewHandler(
-	bot *Bot,
+	bot botClient,
 	userSvc *user.Service,
 	wizard *user.SetupWizard,
 	watchSvc *watchlist.Service,

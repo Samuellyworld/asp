@@ -9,12 +9,22 @@ import (
 
 const maxWatchlistSize = 25
 
-//  handles watchlist business logic
-type Service struct {
-	repo *Repository
+// repository defines the data operations for watchlist management
+type repository interface {
+	GetByUserID(ctx context.Context, userID int) ([]Item, error)
+	Add(ctx context.Context, userID int, symbol string) error
+	Remove(ctx context.Context, userID int, symbol string) error
+	Exists(ctx context.Context, userID int, symbol string) (bool, error)
+	Count(ctx context.Context, userID int) (int, error)
+	Reset(ctx context.Context, userID int) error
 }
 
-func NewService(repo *Repository) *Service {
+// handles watchlist business logic
+type Service struct {
+	repo repository
+}
+
+func NewService(repo repository) *Service {
 	return &Service{repo: repo}
 }
 

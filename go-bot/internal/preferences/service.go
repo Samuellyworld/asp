@@ -7,12 +7,22 @@ import (
 	"strings"
 )
 
-//  handles preferences business logic
-type Service struct {
-	repo *Repository
+// repository defines the data operations for preferences management
+type repository interface {
+	GetScanning(ctx context.Context, userID int) (*Scanning, error)
+	UpdateScanning(ctx context.Context, s *Scanning) error
+	GetNotification(ctx context.Context, userID int) (*Notification, error)
+	UpdateNotification(ctx context.Context, n *Notification) error
+	GetTrading(ctx context.Context, userID int) (*Trading, error)
+	UpdateTrading(ctx context.Context, t *Trading) error
 }
 
-func NewService(repo *Repository) *Service {
+// handles preferences business logic
+type Service struct {
+	repo repository
+}
+
+func NewService(repo repository) *Service {
 	return &Service{repo: repo}
 }
 

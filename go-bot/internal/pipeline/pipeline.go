@@ -1,5 +1,5 @@
 // package pipeline orchestrates the full analysis flow:
-// binance market data → rust indicators → python ml → claude decision
+// binance market data - rust indicators - python ml - claude decision
 package pipeline
 
 import (

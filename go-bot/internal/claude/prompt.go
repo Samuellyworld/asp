@@ -27,8 +27,16 @@ Rules:
 - Position size should be proportional to confidence (higher confidence = larger position, max $500)
 - If data is insufficient or conflicting, choose HOLD
 - Be conservative — false positives are worse than missed opportunities
-- Consider ALL available signals: indicators, ML predictions, sentiment, and market regime
+- Consider ALL available signals: indicators, ML predictions, sentiment, market regime, and alternative data
 - Keep reasoning concise (under 100 words)
+- When order flow data is available, use buy/sell ratio and depth imbalance for entry timing
+- When on-chain data shows high exchange inflows (positive net flow), be more cautious about buying
+- When fear/greed index is extreme (< 20 or > 80), consider contrarian positions
+- When higher-timeframe context is provided, use it for confirmation:
+  * Only take longs if at least one HTF trend is "up" or "neutral"
+  * Only take shorts if at least one HTF trend is "down" or "neutral"
+  * If HTF and primary timeframe disagree, reduce confidence by 15-20
+  * HTF overbought/oversold adds weight to reversal signals
 - When market regime is provided, adapt strategy accordingly:
   * Trending: favor trend-following entries, wider stops
   * Ranging: favor mean-reversion at support/resistance
@@ -85,6 +93,20 @@ func buildUserPrompt(input *AnalysisInput) string {
 	if input.Regime != nil {
 		b.WriteString("## Market Regime\n")
 		b.WriteString(formatRegime(input.Regime))
+		b.WriteString("\n")
+	}
+
+	// alternative data sources
+	if input.AltData != nil {
+		b.WriteString("## Alternative Data\n")
+		b.WriteString(formatAltData(input.AltData))
+		b.WriteString("\n")
+	}
+
+	// higher-timeframe context
+	if len(input.HTFContext) > 0 {
+		b.WriteString("## Higher Timeframe Context\n")
+		b.WriteString(formatHTFContext(input.HTFContext))
 		b.WriteString("\n")
 	}
 
@@ -174,5 +196,101 @@ func formatRegime(r *RegimeInfo) string {
 	b.WriteString(fmt.Sprintf("- Trend direction: %s\n", r.TrendDir))
 	b.WriteString(fmt.Sprintf("- Classification confidence: %.0f%%\n", r.Confidence))
 	b.WriteString(fmt.Sprintf("- Assessment: %s\n", r.Description))
+	return b.String()
+}
+
+// formats alternative data for the prompt
+func formatAltData(alt *AltData) string {
+	var b strings.Builder
+
+	if alt.OrderFlow != nil {
+		b.WriteString("### Order Flow\n")
+		b.WriteString(fmt.Sprintf("- Buy/Sell Ratio: %.2f", alt.OrderFlow.BuySellRatio))
+		if alt.OrderFlow.BuySellRatio > 1.2 {
+			b.WriteString(" (buyer dominated)")
+		} else if alt.OrderFlow.BuySellRatio < 0.8 {
+			b.WriteString(" (seller dominated)")
+		} else {
+			b.WriteString(" (balanced)")
+		}
+		b.WriteString("\n")
+		b.WriteString(fmt.Sprintf("- Depth Imbalance: %.2f", alt.OrderFlow.DepthImbalance))
+		if alt.OrderFlow.DepthImbalance > 0.2 {
+			b.WriteString(" (buy wall)")
+		} else if alt.OrderFlow.DepthImbalance < -0.2 {
+			b.WriteString(" (sell wall)")
+		}
+		b.WriteString("\n")
+		b.WriteString(fmt.Sprintf("- Large Buy Orders: %d, Large Sell Orders: %d\n",
+			alt.OrderFlow.LargeBuyOrders, alt.OrderFlow.LargeSellOrders))
+		b.WriteString(fmt.Sprintf("- Spread: %.1f bps\n", alt.OrderFlow.SpreadBps))
+	}
+
+	if alt.OnChain != nil {
+		b.WriteString("### On-Chain Metrics\n")
+		b.WriteString(fmt.Sprintf("- Net Exchange Flow: %.2f", alt.OnChain.NetFlow))
+		if alt.OnChain.NetFlow > 0 {
+			b.WriteString(" (coins entering exchanges = potential sell pressure)")
+		} else if alt.OnChain.NetFlow < 0 {
+			b.WriteString(" (coins leaving exchanges = accumulation)")
+		}
+		b.WriteString("\n")
+		if alt.OnChain.WhaleTransactions > 0 {
+			b.WriteString(fmt.Sprintf("- Whale Transactions (>$100k): %d\n", alt.OnChain.WhaleTransactions))
+		}
+		if alt.OnChain.ActiveAddresses > 0 {
+			b.WriteString(fmt.Sprintf("- Active Addresses (24h): %d\n", alt.OnChain.ActiveAddresses))
+		}
+	}
+
+	if alt.FundingRate != nil {
+		b.WriteString("### Funding Rate\n")
+		b.WriteString(fmt.Sprintf("- Current Rate: %.4f%%\n", alt.FundingRate.Rate*100))
+		b.WriteString(fmt.Sprintf("- Annualized: %.1f%%\n", alt.FundingRate.Annualized))
+		if alt.FundingRate.Rate > 0.001 {
+			b.WriteString("- Signal: High positive funding = crowded longs (bearish contrarian)\n")
+		} else if alt.FundingRate.Rate < -0.001 {
+			b.WriteString("- Signal: Negative funding = crowded shorts (bullish contrarian)\n")
+		}
+	}
+
+	if alt.Sentiment != nil {
+		b.WriteString("### Market Sentiment\n")
+		b.WriteString(fmt.Sprintf("- Overall: %s (score: %.2f)\n", alt.Sentiment.OverallLabel, alt.Sentiment.OverallScore))
+		b.WriteString(fmt.Sprintf("- Fear & Greed Index: %d/100\n", alt.Sentiment.FearGreedIndex))
+	}
+
+	return b.String()
+}
+
+// formats higher-timeframe context for the prompt
+func formatHTFContext(htf []HTFSnapshot) string {
+	var b strings.Builder
+	for _, snap := range htf {
+		b.WriteString(fmt.Sprintf("### %s Timeframe\n", snap.Timeframe))
+		if snap.TrendDir != "" {
+			b.WriteString(fmt.Sprintf("- Trend: %s\n", snap.TrendDir))
+		}
+		if snap.RSI > 0 {
+			label := "neutral"
+			if snap.RSI < 30 {
+				label = "oversold"
+			} else if snap.RSI > 70 {
+				label = "overbought"
+			}
+			b.WriteString(fmt.Sprintf("- RSI: %.1f (%s)\n", snap.RSI, label))
+		}
+		b.WriteString(fmt.Sprintf("- MACD Histogram: %.4f\n", snap.MACDHist))
+		b.WriteString(fmt.Sprintf("- BB Position: %.2f\n", snap.BBPosition))
+		if snap.EMASlope != 0 {
+			dir := "flat"
+			if snap.EMASlope > 0.1 {
+				dir = "rising"
+			} else if snap.EMASlope < -0.1 {
+				dir = "falling"
+			}
+			b.WriteString(fmt.Sprintf("- EMA Slope: %.2f%% (%s)\n", snap.EMASlope, dir))
+		}
+	}
 	return b.String()
 }

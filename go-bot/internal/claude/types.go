@@ -88,6 +88,56 @@ type AnalysisInput struct {
 	Sentiment  *Sentiment    `json:"sentiment,omitempty"`
 	Costs      *TradingCosts `json:"costs,omitempty"`
 	Regime     *RegimeInfo   `json:"regime,omitempty"`
+	AltData    *AltData      `json:"alt_data,omitempty"`       // alternative data sources
+	HTFContext []HTFSnapshot `json:"htf_context,omitempty"`    // higher-timeframe context
+}
+
+// higher-timeframe snapshot for multi-timeframe confirmation
+type HTFSnapshot struct {
+	Timeframe  string  `json:"timeframe"`
+	TrendDir   string  `json:"trend_dir"`   // up, down, neutral
+	RSI        float64 `json:"rsi"`
+	MACDHist   float64 `json:"macd_hist"`   // positive = bullish momentum
+	BBPosition float64 `json:"bb_position"` // 0=lower, 0.5=middle, 1=upper
+	EMASlope   float64 `json:"ema_slope"`   // positive = uptrend
+}
+
+// alternative data sources for enhanced analysis
+type AltData struct {
+	OrderFlow   *OrderFlowData   `json:"order_flow,omitempty"`
+	OnChain     *OnChainData     `json:"on_chain,omitempty"`
+	FundingRate *FundingData     `json:"funding_rate,omitempty"`
+	Sentiment   *SentimentData   `json:"sentiment,omitempty"`
+}
+
+// order flow / market microstructure data
+type OrderFlowData struct {
+	BuySellRatio    float64 `json:"buy_sell_ratio"`    // >1 = more buyers
+	DepthImbalance  float64 `json:"depth_imbalance"`   // positive = buy wall
+	LargeBuyOrders  int     `json:"large_buy_orders"`
+	LargeSellOrders int     `json:"large_sell_orders"`
+	SpreadBps       float64 `json:"spread_bps"`
+}
+
+// on-chain metrics
+type OnChainData struct {
+	NetFlow           float64 `json:"net_flow"`           // positive = sell pressure
+	WhaleTransactions int     `json:"whale_transactions"`
+	ActiveAddresses   int64   `json:"active_addresses"`
+	NVTRatio          float64 `json:"nvt_ratio"`
+}
+
+// funding rate data for futures
+type FundingData struct {
+	Rate       float64 `json:"rate"`
+	Annualized float64 `json:"annualized_pct"`
+}
+
+// aggregated sentiment from news/social
+type SentimentData struct {
+	OverallScore   float64 `json:"overall_score"`    // -1 to 1
+	OverallLabel   string  `json:"overall_label"`    // BULLISH/BEARISH/NEUTRAL
+	FearGreedIndex int     `json:"fear_greed_index"` // 0-100
 }
 
 // the trade plan extracted from claude's response

@@ -38,6 +38,11 @@ type AIProvider interface {
 	Analyze(ctx context.Context, input *claude.AnalysisInput) (*claude.Decision, error)
 }
 
+// provides alternative data (order flow, on-chain, sentiment, funding)
+type AltDataProvider interface {
+	Fetch(ctx context.Context, symbol string) *claude.AltData
+}
+
 // holds the full analysis output from all services
 type Result struct {
 	Symbol     string
@@ -45,6 +50,7 @@ type Result struct {
 	Indicators *analysis.AnalysisResult
 	Prediction *mlclient.PricePredictionResponse
 	Sentiment  *mlclient.SentimentResponse
+	AltData    *claude.AltData
 	Decision   *claude.Decision
 	Latency    time.Duration
 	Errors     []string
@@ -56,7 +62,9 @@ type Pipeline struct {
 	indicators IndicatorProvider
 	ml         MLProvider
 	ai         AIProvider
+	altData    AltDataProvider
 	timeframe  string
+	timeframes []string // for multi-timeframe analysis
 }
 
 // creates a new pipeline with all service clients
@@ -67,7 +75,23 @@ func New(ex ExchangeProvider, ind IndicatorProvider, ml MLProvider, ai AIProvide
 		ml:         ml,
 		ai:         ai,
 		timeframe:  "4h",
+		timeframes: []string{"4h"},
 	}
+}
+
+// SetAltData configures the alternative data provider.
+func (p *Pipeline) SetAltData(provider AltDataProvider) {
+	p.altData = provider
+}
+
+// SetTimeframes configures multi-timeframe analysis.
+// The first timeframe is the primary decision timeframe.
+func (p *Pipeline) SetTimeframes(timeframes []string) {
+	if len(timeframes) == 0 {
+		return
+	}
+	p.timeframes = timeframes
+	p.timeframe = timeframes[0]
 }
 
 // runs the full analysis pipeline for a symbol
@@ -90,13 +114,15 @@ func (p *Pipeline) Analyze(ctx context.Context, symbol string) (*Result, error) 
 		indicators *analysis.AnalysisResult
 		prediction *mlclient.PricePredictionResponse
 		sentiment  *mlclient.SentimentResponse
+		altData    *claude.AltData
+		htfCtx     []claude.HTFSnapshot
 		indErr     error
 		predErr    error
 		sentErr    error
 		wg         sync.WaitGroup
 	)
 
-	wg.Add(3)
+	wg.Add(5)
 
 	// rust indicators
 	go func() {
@@ -125,6 +151,22 @@ func (p *Pipeline) Analyze(ctx context.Context, symbol string) (*Result, error) 
 		}
 	}()
 
+	// alternative data (order flow, on-chain, sentiment, funding)
+	go func() {
+		defer wg.Done()
+		if p.altData != nil {
+			altData = p.altData.Fetch(ctx, symbol)
+		}
+	}()
+
+	// higher-timeframe context (skip primary timeframe, fetch others)
+	go func() {
+		defer wg.Done()
+		if len(p.timeframes) > 1 {
+			htfCtx = p.fetchHTFContext(ctx, symbol)
+		}
+	}()
+
 	wg.Wait()
 
 	// collect results, log errors but continue
@@ -146,8 +188,11 @@ func (p *Pipeline) Analyze(ctx context.Context, symbol string) (*Result, error) 
 		result.Sentiment = sentiment
 	}
 
+	result.AltData = altData
+
 	// step 4: feed everything to claude
-	aiInput := buildAIInput(symbol, ticker, candles, indicators, prediction, sentiment)
+	aiInput := buildAIInput(symbol, ticker, candles, indicators, prediction, sentiment, altData)
+	aiInput.HTFContext = htfCtx
 	decision, err := p.ai.Analyze(ctx, aiInput)
 	if err != nil {
 		return nil, fmt.Errorf("ai analysis failed: %w", err)
@@ -171,6 +216,51 @@ func (p *Pipeline) fetchMarketData(ctx context.Context, symbol string) (*exchang
 	}
 
 	return ticker, candles, nil
+}
+
+// fetchHTFContext fetches candles for higher timeframes and runs indicators
+// to provide multi-timeframe confirmation signals
+func (p *Pipeline) fetchHTFContext(ctx context.Context, symbol string) []claude.HTFSnapshot {
+	var snapshots []claude.HTFSnapshot
+	for _, tf := range p.timeframes[1:] {
+		candles, err := p.exchange.GetCandles(ctx, symbol, tf, 50)
+		if err != nil || len(candles) < 28 {
+			continue
+		}
+		ac := exchangeToAnalysisCandles(candles)
+		ind, err := p.indicators.AnalyzeAll(ctx, ac, nil)
+		if err != nil {
+			continue
+		}
+		snap := claude.HTFSnapshot{Timeframe: tf}
+		if ind.RSI != nil {
+			snap.RSI = ind.RSI.Value
+		}
+		if ind.MACD != nil {
+			snap.MACDHist = ind.MACD.Histogram
+		}
+		if ind.Bollinger != nil && ind.Bollinger.Upper > ind.Bollinger.Lower {
+			lastClose := candles[len(candles)-1].Close
+			snap.BBPosition = (lastClose - ind.Bollinger.Lower) / (ind.Bollinger.Upper - ind.Bollinger.Lower)
+		}
+		if ind.EMA != nil && len(candles) >= 2 {
+			prevClose := candles[len(candles)-2].Close
+			currClose := candles[len(candles)-1].Close
+			snap.EMASlope = (currClose - prevClose) / prevClose * 100
+		}
+		// determine trend direction from indicators
+		if ind.MACD != nil && ind.EMA != nil {
+			if ind.MACD.Histogram > 0 && snap.EMASlope > 0 {
+				snap.TrendDir = "up"
+			} else if ind.MACD.Histogram < 0 && snap.EMASlope < 0 {
+				snap.TrendDir = "down"
+			} else {
+				snap.TrendDir = "neutral"
+			}
+		}
+		snapshots = append(snapshots, snap)
+	}
+	return snapshots
 }
 
 // converts exchange candles to analysis candles for the rust engine
@@ -228,6 +318,7 @@ func buildAIInput(
 	indicators *analysis.AnalysisResult,
 	prediction *mlclient.PricePredictionResponse,
 	sentiment *mlclient.SentimentResponse,
+	altData *claude.AltData,
 ) *claude.AnalysisInput {
 	input := &claude.AnalysisInput{
 		Market: claude.MarketData{
@@ -295,6 +386,8 @@ func buildAIInput(
 			Description: det.Description,
 		}
 	}
+
+	input.AltData = altData
 
 	return input
 }

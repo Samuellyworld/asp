@@ -19,7 +19,9 @@ import (
 	"github.com/trading-bot/go-bot/internal/claude"
 	"github.com/trading-bot/go-bot/internal/config"
 	"github.com/trading-bot/go-bot/internal/database"
+	"github.com/trading-bot/go-bot/internal/datasources"
 	"github.com/trading-bot/go-bot/internal/discord"
+	"github.com/trading-bot/go-bot/internal/exchange"
 	"github.com/trading-bot/go-bot/internal/leverage"
 	"github.com/trading-bot/go-bot/internal/livetrading"
 	mlclient "github.com/trading-bot/go-bot/internal/ml-client"
@@ -149,6 +151,46 @@ func runBot(cmd *cobra.Command, args []string) error {
 	// assemble the analysis pipeline
 	pipe := pipeline.New(binanceClient, indicatorProvider, mlProvider, aiProvider)
 
+	// --- alternative data sources ---
+
+	// order flow provider (binance book + aggTrades)
+	orderFlowProvider := datasources.NewBinanceOrderFlow(cfg.Binance.APIURL())
+
+	// funding rate provider (binance futures)
+	fundingProvider := datasources.NewBinanceFundingRate(cfg.Binance.FuturesAPIURL())
+
+	// sentiment aggregator (fear/greed + optional ML blending)
+	var mlAnalyze func(context.Context, string) (float64, string, float64, error)
+	if mlProvider != nil {
+		mlAnalyze = func(ctx context.Context, text string) (float64, string, float64, error) {
+			resp, err := mlProvider.AnalyzeSentiment(ctx, text)
+			if err != nil {
+				return 0, "", 0, err
+			}
+			return resp.Score, resp.Label, resp.Confidence, nil
+		}
+	}
+	sentimentAgg := datasources.NewHTTPSentimentAggregator(mlAnalyze)
+
+	// wire alt data aggregator into the pipeline
+	altAgg := datasources.NewAggregator(
+		datasources.WithOrderFlow(orderFlowProvider),
+		datasources.WithFundingRate(fundingProvider),
+		datasources.WithSentiment(sentimentAgg),
+	)
+	pipe.SetAltData(&altDataAdapter{agg: altAgg})
+
+	// multi-timeframe analysis (primary + higher timeframes)
+	pipe.SetTimeframes([]string{"4h", "1d"})
+	log.Println("pipeline configured with alt data + multi-timeframe (4h, 1d)")
+
+	// slippage model (adaptive, learns from trade fills)
+	slippageStore := exchange.NewSlippageStore(pg.Pool())
+	slippageModel := exchange.NewSlippageModel(slippageStore, 5.0)
+	slippageTracker := exchange.NewSlippageTracker(10000)
+	slippageTracker.SetModel(slippageModel)
+	log.Println("adaptive slippage model initialized")
+
 	// --- phase 3: trading infrastructure ---
 
 	// websocket price feed — provides sub-second price updates with REST fallback
@@ -169,6 +211,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 		oppConfig.ExpiryDuration = cfg.Trading.OpportunityExpiry()
 	}
 	oppManager := opportunity.NewManager(oppConfig)
+	oppManager.SetStore(opportunity.NewStore(pg.Pool()))
 	oppManager.StartExpiry()
 	defer oppManager.StopExpiry()
 

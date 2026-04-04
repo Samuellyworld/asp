@@ -21,6 +21,7 @@ type Config struct {
 	RustEngine RustEngineConfig
 	MLService  MLServiceConfig
 	Leverage   LeverageConfig
+	API        APIConfig
 	LogLevel   string
 }
 
@@ -56,6 +57,13 @@ func (r RedisConfig) Addr() string {
 // holds encryption settings
 type SecurityConfig struct {
 	MasterKey string
+}
+
+// holds analytics REST API settings
+type APIConfig struct {
+	Enabled bool
+	Key     string // API key for authentication (empty = no auth)
+	Port    int    // port for the API server (0 = same as health on :8080)
 }
 
 //  holds telegram bot settings
@@ -221,6 +229,11 @@ func Load() (*Config, error) {
 			LiquidationCriticalPct:  viper.GetFloat64("leverage.liquidation_critical_pct"),
 			LiquidationAutoClosePct: viper.GetFloat64("leverage.liquidation_auto_close_pct"),
 			MonitorIntervalSeconds:  viper.GetInt("leverage.monitor_interval_seconds"),
+		},
+		API: APIConfig{
+			Enabled: viper.GetBool("api.enabled"),
+			Key:     viper.GetString("api.key"),
+			Port:    viper.GetInt("api.port"),
 		},
 		LogLevel: viper.GetString("log_level"),
 	}

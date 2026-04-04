@@ -13,7 +13,9 @@ import (
 
 	"github.com/trading-bot/go-bot/internal/claude"
 	"github.com/trading-bot/go-bot/internal/database"
+	"github.com/trading-bot/go-bot/internal/exchange"
 	"github.com/trading-bot/go-bot/internal/leverage"
+	"github.com/trading-bot/go-bot/internal/livetrading"
 	"github.com/trading-bot/go-bot/internal/papertrading"
 	"github.com/trading-bot/go-bot/internal/pipeline"
 )
@@ -402,6 +404,147 @@ func (a *leverageTradeLoggerAdapter) LogClose(ctx context.Context, pos *leverage
 	isWin := pos.PnL > 0
 	if err := a.daily.IncrementTrade(ctx, pos.UserID, pos.PnL, pos.FundingPaid, isWin); err != nil {
 		slog.Error("failed to increment leverage trade stats", "user_id", pos.UserID, "error", err)
+	}
+	return nil
+}
+
+// --- live trading persistence adapters ---
+
+// implements livetrading.PositionStore by wrapping PositionRepository
+type livePositionStoreAdapter struct {
+	repo *database.PositionRepository
+}
+
+func (a *livePositionStoreAdapter) SavePosition(ctx context.Context, pos *livetrading.LivePosition) error {
+	side := "LONG"
+	if pos.Side == exchange.SideSell {
+		side = "SHORT"
+	}
+	p := &database.PersistedPosition{
+		InternalID:   pos.ID,
+		UserID:       pos.UserID,
+		Symbol:       pos.Symbol,
+		Side:         side,
+		PositionType: "SPOT",
+		Status:       "OPEN",
+		EntryPrice:   pos.EntryPrice,
+		Quantity:     pos.Quantity,
+		PositionSize: pos.PositionSize,
+		StopLoss:     pos.StopLoss,
+		TakeProfit:   pos.TakeProfit,
+		IsPaper:      false,
+		Platform:     pos.Platform,
+		OpenedAt:     pos.OpenedAt,
+	}
+	return a.repo.Insert(ctx, p)
+}
+
+func (a *livePositionStoreAdapter) ClosePosition(ctx context.Context, pos *livetrading.LivePosition) error {
+	closedAt := time.Now()
+	if pos.ClosedAt != nil {
+		closedAt = *pos.ClosedAt
+	}
+	return a.repo.UpdateClose(ctx, pos.ID, "CLOSED", pos.CloseReason,
+		pos.ClosePrice, pos.PnL, 0, closedAt)
+}
+
+// implements livetrading.TradeLogger by wrapping TradeRepository + DailyStatsRepository
+type liveTradeLoggerAdapter struct {
+	trades *database.TradeRepository
+	daily  *database.DailyStatsRepository
+}
+
+func (a *liveTradeLoggerAdapter) LogOpen(ctx context.Context, pos *livetrading.LivePosition) error {
+	side := "BUY"
+	if pos.Side == exchange.SideSell {
+		side = "SELL"
+	}
+	rec := &database.TradeRecord{
+		UserID:          pos.UserID,
+		Symbol:          pos.Symbol,
+		Side:            side,
+		TradeType:       "SPOT",
+		Quantity:        pos.Quantity,
+		Price:           pos.EntryPrice,
+		IsPaper:         false,
+		ExchangeOrderID: fmt.Sprintf("%d", pos.MainOrderID),
+		ExecutedAt:      pos.OpenedAt,
+	}
+	_, err := a.trades.Insert(ctx, rec)
+	return err
+}
+
+func (a *liveTradeLoggerAdapter) LogClose(ctx context.Context, pos *livetrading.LivePosition) error {
+	side := "SELL"
+	if pos.Side == exchange.SideSell {
+		side = "BUY"
+	}
+	executedAt := time.Now()
+	if pos.ClosedAt != nil {
+		executedAt = *pos.ClosedAt
+	}
+	rec := &database.TradeRecord{
+		UserID:     pos.UserID,
+		Symbol:     pos.Symbol,
+		Side:       side,
+		TradeType:  "SPOT",
+		Quantity:   pos.Quantity,
+		Price:      pos.ClosePrice,
+		IsPaper:    false,
+		ExecutedAt: executedAt,
+	}
+	if _, err := a.trades.Insert(ctx, rec); err != nil {
+		return err
+	}
+
+	// increment daily trade stats
+	isWin := pos.PnL > 0
+	if err := a.daily.IncrementTrade(ctx, pos.UserID, pos.PnL, 0, isWin); err != nil {
+		slog.Error("failed to increment live trade stats", "user_id", pos.UserID, "error", err)
+	}
+	return nil
+}
+
+// recoverLivePositions loads open non-paper SPOT positions from the database
+// and restores them into the live executor's in-memory map.
+func recoverLivePositions(ctx context.Context, repo *database.PositionRepository, executor *livetrading.Executor) error {
+	rows, err := repo.LoadOpenLiveSpot(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load open live positions: %w", err)
+	}
+
+	for _, r := range rows {
+		side := exchange.SideBuy
+		if r.Side == "SHORT" || r.Side == "SELL" {
+			side = exchange.SideSell
+		}
+		pos := &livetrading.LivePosition{
+			ID:           r.InternalID,
+			UserID:       r.UserID,
+			Symbol:       r.Symbol,
+			Side:         side,
+			EntryPrice:   r.EntryPrice,
+			Quantity:     r.Quantity,
+			PositionSize: r.PositionSize,
+			StopLoss:     r.StopLoss,
+			TakeProfit:   r.TakeProfit,
+			Status:       "open",
+			OpenedAt:     r.OpenedAt,
+			Platform:     r.Platform,
+		}
+		executor.RestorePosition(pos)
+		slog.Info("recovered live position", "id", r.InternalID, "symbol", r.Symbol)
+	}
+
+	// resume ID generation
+	maxID, err := repo.MaxInternalID(ctx, "live_")
+	if err != nil {
+		return fmt.Errorf("failed to get max live position ID: %w", err)
+	}
+	executor.SetNextID(maxID + 1)
+
+	if len(rows) > 0 {
+		slog.Info("live position recovery complete", "count", len(rows))
 	}
 	return nil
 }

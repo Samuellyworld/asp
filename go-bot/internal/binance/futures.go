@@ -23,42 +23,49 @@ const (
 
 // client for binance usdt-m futures api
 type FuturesClient struct {
-	httpClient *http.Client
-	baseURL    string
-	testnet    bool
+	httpClient  *http.Client
+	baseURL     string
+	testnet     bool
+	rateLimiter *RateLimiter
 }
 
 // creates a new futures client
 func NewFuturesClient(baseURL string, testnet bool) *FuturesClient {
 	return &FuturesClient{
-		httpClient: &http.Client{Timeout: 15 * time.Second},
-		baseURL:    baseURL,
-		testnet:    testnet,
+		httpClient:  &http.Client{Timeout: 15 * time.Second},
+		baseURL:     baseURL,
+		testnet:     testnet,
+		rateLimiter: NewRateLimiter(FuturesWeightLimit),
 	}
 }
 
+// SetRateLimiter allows sharing a rate limiter across futures clients
+func (c *FuturesClient) SetRateLimiter(rl *RateLimiter) {
+	c.rateLimiter = rl
+}
+
 // sets the leverage for a symbol
-func (c *FuturesClient) SetLeverage(symbol string, leverage int, apiKey, apiSecret string) error {
+func (c *FuturesClient) SetLeverage(ctx context.Context, symbol string, leverage int, apiKey, apiSecret string) error {
 	params := url.Values{}
 	params.Set("symbol", toBinanceSymbol(symbol))
 	params.Set("leverage", strconv.Itoa(leverage))
 
-	_, err := c.signedRawRequest(context.TODO(), http.MethodPost, "/fapi/v1/leverage", params, apiKey, apiSecret)
+	_, err := c.signedRawRequest(ctx, http.MethodPost, "/fapi/v1/leverage", params, apiKey, apiSecret)
 	return err
 }
 
 // sets the margin type (isolated or cross) for a symbol
-func (c *FuturesClient) SetMarginType(symbol string, marginType string, apiKey, apiSecret string) error {
+func (c *FuturesClient) SetMarginType(ctx context.Context, symbol string, marginType string, apiKey, apiSecret string) error {
 	params := url.Values{}
 	params.Set("symbol", toBinanceSymbol(symbol))
 	params.Set("marginType", marginType)
 
-	_, err := c.signedRawRequest(context.TODO(), http.MethodPost, "/fapi/v1/marginType", params, apiKey, apiSecret)
+	_, err := c.signedRawRequest(ctx, http.MethodPost, "/fapi/v1/marginType", params, apiKey, apiSecret)
 	return err
 }
 
 // places a futures order (market or limit)
-func (c *FuturesClient) PlaceOrder(symbol string, side exchange.OrderSide, orderType exchange.OrderType, quantity, price float64, apiKey, apiSecret string) (*FuturesOrder, error) {
+func (c *FuturesClient) PlaceOrder(ctx context.Context, symbol string, side exchange.OrderSide, orderType exchange.OrderType, quantity, price float64, apiKey, apiSecret string) (*FuturesOrder, error) {
 	params := url.Values{}
 	params.Set("symbol", toBinanceSymbol(symbol))
 	params.Set("side", string(side))
@@ -70,11 +77,11 @@ func (c *FuturesClient) PlaceOrder(symbol string, side exchange.OrderSide, order
 		params.Set("timeInForce", "GTC")
 	}
 
-	return c.postFuturesOrder(params, apiKey, apiSecret)
+	return c.postFuturesOrder(ctx, params, apiKey, apiSecret)
 }
 
 // places a stop market order for futures
-func (c *FuturesClient) PlaceStopMarket(symbol string, side exchange.OrderSide, quantity, stopPrice float64, apiKey, apiSecret string) (*FuturesOrder, error) {
+func (c *FuturesClient) PlaceStopMarket(ctx context.Context, symbol string, side exchange.OrderSide, quantity, stopPrice float64, apiKey, apiSecret string) (*FuturesOrder, error) {
 	params := url.Values{}
 	params.Set("symbol", toBinanceSymbol(symbol))
 	params.Set("side", string(side))
@@ -82,11 +89,11 @@ func (c *FuturesClient) PlaceStopMarket(symbol string, side exchange.OrderSide, 
 	params.Set("quantity", formatFloat(quantity))
 	params.Set("stopPrice", formatFloat(stopPrice))
 
-	return c.postFuturesOrder(params, apiKey, apiSecret)
+	return c.postFuturesOrder(ctx, params, apiKey, apiSecret)
 }
 
 // places a take profit market order for futures
-func (c *FuturesClient) PlaceTakeProfitMarket(symbol string, side exchange.OrderSide, quantity, stopPrice float64, apiKey, apiSecret string) (*FuturesOrder, error) {
+func (c *FuturesClient) PlaceTakeProfitMarket(ctx context.Context, symbol string, side exchange.OrderSide, quantity, stopPrice float64, apiKey, apiSecret string) (*FuturesOrder, error) {
 	params := url.Values{}
 	params.Set("symbol", toBinanceSymbol(symbol))
 	params.Set("side", string(side))
@@ -94,26 +101,26 @@ func (c *FuturesClient) PlaceTakeProfitMarket(symbol string, side exchange.Order
 	params.Set("quantity", formatFloat(quantity))
 	params.Set("stopPrice", formatFloat(stopPrice))
 
-	return c.postFuturesOrder(params, apiKey, apiSecret)
+	return c.postFuturesOrder(ctx, params, apiKey, apiSecret)
 }
 
 // cancels an existing futures order by id
-func (c *FuturesClient) CancelOrder(symbol string, orderID int64, apiKey, apiSecret string) error {
+func (c *FuturesClient) CancelOrder(ctx context.Context, symbol string, orderID int64, apiKey, apiSecret string) error {
 	params := url.Values{}
 	params.Set("symbol", toBinanceSymbol(symbol))
 	params.Set("orderId", strconv.FormatInt(orderID, 10))
 
-	_, err := c.signedRawRequest(context.TODO(), http.MethodDelete, "/fapi/v1/order", params, apiKey, apiSecret)
+	_, err := c.signedRawRequest(ctx, http.MethodDelete, "/fapi/v1/order", params, apiKey, apiSecret)
 	return err
 }
 
 // returns the status of a specific futures order
-func (c *FuturesClient) GetOrder(symbol string, orderID int64, apiKey, apiSecret string) (*FuturesOrder, error) {
+func (c *FuturesClient) GetOrder(ctx context.Context, symbol string, orderID int64, apiKey, apiSecret string) (*FuturesOrder, error) {
 	params := url.Values{}
 	params.Set("symbol", toBinanceSymbol(symbol))
 	params.Set("orderId", strconv.FormatInt(orderID, 10))
 
-	body, err := c.signedRawRequest(context.TODO(), http.MethodGet, "/fapi/v1/order", params, apiKey, apiSecret)
+	body, err := c.signedRawRequest(ctx, http.MethodGet, "/fapi/v1/order", params, apiKey, apiSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -126,10 +133,10 @@ func (c *FuturesClient) GetOrder(symbol string, orderID int64, apiKey, apiSecret
 }
 
 // returns all futures positions
-func (c *FuturesClient) GetPositions(apiKey, apiSecret string) ([]FuturesPosition, error) {
+func (c *FuturesClient) GetPositions(ctx context.Context, apiKey, apiSecret string) ([]FuturesPosition, error) {
 	params := url.Values{}
 
-	body, err := c.signedRawRequest(context.TODO(), http.MethodGet, "/fapi/v2/positionRisk", params, apiKey, apiSecret)
+	body, err := c.signedRawRequest(ctx, http.MethodGet, "/fapi/v2/positionRisk", params, apiKey, apiSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -147,10 +154,10 @@ func (c *FuturesClient) GetPositions(apiKey, apiSecret string) ([]FuturesPositio
 }
 
 // returns futures account balances
-func (c *FuturesClient) GetFuturesBalance(apiKey, apiSecret string) ([]FuturesBalance, error) {
+func (c *FuturesClient) GetFuturesBalance(ctx context.Context, apiKey, apiSecret string) ([]FuturesBalance, error) {
 	params := url.Values{}
 
-	body, err := c.signedRawRequest(context.TODO(), http.MethodGet, "/fapi/v2/balance", params, apiKey, apiSecret)
+	body, err := c.signedRawRequest(ctx, http.MethodGet, "/fapi/v2/balance", params, apiKey, apiSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -168,10 +175,10 @@ func (c *FuturesClient) GetFuturesBalance(apiKey, apiSecret string) ([]FuturesBa
 }
 
 // returns the current mark price for a symbol (public endpoint)
-func (c *FuturesClient) GetMarkPrice(symbol string) (*MarkPrice, error) {
+func (c *FuturesClient) GetMarkPrice(ctx context.Context, symbol string) (*MarkPrice, error) {
 	reqURL := fmt.Sprintf("%s/fapi/v1/premiumIndex?symbol=%s", c.baseURL, toBinanceSymbol(symbol))
 
-	body, err := c.publicGet(context.TODO(), reqURL)
+	body, err := c.publicGet(ctx, reqURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get mark price for %s: %w", symbol, err)
 	}
@@ -184,10 +191,10 @@ func (c *FuturesClient) GetMarkPrice(symbol string) (*MarkPrice, error) {
 }
 
 // returns the latest funding rate for a symbol (public endpoint)
-func (c *FuturesClient) GetFundingRate(symbol string) (*FundingRate, error) {
+func (c *FuturesClient) GetFundingRate(ctx context.Context, symbol string) (*FundingRate, error) {
 	reqURL := fmt.Sprintf("%s/fapi/v1/fundingRate?symbol=%s&limit=1", c.baseURL, toBinanceSymbol(symbol))
 
-	body, err := c.publicGet(context.TODO(), reqURL)
+	body, err := c.publicGet(ctx, reqURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get funding rate for %s: %w", symbol, err)
 	}
@@ -203,8 +210,8 @@ func (c *FuturesClient) GetFundingRate(symbol string) (*FundingRate, error) {
 }
 
 // posts a futures order and returns the parsed response
-func (c *FuturesClient) postFuturesOrder(params url.Values, apiKey, apiSecret string) (*FuturesOrder, error) {
-	body, err := c.signedRawRequest(context.TODO(), http.MethodPost, "/fapi/v1/order", params, apiKey, apiSecret)
+func (c *FuturesClient) postFuturesOrder(ctx context.Context, params url.Values, apiKey, apiSecret string) (*FuturesOrder, error) {
+	body, err := c.signedRawRequest(ctx, http.MethodPost, "/fapi/v1/order", params, apiKey, apiSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -218,6 +225,10 @@ func (c *FuturesClient) postFuturesOrder(params url.Values, apiKey, apiSecret st
 
 // sends a signed request and returns the raw response body
 func (c *FuturesClient) signedRawRequest(ctx context.Context, method, path string, params url.Values, apiKey, apiSecret string) ([]byte, error) {
+	if err := c.rateLimiter.Wait(ctx, WeightForEndpoint(path)); err != nil {
+		return nil, fmt.Errorf("rate limit: %w", err)
+	}
+
 	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
 	params.Set("timestamp", timestamp)
 	queryString := params.Encode()
@@ -250,6 +261,7 @@ func (c *FuturesClient) signedRawRequest(ctx context.Context, method, path strin
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	c.rateLimiter.RecordResponse(resp.StatusCode)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -279,6 +291,7 @@ func (c *FuturesClient) publicGet(ctx context.Context, reqURL string) ([]byte, e
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	c.rateLimiter.RecordResponse(resp.StatusCode)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

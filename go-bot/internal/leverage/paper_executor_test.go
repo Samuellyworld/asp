@@ -33,7 +33,7 @@ type mockBalance struct {
 	err     error
 }
 
-func (m *mockBalance) GetFuturesBalance(_ int, _ string) (float64, error) {
+func (m *mockBalance) GetFuturesBalance(_ context.Context, _ int, _ string) (float64, error) {
 	return m.balance, m.err
 }
 

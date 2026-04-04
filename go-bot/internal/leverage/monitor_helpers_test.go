@@ -2,6 +2,7 @@
 package leverage
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
@@ -89,7 +90,7 @@ type mockMarkPrices struct {
 	err    error
 }
 
-func (m *mockMarkPrices) GetMarkPrice(symbol string) (float64, error) {
+func (m *mockMarkPrices) GetMarkPrice(ctx context.Context, symbol string) (float64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {

@@ -2,6 +2,7 @@
 package binance
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -114,7 +115,7 @@ func TestSetLeverage(t *testing.T) {
 	})
 	defer server.Close()
 
-	err := client.SetLeverage("BTC/USDT", 20, "test_key", "test_secret")
+	err := client.SetLeverage(context.Background(), "BTC/USDT", 20, "test_key", "test_secret")
 	if err != nil {
 		t.Fatalf("SetLeverage() error: %v", err)
 	}
@@ -133,7 +134,7 @@ func TestSetLeverage_APIError(t *testing.T) {
 	})
 	defer server.Close()
 
-	err := client.SetLeverage("BTC/USDT", 200, "key", "secret")
+	err := client.SetLeverage(context.Background(), "BTC/USDT", 200, "key", "secret")
 	if err == nil {
 		t.Fatal("expected error for invalid leverage")
 	}
@@ -161,7 +162,7 @@ func TestSetMarginType(t *testing.T) {
 	})
 	defer server.Close()
 
-	err := client.SetMarginType("BTC/USDT", "ISOLATED", "key", "secret")
+	err := client.SetMarginType(context.Background(), "BTC/USDT", "ISOLATED", "key", "secret")
 	if err != nil {
 		t.Fatalf("SetMarginType() error: %v", err)
 	}
@@ -180,7 +181,7 @@ func TestSetMarginType_APIError(t *testing.T) {
 	})
 	defer server.Close()
 
-	err := client.SetMarginType("BTC/USDT", "CROSSED", "key", "secret")
+	err := client.SetMarginType(context.Background(), "BTC/USDT", "CROSSED", "key", "secret")
 	if err == nil {
 		t.Fatal("expected error for margin type already set")
 	}
@@ -220,7 +221,7 @@ func TestFuturesPlaceOrder_Market(t *testing.T) {
 	})
 	defer server.Close()
 
-	order, err := client.PlaceOrder("BTC/USDT", exchange.SideBuy, exchange.OrderTypeMarket, 0.01, 0, "test_key", "test_secret")
+	order, err := client.PlaceOrder(context.Background(), "BTC/USDT", exchange.SideBuy, exchange.OrderTypeMarket, 0.01, 0, "test_key", "test_secret")
 	if err != nil {
 		t.Fatalf("PlaceOrder() error: %v", err)
 	}
@@ -263,7 +264,7 @@ func TestFuturesPlaceOrder_Limit(t *testing.T) {
 	})
 	defer server.Close()
 
-	order, err := client.PlaceOrder("BTC/USDT", exchange.SideSell, exchange.OrderTypeLimit, 0.01, 43000, "key", "secret")
+	order, err := client.PlaceOrder(context.Background(), "BTC/USDT", exchange.SideSell, exchange.OrderTypeLimit, 0.01, 43000, "key", "secret")
 	if err != nil {
 		t.Fatalf("PlaceOrder() error: %v", err)
 	}
@@ -294,7 +295,7 @@ func TestPlaceStopMarket(t *testing.T) {
 	})
 	defer server.Close()
 
-	order, err := client.PlaceStopMarket("BTC/USDT", exchange.SideSell, 0.01, 41000, "key", "secret")
+	order, err := client.PlaceStopMarket(context.Background(), "BTC/USDT", exchange.SideSell, 0.01, 41000, "key", "secret")
 	if err != nil {
 		t.Fatalf("PlaceStopMarket() error: %v", err)
 	}
@@ -328,7 +329,7 @@ func TestPlaceTakeProfitMarket(t *testing.T) {
 	})
 	defer server.Close()
 
-	order, err := client.PlaceTakeProfitMarket("BTC/USDT", exchange.SideSell, 0.01, 45000, "key", "secret")
+	order, err := client.PlaceTakeProfitMarket(context.Background(), "BTC/USDT", exchange.SideSell, 0.01, 45000, "key", "secret")
 	if err != nil {
 		t.Fatalf("PlaceTakeProfitMarket() error: %v", err)
 	}
@@ -359,7 +360,7 @@ func TestFuturesCancelOrder(t *testing.T) {
 	})
 	defer server.Close()
 
-	err := client.CancelOrder("BTC/USDT", 50001, "key", "secret")
+	err := client.CancelOrder(context.Background(), "BTC/USDT", 50001, "key", "secret")
 	if err != nil {
 		t.Fatalf("CancelOrder() error: %v", err)
 	}
@@ -378,7 +379,7 @@ func TestFuturesCancelOrder_Error(t *testing.T) {
 	})
 	defer server.Close()
 
-	err := client.CancelOrder("BTC/USDT", 99999, "key", "secret")
+	err := client.CancelOrder(context.Background(), "BTC/USDT", 99999, "key", "secret")
 	if err == nil {
 		t.Fatal("expected error for unknown order")
 	}
@@ -400,7 +401,7 @@ func TestFuturesGetOrder(t *testing.T) {
 	})
 	defer server.Close()
 
-	order, err := client.GetOrder("BTC/USDT", 50001, "key", "secret")
+	order, err := client.GetOrder(context.Background(), "BTC/USDT", 50001, "key", "secret")
 	if err != nil {
 		t.Fatalf("GetOrder() error: %v", err)
 	}
@@ -454,7 +455,7 @@ func TestGetPositions(t *testing.T) {
 	})
 	defer server.Close()
 
-	positions, err := client.GetPositions("key", "secret")
+	positions, err := client.GetPositions(context.Background(), "key", "secret")
 	if err != nil {
 		t.Fatalf("GetPositions() error: %v", err)
 	}
@@ -540,7 +541,7 @@ func TestGetFuturesBalance(t *testing.T) {
 	})
 	defer server.Close()
 
-	balances, err := client.GetFuturesBalance("key", "secret")
+	balances, err := client.GetFuturesBalance(context.Background(), "key", "secret")
 	if err != nil {
 		t.Fatalf("GetFuturesBalance() error: %v", err)
 	}
@@ -597,7 +598,7 @@ func TestGetMarkPrice(t *testing.T) {
 	})
 	defer server.Close()
 
-	mp, err := client.GetMarkPrice("BTC/USDT")
+	mp, err := client.GetMarkPrice(context.Background(), "BTC/USDT")
 	if err != nil {
 		t.Fatalf("GetMarkPrice() error: %v", err)
 	}
@@ -641,7 +642,7 @@ func TestGetFundingRate(t *testing.T) {
 	})
 	defer server.Close()
 
-	fr, err := client.GetFundingRate("ETH/USDT")
+	fr, err := client.GetFundingRate(context.Background(), "ETH/USDT")
 	if err != nil {
 		t.Fatalf("GetFundingRate() error: %v", err)
 	}
@@ -663,7 +664,7 @@ func TestGetFundingRate_Empty(t *testing.T) {
 	})
 	defer server.Close()
 
-	_, err := client.GetFundingRate("INVALID/USDT")
+	_, err := client.GetFundingRate(context.Background(), "INVALID/USDT")
 	if err == nil {
 		t.Fatal("expected error for empty funding rate response")
 	}
@@ -677,13 +678,13 @@ func TestFutures_NetworkError(t *testing.T) {
 	server.Close()
 
 	// signed endpoint
-	err := client.SetLeverage("BTC/USDT", 10, "key", "secret")
+	err := client.SetLeverage(context.Background(), "BTC/USDT", 10, "key", "secret")
 	if err == nil {
 		t.Error("expected error for closed server on SetLeverage")
 	}
 
 	// public endpoint
-	_, err = client.GetMarkPrice("BTC/USDT")
+	_, err = client.GetMarkPrice(context.Background(), "BTC/USDT")
 	if err == nil {
 		t.Error("expected error for closed server on GetMarkPrice")
 	}
@@ -724,7 +725,7 @@ func TestFutures_APIErrorParsing(t *testing.T) {
 			})
 			defer server.Close()
 
-			_, err := client.PlaceOrder("BTC/USDT", exchange.SideBuy, exchange.OrderTypeMarket, 0.01, 0, "key", "secret")
+			_, err := client.PlaceOrder(context.Background(), "BTC/USDT", exchange.SideBuy, exchange.OrderTypeMarket, 0.01, 0, "key", "secret")
 			if err == nil {
 				t.Fatal("expected error")
 			}
@@ -742,7 +743,7 @@ func TestFutures_PublicEndpoint_APIError(t *testing.T) {
 	})
 	defer server.Close()
 
-	_, err := client.GetMarkPrice("INVALID")
+	_, err := client.GetMarkPrice(context.Background(), "INVALID")
 	if err == nil {
 		t.Fatal("expected error for invalid symbol")
 	}
@@ -847,7 +848,7 @@ func TestFuturesSignedRequest_IncludesSignature(t *testing.T) {
 	})
 	defer server.Close()
 
-	_, _ = client.GetOrder("BTC/USDT", 1, "key", "secret")
+	_, _ = client.GetOrder(context.Background(), "BTC/USDT", 1, "key", "secret")
 	if !hasSig {
 		t.Error("request should include signature parameter")
 	}
@@ -862,7 +863,7 @@ func TestFuturesSignedRequest_SetsAPIKeyHeader(t *testing.T) {
 	})
 	defer server.Close()
 
-	_, _ = client.GetOrder("BTC/USDT", 1, "my_futures_key", "my_secret")
+	_, _ = client.GetOrder(context.Background(), "BTC/USDT", 1, "my_futures_key", "my_secret")
 	if gotAPIKey != "my_futures_key" {
 		t.Errorf("X-MBX-APIKEY = %s, want my_futures_key", gotAPIKey)
 	}

@@ -13,6 +13,12 @@ import (
 	"github.com/trading-bot/go-bot/internal/opportunity"
 )
 
+// dbCtx returns a context with a 5-second timeout for best-effort DB operations
+func dbCtx() context.Context {
+	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+	return ctx
+}
+
 // provides current market prices for position management
 type PriceProvider interface {
 	GetPrice(symbol string) (float64, error)
@@ -142,14 +148,14 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*Position, error) {
 
 	// persist to database (best-effort — don't fail the trade on DB error)
 	if e.store != nil {
-		if err := e.store.SavePosition(context.Background(), pos); err != nil {
+		if err := e.store.SavePosition(dbCtx(), pos); err != nil {
 			slog.Error("failed to persist paper position", "id", id, "error", err)
 		}
 	}
 
 	// log trade record (best-effort)
 	if e.trades != nil {
-		if err := e.trades.LogOpen(context.Background(), pos); err != nil {
+		if err := e.trades.LogOpen(dbCtx(), pos); err != nil {
 			slog.Error("failed to log paper trade open", "id", id, "error", err)
 		}
 	}
@@ -185,14 +191,14 @@ func (e *Executor) Close(posID string, reason CloseReason, price float64) (*Posi
 
 	// persist close to database
 	if e.store != nil {
-		if err := e.store.ClosePosition(context.Background(), pos); err != nil {
+		if err := e.store.ClosePosition(dbCtx(), pos); err != nil {
 			slog.Error("failed to persist paper position close", "id", posID, "error", err)
 		}
 	}
 
 	// log trade close record (best-effort)
 	if e.trades != nil {
-		if err := e.trades.LogClose(context.Background(), pos); err != nil {
+		if err := e.trades.LogClose(dbCtx(), pos); err != nil {
 			slog.Error("failed to log paper trade close", "id", posID, "error", err)
 		}
 	}
@@ -221,7 +227,7 @@ func (e *Executor) Adjust(posID string, field string, value float64) error {
 
 	// persist adjustment (best-effort)
 	if e.store != nil {
-		if err := e.store.AdjustPosition(context.Background(), posID, pos.StopLoss, pos.TakeProfit); err != nil {
+		if err := e.store.AdjustPosition(dbCtx(), posID, pos.StopLoss, pos.TakeProfit); err != nil {
 			slog.Error("failed to persist paper position adjust", "id", posID, "error", err)
 		}
 	}

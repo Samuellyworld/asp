@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -141,9 +142,15 @@ func (r *AIDecisionRepository) RecentBySymbol(ctx context.Context, userID int, s
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan ai_decision row: %w", err)
 		}
-		_ = json.Unmarshal(indJSON, &d.IndicatorsData)
-		_ = json.Unmarshal(mlJSON, &d.MLPrediction)
-		_ = json.Unmarshal(sentJSON, &d.SentimentData)
+		if err := json.Unmarshal(indJSON, &d.IndicatorsData); err != nil {
+			log.Printf("warning: failed to unmarshal indicators data for decision %d: %v", d.ID, err)
+		}
+		if err := json.Unmarshal(mlJSON, &d.MLPrediction); err != nil {
+			log.Printf("warning: failed to unmarshal ml prediction for decision %d: %v", d.ID, err)
+		}
+		if err := json.Unmarshal(sentJSON, &d.SentimentData); err != nil {
+			log.Printf("warning: failed to unmarshal sentiment data for decision %d: %v", d.ID, err)
+		}
 		results = append(results, d)
 	}
 	return results, rows.Err()

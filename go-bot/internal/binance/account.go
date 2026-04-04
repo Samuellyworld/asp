@@ -27,6 +27,10 @@ type fullAccountResponse struct {
 
 // returns non-zero balances for the authenticated user
 func (c *Client) GetBalance(ctx context.Context, apiKey, apiSecret string) ([]exchange.Balance, error) {
+	if err := c.rateLimiter.Wait(ctx, WeightForEndpoint("/api/v3/account")); err != nil {
+		return nil, fmt.Errorf("rate limit: %w", err)
+	}
+
 	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
 	queryString := "timestamp=" + timestamp
 	signature := sign(queryString, apiSecret)
@@ -44,6 +48,7 @@ func (c *Client) GetBalance(ctx context.Context, apiKey, apiSecret string) ([]ex
 		return nil, fmt.Errorf("failed to get balance: %w", err)
 	}
 	defer resp.Body.Close()
+	c.rateLimiter.RecordResponse(resp.StatusCode)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

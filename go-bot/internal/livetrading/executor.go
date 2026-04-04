@@ -3,6 +3,7 @@
 package livetrading
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -13,6 +14,24 @@ import (
 	"github.com/trading-bot/go-bot/internal/exchange"
 	"github.com/trading-bot/go-bot/internal/opportunity"
 )
+
+// dbCtx returns a context with a 5-second timeout for best-effort DB operations
+func dbCtx() context.Context {
+	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+	return ctx
+}
+
+// optional persistence layer for live positions (nil = in-memory only)
+type PositionStore interface {
+	SavePosition(ctx context.Context, pos *LivePosition) error
+	ClosePosition(ctx context.Context, pos *LivePosition) error
+}
+
+// optional trade record logger for live trades (nil = no logging)
+type TradeLogger interface {
+	LogOpen(ctx context.Context, pos *LivePosition) error
+	LogClose(ctx context.Context, pos *LivePosition) error
+}
 
 // decrypts stored credentials for order placement
 type KeyDecryptor interface {
@@ -57,6 +76,8 @@ type Executor struct {
 	safety    *SafetyChecker
 	losses    LossTracker
 	breaker   *circuitbreaker.Breaker // nil if no circuit breaker configured
+	store     PositionStore           // nil if no persistence configured
+	trades    TradeLogger             // nil if no logging configured
 	nextID    int
 }
 
@@ -73,6 +94,30 @@ func NewExecutor(orders exchange.OrderExecutor, keys KeyDecryptor, safety *Safet
 // SetCircuitBreaker configures portfolio circuit breaker.
 func (e *Executor) SetCircuitBreaker(b *circuitbreaker.Breaker) {
 	e.breaker = b
+}
+
+// SetStore configures position persistence. Call before Start.
+func (e *Executor) SetStore(store PositionStore) {
+	e.store = store
+}
+
+// SetTradeLogger configures trade record logging. Call before Start.
+func (e *Executor) SetTradeLogger(logger TradeLogger) {
+	e.trades = logger
+}
+
+// SetNextID sets the starting ID for new positions (used for recovery).
+func (e *Executor) SetNextID(id int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.nextID = id
+}
+
+// RestorePosition adds a recovered position back into the in-memory map (startup only).
+func (e *Executor) RestorePosition(pos *LivePosition) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.positions[pos.ID] = pos
 }
 
 // opens a live position from an approved opportunity.
@@ -202,6 +247,20 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*LivePosition, error) 
 	e.positions[id] = pos
 	e.mu.Unlock()
 
+	// persist to database (best-effort — position is already on exchange)
+	if e.store != nil {
+		if err := e.store.SavePosition(dbCtx(), pos); err != nil {
+			slog.Error("failed to persist live position", "id", id, "error", err)
+		}
+	}
+
+	// log trade open record (best-effort)
+	if e.trades != nil {
+		if err := e.trades.LogOpen(dbCtx(), pos); err != nil {
+			slog.Error("failed to log live trade open", "id", id, "error", err)
+		}
+	}
+
 	return pos, nil
 }
 
@@ -277,6 +336,20 @@ func (e *Executor) Close(posID string, reason string) (*LivePosition, error) {
 	}
 	delete(e.positions, posID)
 	e.mu.Unlock()
+
+	// persist to database (best-effort)
+	if e.store != nil {
+		if err := e.store.ClosePosition(dbCtx(), pos); err != nil {
+			slog.Error("failed to persist live position close", "id", posID, "error", err)
+		}
+	}
+
+	// log trade close record (best-effort)
+	if e.trades != nil {
+		if err := e.trades.LogClose(dbCtx(), pos); err != nil {
+			slog.Error("failed to log live trade close", "id", posID, "error", err)
+		}
+	}
 
 	return pos, nil
 }

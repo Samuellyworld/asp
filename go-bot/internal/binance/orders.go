@@ -18,17 +18,24 @@ import (
 // executes orders on binance using signed requests.
 // implements exchange.OrderExecutor.
 type OrderClient struct {
-	httpClient *http.Client
-	baseURL    string
-	testnet    bool
+	httpClient  *http.Client
+	baseURL     string
+	testnet     bool
+	rateLimiter *RateLimiter
 }
 
 func NewOrderClient(baseURL string, testnet bool) *OrderClient {
 	return &OrderClient{
-		httpClient: &http.Client{Timeout: 15 * time.Second},
-		baseURL:    baseURL,
-		testnet:    testnet,
+		httpClient:  &http.Client{Timeout: 15 * time.Second},
+		baseURL:     baseURL,
+		testnet:     testnet,
+		rateLimiter: NewRateLimiter(SpotWeightLimit),
 	}
+}
+
+// SetRateLimiter allows sharing a rate limiter across clients
+func (c *OrderClient) SetRateLimiter(rl *RateLimiter) {
+	c.rateLimiter = rl
 }
 
 // raw order response from binance POST /api/v3/order
@@ -218,6 +225,10 @@ func (c *OrderClient) signedRequest(method, path string, params url.Values, apiK
 
 // sends a signed request and returns the raw response body
 func (c *OrderClient) signedRawRequest(method, path string, params url.Values, apiKey, apiSecret string) ([]byte, error) {
+	if err := c.rateLimiter.Wait(context.Background(), WeightForEndpoint(path)); err != nil {
+		return nil, fmt.Errorf("rate limit: %w", err)
+	}
+
 	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
 	params.Set("timestamp", timestamp)
 	queryString := params.Encode()
@@ -250,6 +261,7 @@ func (c *OrderClient) signedRawRequest(method, path string, params url.Values, a
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	c.rateLimiter.RecordResponse(resp.StatusCode)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

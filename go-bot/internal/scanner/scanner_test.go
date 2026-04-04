@@ -92,6 +92,7 @@ type mockNotifier struct {
 	notifications []notification
 	telegramErr   error
 	discordErr    error
+	whatsappErr   error
 }
 
 func (m *mockNotifier) NotifyTelegram(chatID int64, message string) error {
@@ -114,6 +115,17 @@ func (m *mockNotifier) NotifyDiscord(channelID string, title, description string
 		message:  fmt.Sprintf("%s: %s", title, description),
 	})
 	return m.discordErr
+}
+
+func (m *mockNotifier) NotifyWhatsApp(recipientID string, message string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.notifications = append(m.notifications, notification{
+		platform: "whatsapp",
+		target:   recipientID,
+		message:  message,
+	})
+	return m.whatsappErr
 }
 
 func (m *mockNotifier) count() int {

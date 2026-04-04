@@ -17,6 +17,7 @@ type User struct {
 	UUID             string
 	TelegramID       *int64
 	DiscordID        *int64
+	WhatsAppID       *string
 	Username         *string
 	IsActivated      bool
 	IsBanned         bool
@@ -55,7 +56,7 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 // findByTelegramID looks up a user by their telegram id
 func (r *Repository) FindByTelegramID(ctx context.Context, telegramID int64) (*User, error) {
 	query := `
-		SELECT id, uuid, telegram_id, discord_id, username, is_activated, is_banned,
+		SELECT id, uuid, telegram_id, discord_id, whatsapp_id, username, is_activated, is_banned,
 			   trading_mode, leverage_enabled, last_active_channel, last_active_at,
 			   created_at, updated_at
 		FROM users WHERE telegram_id = $1
@@ -63,7 +64,7 @@ func (r *Repository) FindByTelegramID(ctx context.Context, telegramID int64) (*U
 
 	u := &User{}
 	err := r.pool.QueryRow(ctx, query, telegramID).Scan(
-		&u.ID, &u.UUID, &u.TelegramID, &u.DiscordID, &u.Username,
+		&u.ID, &u.UUID, &u.TelegramID, &u.DiscordID, &u.WhatsAppID, &u.Username,
 		&u.IsActivated, &u.IsBanned, &u.TradingMode, &u.LeverageEnabled,
 		&u.LastActiveChannel, &u.LastActiveAt, &u.CreatedAt, &u.UpdatedAt,
 	)
@@ -193,7 +194,7 @@ func (r *Repository) GetCredentials(ctx context.Context, userID int, exchange st
 // findByDiscordID looks up a user by their discord id
 func (r *Repository) FindByDiscordID(ctx context.Context, discordID int64) (*User, error) {
 	query := `
-		SELECT id, uuid, telegram_id, discord_id, username, is_activated, is_banned,
+		SELECT id, uuid, telegram_id, discord_id, whatsapp_id, username, is_activated, is_banned,
 			   trading_mode, leverage_enabled, last_active_channel, last_active_at,
 			   created_at, updated_at
 		FROM users WHERE discord_id = $1
@@ -201,7 +202,7 @@ func (r *Repository) FindByDiscordID(ctx context.Context, discordID int64) (*Use
 
 	u := &User{}
 	err := r.pool.QueryRow(ctx, query, discordID).Scan(
-		&u.ID, &u.UUID, &u.TelegramID, &u.DiscordID, &u.Username,
+		&u.ID, &u.UUID, &u.TelegramID, &u.DiscordID, &u.WhatsAppID, &u.Username,
 		&u.IsActivated, &u.IsBanned, &u.TradingMode, &u.LeverageEnabled,
 		&u.LastActiveChannel, &u.LastActiveAt, &u.CreatedAt, &u.UpdatedAt,
 	)
@@ -241,14 +242,14 @@ func (r *Repository) LinkDiscordToTelegram(ctx context.Context, telegramID, disc
 	query := `
 		UPDATE users SET discord_id = $2, last_active_channel = 'discord', updated_at = NOW()
 		WHERE telegram_id = $1
-		RETURNING id, uuid, telegram_id, discord_id, username, is_activated, is_banned,
+		RETURNING id, uuid, telegram_id, discord_id, whatsapp_id, username, is_activated, is_banned,
 				  trading_mode, leverage_enabled, last_active_channel, last_active_at,
 				  created_at, updated_at
 	`
 
 	u := &User{}
 	err := r.pool.QueryRow(ctx, query, telegramID, discordID).Scan(
-		&u.ID, &u.UUID, &u.TelegramID, &u.DiscordID, &u.Username,
+		&u.ID, &u.UUID, &u.TelegramID, &u.DiscordID, &u.WhatsAppID, &u.Username,
 		&u.IsActivated, &u.IsBanned, &u.TradingMode, &u.LeverageEnabled,
 		&u.LastActiveChannel, &u.LastActiveAt, &u.CreatedAt, &u.UpdatedAt,
 	)
@@ -264,7 +265,7 @@ func (r *Repository) LinkDiscordToTelegram(ctx context.Context, telegramID, disc
 // returns all activated, non-banned users for background scanning
 func (r *Repository) ListActive(ctx context.Context) ([]*User, error) {
 	query := `
-		SELECT id, uuid, telegram_id, discord_id, username, is_activated, is_banned,
+		SELECT id, uuid, telegram_id, discord_id, whatsapp_id, username, is_activated, is_banned,
 			   trading_mode, leverage_enabled, last_active_channel, last_active_at,
 			   created_at, updated_at
 		FROM users
@@ -281,7 +282,7 @@ func (r *Repository) ListActive(ctx context.Context) ([]*User, error) {
 	for rows.Next() {
 		u := &User{}
 		if err := rows.Scan(
-			&u.ID, &u.UUID, &u.TelegramID, &u.DiscordID, &u.Username,
+			&u.ID, &u.UUID, &u.TelegramID, &u.DiscordID, &u.WhatsAppID, &u.Username,
 			&u.IsActivated, &u.IsBanned, &u.TradingMode, &u.LeverageEnabled,
 			&u.LastActiveChannel, &u.LastActiveAt, &u.CreatedAt, &u.UpdatedAt,
 		); err != nil {

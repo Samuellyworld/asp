@@ -14,6 +14,7 @@ type Config struct {
 	Security   SecurityConfig
 	Telegram   TelegramConfig
 	Discord    DiscordConfig
+	WhatsApp   WhatsAppConfig
 	Binance    BinanceConfig
 	Claude     ClaudeConfig
 	Trading    TradingConfig
@@ -66,6 +67,12 @@ type TelegramConfig struct {
 type DiscordConfig struct {
 	BotToken      string
 	ApplicationID string
+}
+
+// holds whatsapp cloud api settings
+type WhatsAppConfig struct {
+	PhoneNumberID string
+	AccessToken   string
 }
 
 //  holds binance api settings
@@ -176,6 +183,10 @@ func Load() (*Config, error) {
 		Discord: DiscordConfig{
 			BotToken:      viper.GetString("discord.bot_token"),
 			ApplicationID: viper.GetString("discord.application_id"),
+		},
+		WhatsApp: WhatsAppConfig{
+			PhoneNumberID: viper.GetString("whatsapp.phone_number_id"),
+			AccessToken:   viper.GetString("whatsapp.access_token"),
 		},
 		Binance: BinanceConfig{
 			Testnet:              viper.GetBool("binance.testnet"),

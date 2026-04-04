@@ -27,8 +27,13 @@ Rules:
 - Position size should be proportional to confidence (higher confidence = larger position, max $500)
 - If data is insufficient or conflicting, choose HOLD
 - Be conservative — false positives are worse than missed opportunities
-- Consider ALL available signals: indicators, ML predictions, and sentiment
+- Consider ALL available signals: indicators, ML predictions, sentiment, and market regime
 - Keep reasoning concise (under 100 words)
+- When market regime is provided, adapt strategy accordingly:
+  * Trending: favor trend-following entries, wider stops
+  * Ranging: favor mean-reversion at support/resistance
+  * Volatile: reduce position size, use wider stops
+  * Quiet: watch for breakout setups, wait for confirmation
 - IMPORTANT: Account for trading costs when sizing positions and setting targets.
   Typical spot fees are 0.10% maker / 0.10% taker (round-trip ~0.20%).
   Futures fees are 0.02% maker / 0.04% taker plus 8h funding rate.
@@ -73,6 +78,13 @@ func buildUserPrompt(input *AnalysisInput) string {
 	if input.Costs != nil {
 		b.WriteString("## Trading Costs\n")
 		b.WriteString(formatTradingCosts(input.Costs))
+		b.WriteString("\n")
+	}
+
+	// market regime
+	if input.Regime != nil {
+		b.WriteString("## Market Regime\n")
+		b.WriteString(formatRegime(input.Regime))
 		b.WriteString("\n")
 	}
 
@@ -150,5 +162,17 @@ func formatTradingCosts(costs *TradingCosts) string {
 	if costs.AvgRoundTripCost != 0 {
 		b.WriteString(fmt.Sprintf("- Estimated round-trip cost: %.3f%%\n", costs.AvgRoundTripCost))
 	}
+	return b.String()
+}
+
+// formats market regime data for the prompt
+func formatRegime(r *RegimeInfo) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("- Regime: %s\n", r.Regime))
+	b.WriteString(fmt.Sprintf("- ADX (trend strength): %.1f\n", r.ADX))
+	b.WriteString(fmt.Sprintf("- ATR%%  (volatility): %.2f%%\n", r.ATRPercent))
+	b.WriteString(fmt.Sprintf("- Trend direction: %s\n", r.TrendDir))
+	b.WriteString(fmt.Sprintf("- Classification confidence: %.0f%%\n", r.Confidence))
+	b.WriteString(fmt.Sprintf("- Assessment: %s\n", r.Description))
 	return b.String()
 }

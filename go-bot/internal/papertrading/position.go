@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/trading-bot/go-bot/internal/claude"
+	"github.com/trading-bot/go-bot/internal/trailingstop"
 )
 
 // position lifecycle state
@@ -20,9 +21,10 @@ const (
 type CloseReason string
 
 const (
-	CloseTP     CloseReason = "take_profit"
-	CloseSL     CloseReason = "stop_loss"
-	CloseManual CloseReason = "manual"
+	CloseTP           CloseReason = "take_profit"
+	CloseSL           CloseReason = "stop_loss"
+	CloseTrailingStop CloseReason = "trailing_stop"
+	CloseManual       CloseReason = "manual"
 )
 
 // default milestone thresholds (percentage)
@@ -54,6 +56,7 @@ type Position struct {
 	HitMilestones map[float64]bool
 	LastNotified  time.Time
 	Platform      string // "telegram" or "discord"
+	TrailingStop  trailingstop.TrailingStop
 }
 
 // unrealized profit/loss based on current price
@@ -95,6 +98,30 @@ func (p *Position) IsSLHit() bool {
 		return p.CurrentPrice <= p.StopLoss
 	}
 	return p.CurrentPrice >= p.StopLoss
+}
+
+// checks if the trailing stop has been triggered
+func (p *Position) IsTrailingStopHit() bool {
+	if !p.TrailingStop.Enabled() {
+		return false
+	}
+	if p.Action == claude.ActionBuy {
+		return p.TrailingStop.IsHitLong(p.CurrentPrice)
+	}
+	return p.TrailingStop.IsHitShort(p.CurrentPrice)
+}
+
+// updates the trailing stop based on current price movement
+func (p *Position) UpdateTrailingStop() bool {
+	if !p.TrailingStop.Enabled() {
+		return false
+	}
+	if p.Action == claude.ActionBuy {
+		_, updated := p.TrailingStop.UpdateLong(p.EntryPrice, p.CurrentPrice)
+		return updated
+	}
+	_, updated := p.TrailingStop.UpdateShort(p.EntryPrice, p.CurrentPrice)
+	return updated
 }
 
 // returns milestone thresholds that were just reached but not yet recorded

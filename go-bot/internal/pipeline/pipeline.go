@@ -12,6 +12,7 @@ import (
 	"github.com/trading-bot/go-bot/internal/claude"
 	"github.com/trading-bot/go-bot/internal/exchange"
 	mlclient "github.com/trading-bot/go-bot/internal/ml-client"
+	"github.com/trading-bot/go-bot/internal/regime"
 )
 
 // provides market data
@@ -146,7 +147,7 @@ func (p *Pipeline) Analyze(ctx context.Context, symbol string) (*Result, error) 
 	}
 
 	// step 4: feed everything to claude
-	aiInput := buildAIInput(symbol, ticker, indicators, prediction, sentiment)
+	aiInput := buildAIInput(symbol, ticker, candles, indicators, prediction, sentiment)
 	decision, err := p.ai.Analyze(ctx, aiInput)
 	if err != nil {
 		return nil, fmt.Errorf("ai analysis failed: %w", err)
@@ -204,10 +205,26 @@ func exchangeToMLCandles(candles []exchange.Candle) []mlclient.Candle {
 	return result
 }
 
+// converts exchange candles to regime candles for market classification
+func exchangeToRegimeCandles(candles []exchange.Candle) []regime.Candle {
+	result := make([]regime.Candle, len(candles))
+	for i, c := range candles {
+		result[i] = regime.Candle{
+			Open:   c.Open,
+			High:   c.High,
+			Low:    c.Low,
+			Close:  c.Close,
+			Volume: c.Volume,
+		}
+	}
+	return result
+}
+
 // assembles the ai input from all available analysis data
 func buildAIInput(
 	symbol string,
 	ticker *exchange.Ticker,
+	candles []exchange.Candle,
 	indicators *analysis.AnalysisResult,
 	prediction *mlclient.PricePredictionResponse,
 	sentiment *mlclient.SentimentResponse,
@@ -264,6 +281,20 @@ func buildAIInput(
 	}
 
 	input.Costs = claude.DefaultTradingCosts()
+
+	// run regime detection on candle data
+	if len(candles) >= 28 {
+		regimeCandles := exchangeToRegimeCandles(candles)
+		det := regime.Detect(regimeCandles, ticker.Price)
+		input.Regime = &claude.RegimeInfo{
+			Regime:      string(det.Regime),
+			ADX:         det.ADX,
+			ATRPercent:  det.ATRPercent,
+			TrendDir:    det.TrendDir,
+			Confidence:  det.Confidence,
+			Description: det.Description,
+		}
+	}
 
 	return input
 }

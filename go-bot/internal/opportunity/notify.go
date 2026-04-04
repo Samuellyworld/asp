@@ -142,6 +142,30 @@ func FormatModifiedMessage(opp *Opportunity) string {
 		plan.Entry, plan.StopLoss, plan.TakeProfit, plan.PositionSize, plan.RiskReward)
 }
 
+// returns leverage option buttons for an opportunity
+func LeverageButtons(oppID string) [][]ButtonData {
+	return [][]ButtonData{
+		{
+			{Text: "3x Long", Data: fmt.Sprintf("lev_long_3:%s", oppID)},
+			{Text: "5x Long", Data: fmt.Sprintf("lev_long_5:%s", oppID)},
+			{Text: "10x Long", Data: fmt.Sprintf("lev_long_10:%s", oppID)},
+		},
+		{
+			{Text: "3x Short", Data: fmt.Sprintf("lev_short_3:%s", oppID)},
+			{Text: "5x Short", Data: fmt.Sprintf("lev_short_5:%s", oppID)},
+			{Text: "10x Short", Data: fmt.Sprintf("lev_short_10:%s", oppID)},
+		},
+	}
+}
+
+// formats leverage selection confirmation
+func FormatLeverageSelected(opp *Opportunity) string {
+	if !opp.UseLeverage {
+		return ""
+	}
+	return fmt.Sprintf("\n⚡ Leverage: %dx %s", opp.Leverage, opp.PositionSide)
+}
+
 func statusEmoji(action claude.Action) string {
 	switch action {
 	case claude.ActionBuy:

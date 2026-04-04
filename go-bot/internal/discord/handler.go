@@ -36,6 +36,7 @@ type Handler struct {
 	watchSvc *watchlist.Service
 	prefsSvc *preferences.Service
 	exchange exchangeClient
+	trading  *TradingDeps // optional, set via SetTradingDeps
 }
 
 func NewHandler(
@@ -141,7 +142,9 @@ func (h *Handler) handleCommand(ctx context.Context, interaction *Interaction) {
 	case "link":
 		h.handleLink(ctx, interaction)
 	default:
-		h.respond(interaction, "unknown command. use /help for available commands.", nil, nil)
+		if !h.handleTradingCommand(ctx, interaction) {
+			h.respond(interaction, "unknown command. use /help for available commands.", nil, nil)
+		}
 	}
 }
 
@@ -172,6 +175,8 @@ func (h *Handler) handleComponent(ctx context.Context, interaction *Interaction)
 	case strings.HasPrefix(data, "wl_price:"):
 		symbol := strings.TrimPrefix(data, "wl_price:")
 		h.componentPrice(ctx, interaction, symbol)
+	default:
+		h.handleTradingComponent(ctx, interaction)
 	}
 }
 

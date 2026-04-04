@@ -261,6 +261,56 @@ func (r *Repository) LinkDiscordToTelegram(ctx context.Context, telegramID, disc
 	return u, nil
 }
 
+// returns all activated, non-banned users for background scanning
+func (r *Repository) ListActive(ctx context.Context) ([]*User, error) {
+	query := `
+		SELECT id, uuid, telegram_id, discord_id, username, is_activated, is_banned,
+			   trading_mode, leverage_enabled, last_active_channel, last_active_at,
+			   created_at, updated_at
+		FROM users
+		WHERE is_activated = TRUE AND is_banned = FALSE
+		ORDER BY id`
+
+	rows, err := r.pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list active users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []*User
+	for rows.Next() {
+		u := &User{}
+		if err := rows.Scan(
+			&u.ID, &u.UUID, &u.TelegramID, &u.DiscordID, &u.Username,
+			&u.IsActivated, &u.IsBanned, &u.TradingMode, &u.LeverageEnabled,
+			&u.LastActiveChannel, &u.LastActiveAt, &u.CreatedAt, &u.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan user: %w", err)
+		}
+		users = append(users, u)
+	}
+	return users, nil
+}
+
+// sets the leverage_enabled flag for a user
+func (r *Repository) SetLeverageEnabled(ctx context.Context, userID int, enabled bool) error {
+	_, err := r.pool.Exec(ctx, "UPDATE users SET leverage_enabled = $2 WHERE id = $1", userID, enabled)
+	if err != nil {
+		return fmt.Errorf("failed to set leverage enabled: %w", err)
+	}
+	return nil
+}
+
+// returns whether leverage is enabled for a user
+func (r *Repository) IsLeverageEnabled(ctx context.Context, userID int) (bool, error) {
+	var enabled bool
+	err := r.pool.QueryRow(ctx, "SELECT leverage_enabled FROM users WHERE id = $1", userID).Scan(&enabled)
+	if err != nil {
+		return false, fmt.Errorf("failed to check leverage enabled: %w", err)
+	}
+	return enabled, nil
+}
+
 // hasValidCredentials checks if a user has valid api credentials
 func (r *Repository) HasValidCredentials(ctx context.Context, userID int) (bool, error) {
 	var exists bool

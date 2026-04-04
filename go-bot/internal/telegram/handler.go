@@ -38,6 +38,7 @@ type Handler struct {
 	watchSvc  *watchlist.Service
 	prefsSvc  *preferences.Service
 	exchange  exchangeClient
+	trading   *TradingDeps // optional, set via SetTradingDeps
 }
 
 func NewHandler(
@@ -81,7 +82,7 @@ func (h *Handler) HandleUpdate(ctx context.Context, update Update) {
 	}
 
 	// check for commands
-	command, _ := ParseCommand(msg.Text)
+	command, args := ParseCommand(msg.Text)
 	switch command {
 	case "start":
 		h.handleStart(ctx, msg, telegramID, chatID)
@@ -117,7 +118,8 @@ func (h *Handler) HandleUpdate(ctx context.Context, update Update) {
 	case "portfolio", "pf":
 		h.handlePortfolio(ctx, telegramID, chatID)
 	default:
-		if command != "" {
+		// try trading commands before falling back to unknown
+		if command != "" && !h.handleTradingCommand(ctx, command, args, telegramID, chatID) {
 			h.send(chatID, "unknown command. type /help for available commands.")
 		}
 	}
@@ -890,7 +892,10 @@ func (h *Handler) handleCallback(ctx context.Context, cb *CallbackQuery) {
 		h.callbackPrice(ctx, cb.ID, chatID, messageID, symbol)
 
 	default:
-		h.answerCallback(cb.ID, "")
+		// try trading callbacks before falling through
+		if !h.handleTradingCallback(ctx, cb) {
+			h.answerCallback(cb.ID, "")
+		}
 	}
 }
 

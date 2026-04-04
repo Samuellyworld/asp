@@ -9,15 +9,18 @@ import (
 
 // holds all application configuration
 type Config struct {
-	Database DatabaseConfig
-	Redis    RedisConfig
-	Security SecurityConfig
-	Telegram TelegramConfig
-	Discord  DiscordConfig
-	Binance  BinanceConfig
-	Claude   ClaudeConfig
-	Trading  TradingConfig
-	LogLevel string
+	Database   DatabaseConfig
+	Redis      RedisConfig
+	Security   SecurityConfig
+	Telegram   TelegramConfig
+	Discord    DiscordConfig
+	Binance    BinanceConfig
+	Claude     ClaudeConfig
+	Trading    TradingConfig
+	RustEngine RustEngineConfig
+	MLService  MLServiceConfig
+	Leverage   LeverageConfig
+	LogLevel   string
 }
 
 //holds postgres connection settings
@@ -67,11 +70,13 @@ type DiscordConfig struct {
 
 //  holds binance api settings
 type BinanceConfig struct {
-	Testnet       bool
-	TestnetAPIURL string
-	TestnetWSURL  string
-	MainnetAPIURL string
-	MainnetWSURL  string
+	Testnet              bool
+	TestnetAPIURL        string
+	TestnetWSURL         string
+	MainnetAPIURL        string
+	MainnetWSURL         string
+	FuturesTestnetAPIURL string
+	FuturesMainnetAPIURL string
 }
 
 // returns the appropriate binance api url based on testnet setting
@@ -80,6 +85,14 @@ func (b BinanceConfig) APIURL() string {
 		return b.TestnetAPIURL
 	}
 	return b.MainnetAPIURL
+}
+
+// returns the appropriate binance futures api url based on testnet setting
+func (b BinanceConfig) FuturesAPIURL() string {
+	if b.Testnet {
+		return b.FuturesTestnetAPIURL
+	}
+	return b.FuturesMainnetAPIURL
 }
 
 //  returns the appropriate binance websocket url based on testnet setting
@@ -95,6 +108,16 @@ type ClaudeConfig struct {
 	APIKey    string
 	Model     string
 	MaxTokens int
+}
+
+// holds grpc connection settings for the rust indicators engine
+type RustEngineConfig struct {
+	Address string
+}
+
+// holds http connection settings for the python ml service
+type MLServiceConfig struct {
+	BaseURL string
 }
 
 //  holds trading behavior settings
@@ -113,6 +136,16 @@ func (t TradingConfig) ScannerInterval() time.Duration {
 // returns the opportunity expiry as a duration
 func (t TradingConfig) OpportunityExpiry() time.Duration {
 	return time.Duration(t.OpportunityExpiryMinutes) * time.Minute
+}
+
+// holds leverage trading settings
+type LeverageConfig struct {
+	HardMaxLeverage         int
+	MaxMarginPerTrade       float64
+	LiquidationWarningPct   float64
+	LiquidationCriticalPct  float64
+	LiquidationAutoClosePct float64
+	MonitorIntervalSeconds  int
 }
 
 // reads configuration from viper and returns a Config struct
@@ -145,22 +178,38 @@ func Load() (*Config, error) {
 			ApplicationID: viper.GetString("discord.application_id"),
 		},
 		Binance: BinanceConfig{
-			Testnet:       viper.GetBool("binance.testnet"),
-			TestnetAPIURL: viper.GetString("binance.testnet_api_url"),
-			TestnetWSURL:  viper.GetString("binance.testnet_ws_url"),
-			MainnetAPIURL: viper.GetString("binance.mainnet_api_url"),
-			MainnetWSURL:  viper.GetString("binance.mainnet_ws_url"),
+			Testnet:              viper.GetBool("binance.testnet"),
+			TestnetAPIURL:        viper.GetString("binance.testnet_api_url"),
+			TestnetWSURL:         viper.GetString("binance.testnet_ws_url"),
+			MainnetAPIURL:        viper.GetString("binance.mainnet_api_url"),
+			MainnetWSURL:         viper.GetString("binance.mainnet_ws_url"),
+			FuturesTestnetAPIURL: viper.GetString("binance.futures_testnet_api_url"),
+			FuturesMainnetAPIURL: viper.GetString("binance.futures_mainnet_api_url"),
 		},
 		Claude: ClaudeConfig{
 			APIKey:    viper.GetString("claude.api_key"),
 			Model:     viper.GetString("claude.model"),
 			MaxTokens: viper.GetInt("claude.max_tokens"),
 		},
+		RustEngine: RustEngineConfig{
+			Address: viper.GetString("rust_engine.address"),
+		},
+		MLService: MLServiceConfig{
+			BaseURL: viper.GetString("ml_service.base_url"),
+		},
 		Trading: TradingConfig{
 			DefaultConfidenceThreshold: viper.GetInt("trading.default_confidence_threshold"),
 			MaxDailyNotifications:      viper.GetInt("trading.max_daily_notifications"),
 			ScannerIntervalMinutes:     viper.GetInt("trading.scanner_interval_minutes"),
 			OpportunityExpiryMinutes:   viper.GetInt("trading.opportunity_expiry_minutes"),
+		},
+		Leverage: LeverageConfig{
+			HardMaxLeverage:         viper.GetInt("leverage.hard_max_leverage"),
+			MaxMarginPerTrade:       viper.GetFloat64("leverage.max_margin_per_trade"),
+			LiquidationWarningPct:   viper.GetFloat64("leverage.liquidation_warning_pct"),
+			LiquidationCriticalPct:  viper.GetFloat64("leverage.liquidation_critical_pct"),
+			LiquidationAutoClosePct: viper.GetFloat64("leverage.liquidation_auto_close_pct"),
+			MonitorIntervalSeconds:  viper.GetInt("leverage.monitor_interval_seconds"),
 		},
 		LogLevel: viper.GetString("log_level"),
 	}
@@ -190,15 +239,33 @@ func setDefaults() {
 	viper.SetDefault("binance.mainnet_api_url", "https://api.binance.com")
 	viper.SetDefault("binance.mainnet_ws_url", "wss://stream.binance.com:9443/ws")
 
+	// binance futures
+	viper.SetDefault("binance.futures_testnet_api_url", "https://testnet.binancefuture.com")
+	viper.SetDefault("binance.futures_mainnet_api_url", "https://fapi.binance.com")
+
 	// claude
 	viper.SetDefault("claude.model", "claude-sonnet-4-20250514")
 	viper.SetDefault("claude.max_tokens", 4096)
+
+	// rust engine (grpc indicators)
+	viper.SetDefault("rust_engine.address", "localhost:50051")
+
+	// python ml service
+	viper.SetDefault("ml_service.base_url", "http://localhost:8000")
 
 	// trading
 	viper.SetDefault("trading.default_confidence_threshold", 80)
 	viper.SetDefault("trading.max_daily_notifications", 10)
 	viper.SetDefault("trading.scanner_interval_minutes", 5)
 	viper.SetDefault("trading.opportunity_expiry_minutes", 15)
+
+	// leverage
+	viper.SetDefault("leverage.hard_max_leverage", 20)
+	viper.SetDefault("leverage.max_margin_per_trade", 500)
+	viper.SetDefault("leverage.liquidation_warning_pct", 10)
+	viper.SetDefault("leverage.liquidation_critical_pct", 5)
+	viper.SetDefault("leverage.liquidation_auto_close_pct", 2)
+	viper.SetDefault("leverage.monitor_interval_seconds", 30)
 
 	// logging
 	viper.SetDefault("log_level", "info")

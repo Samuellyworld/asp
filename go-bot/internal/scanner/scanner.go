@@ -43,6 +43,12 @@ type Notifier interface {
 	NotifyDiscord(channelID string, title, description string, fields []pipeline.DiscordField, color int) error
 }
 
+// logs AI decisions and daily stats to the database (best-effort)
+type DecisionLogger interface {
+	LogDecision(ctx context.Context, userID int, symbol string, result *pipeline.Result, filterReason string) int
+	IncrementNotification(ctx context.Context, userID int)
+}
+
 // tracks a recent notification to prevent duplicates
 type recentNotification struct {
 	symbol    string
@@ -81,6 +87,7 @@ type Scanner struct {
 	prefs       PreferencesProvider
 	analyzer    Analyzer
 	notifier    Notifier
+	logger      DecisionLogger // nil = no logging
 	config      Config
 
 	mu          sync.RWMutex
@@ -115,6 +122,11 @@ func New(
 		stopCh:     make(chan struct{}),
 		nowFunc:    time.Now,
 	}
+}
+
+// SetLogger sets the decision logger for tracking AI decisions and stats.
+func (s *Scanner) SetLogger(logger DecisionLogger) {
+	s.logger = logger
 }
 
 // starts the scanner loop in a goroutine. returns immediately.
@@ -284,6 +296,7 @@ func (s *Scanner) analyzeAndNotify(
 
 	// only notify on actionable decisions (buy/sell)
 	if result.Decision.Action == claude.ActionHold {
+		s.logDecision(ctx, u.ID, symbol, result, "hold")
 		return false
 	}
 
@@ -293,11 +306,13 @@ func (s *Scanner) analyzeAndNotify(
 		minConf = float64(scanPrefs.MinConfidence)
 	}
 	if result.Decision.Confidence < minConf {
+		s.logDecision(ctx, u.ID, symbol, result, "low_confidence")
 		return false
 	}
 
 	// check duplicate suppression
 	if s.isDuplicate(u.ID, symbol, result.Decision.Action) {
+		s.logDecision(ctx, u.ID, symbol, result, "duplicate")
 		return false
 	}
 
@@ -307,16 +322,33 @@ func (s *Scanner) analyzeAndNotify(
 		maxDaily = notifPrefs.MaxDailyNotifications
 	}
 	if s.dailyLimitReached(u.ID, maxDaily) {
+		s.logDecision(ctx, u.ID, symbol, result, "daily_limit")
 		return false
 	}
 
+	// log the decision as approved (will be sent as notification)
+	s.logDecision(ctx, u.ID, symbol, result, "none")
+
 	// send notifications
 	s.sendNotifications(u, result)
+
+	// increment daily notification counter
+	if s.logger != nil {
+		s.logger.IncrementNotification(ctx, u.ID)
+	}
 
 	// record the notification
 	s.recordNotification(u.ID, symbol, result.Decision.Action)
 
 	return true
+}
+
+// logDecision writes the AI decision to the database via the logger (best-effort).
+func (s *Scanner) logDecision(ctx context.Context, userID int, symbol string, result *pipeline.Result, filterReason string) {
+	if s.logger == nil {
+		return
+	}
+	s.logger.LogDecision(ctx, userID, symbol, result, filterReason)
 }
 
 // sends formatted notifications to the user's connected platforms

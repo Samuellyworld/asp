@@ -30,6 +30,23 @@ func TestBuildSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestBuildSystemPromptFeeAwareness(t *testing.T) {
+	prompt := buildSystemPrompt()
+	checks := []string{
+		"0.10%",
+		"0.02%",
+		"0.04%",
+		"funding rate",
+		"trading costs",
+		"scalps",
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt, check) {
+			t.Errorf("system prompt should contain %q for fee awareness", check)
+		}
+	}
+}
+
 func TestBuildUserPromptWithAllData(t *testing.T) {
 	input := &AnalysisInput{
 		Market: MarketData{
@@ -219,5 +236,102 @@ func TestEMACrossoverDirection(t *testing.T) {
 	result = formatIndicators(bearish)
 	if !strings.Contains(result, "bearish crossover") {
 		t.Error("ema12 < ema26 should show bearish crossover")
+	}
+}
+
+func TestFormatTradingCostsFullFields(t *testing.T) {
+	costs := &TradingCosts{
+		SpotMakerFeePct: 0.10,
+		SpotTakerFeePct: 0.10,
+		FuturesMakerPct: 0.02,
+		FuturesTakerPct: 0.04,
+		FundingRatePct:  0.0100,
+		EstSlippageBps:  3.5,
+		AvgRoundTripCost: 0.245,
+	}
+	result := formatTradingCosts(costs)
+
+	checks := []string{
+		"Spot fees: 0.10% maker / 0.10% taker",
+		"Futures fees: 0.02% maker / 0.04% taker",
+		"funding rate: 0.0100%",
+		"slippage: 3.5 bps",
+		"round-trip cost: 0.245%",
+	}
+	for _, check := range checks {
+		if !strings.Contains(result, check) {
+			t.Errorf("formatTradingCosts should contain %q, got:\n%s", check, result)
+		}
+	}
+}
+
+func TestFormatTradingCostsMinimalFields(t *testing.T) {
+	costs := &TradingCosts{
+		SpotMakerFeePct: 0.10,
+		SpotTakerFeePct: 0.10,
+		FuturesMakerPct: 0.02,
+		FuturesTakerPct: 0.04,
+	}
+	result := formatTradingCosts(costs)
+
+	if !strings.Contains(result, "Spot fees") {
+		t.Error("should always include spot fees")
+	}
+	if strings.Contains(result, "funding rate") {
+		t.Error("should not include funding rate when zero")
+	}
+	if strings.Contains(result, "slippage") {
+		t.Error("should not include slippage when zero")
+	}
+	if strings.Contains(result, "round-trip") {
+		t.Error("should not include round-trip cost when zero")
+	}
+}
+
+func TestBuildUserPromptWithCosts(t *testing.T) {
+	input := &AnalysisInput{
+		Market: MarketData{Symbol: "BTC/USDT", Price: 42000},
+		Costs:  DefaultTradingCosts(),
+	}
+	prompt := buildUserPrompt(input)
+
+	if !strings.Contains(prompt, "Trading Costs") {
+		t.Error("prompt should contain Trading Costs section")
+	}
+	if !strings.Contains(prompt, "Spot fees") {
+		t.Error("prompt should contain spot fees info")
+	}
+}
+
+func TestBuildUserPromptWithoutCosts(t *testing.T) {
+	input := &AnalysisInput{
+		Market: MarketData{Symbol: "BTC/USDT", Price: 42000},
+	}
+	prompt := buildUserPrompt(input)
+
+	if strings.Contains(prompt, "Trading Costs") {
+		t.Error("prompt should not contain Trading Costs section when costs is nil")
+	}
+}
+
+func TestDefaultTradingCosts(t *testing.T) {
+	costs := DefaultTradingCosts()
+	if costs.SpotMakerFeePct != 0.10 {
+		t.Errorf("expected spot maker 0.10, got %f", costs.SpotMakerFeePct)
+	}
+	if costs.SpotTakerFeePct != 0.10 {
+		t.Errorf("expected spot taker 0.10, got %f", costs.SpotTakerFeePct)
+	}
+	if costs.FuturesMakerPct != 0.02 {
+		t.Errorf("expected futures maker 0.02, got %f", costs.FuturesMakerPct)
+	}
+	if costs.FuturesTakerPct != 0.04 {
+		t.Errorf("expected futures taker 0.04, got %f", costs.FuturesTakerPct)
+	}
+	if costs.FundingRatePct != 0 {
+		t.Error("default funding rate should be 0")
+	}
+	if costs.EstSlippageBps != 0 {
+		t.Error("default slippage should be 0")
 	}
 }

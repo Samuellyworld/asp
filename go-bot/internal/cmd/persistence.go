@@ -15,6 +15,7 @@ import (
 	"github.com/trading-bot/go-bot/internal/database"
 	"github.com/trading-bot/go-bot/internal/leverage"
 	"github.com/trading-bot/go-bot/internal/papertrading"
+	"github.com/trading-bot/go-bot/internal/pipeline"
 )
 
 // implements papertrading.PositionStore by wrapping PositionRepository
@@ -205,4 +206,202 @@ func parseIDSuffix(internalID, prefix string) int {
 	s := strings.TrimPrefix(internalID, prefix)
 	n, _ := strconv.Atoi(s)
 	return n
+}
+
+// decisionLoggerAdapter implements scanner.DecisionLogger by delegating
+// to AIDecisionRepository and DailyStatsRepository (best-effort).
+type decisionLoggerAdapter struct {
+	decisions *database.AIDecisionRepository
+	daily     *database.DailyStatsRepository
+}
+
+func (a *decisionLoggerAdapter) LogDecision(ctx context.Context, userID int, symbol string, result *pipeline.Result, filterReason string) int {
+	if result == nil || result.Decision == nil {
+		return 0
+	}
+
+	approved := filterReason == "none"
+	wasApproved := &approved
+
+	rec := &database.AIDecisionRecord{
+		UserID:          userID,
+		Symbol:          symbol,
+		Decision:        string(result.Decision.Action),
+		Confidence:      int(result.Decision.Confidence),
+		EntryPrice:      result.Decision.Plan.Entry,
+		StopLoss:        result.Decision.Plan.StopLoss,
+		TakeProfit:      result.Decision.Plan.TakeProfit,
+		PositionSizeUSD: result.Decision.Plan.PositionSize,
+		RiskRewardRatio: result.Decision.Plan.RiskReward,
+		Reasoning:       result.Decision.Reasoning,
+		LatencyMs:       int(result.Latency.Milliseconds()),
+		WasApproved:     wasApproved,
+		WasExecuted:     false,
+		FilterReason:    filterReason,
+	}
+
+	// populate indicator data if available
+	if result.Indicators != nil {
+		rec.IndicatorsData = map[string]interface{}{
+			"overall_signal": result.Indicators.OverallSignal,
+			"bullish_count":  result.Indicators.BullishCount,
+			"bearish_count":  result.Indicators.BearishCount,
+		}
+		if result.Indicators.RSI != nil {
+			rec.IndicatorsData["rsi"] = result.Indicators.RSI.Value
+		}
+	}
+
+	// populate ML prediction if available
+	if result.Prediction != nil {
+		rec.MLPrediction = map[string]interface{}{
+			"predicted_price": result.Prediction.PredictedPrice,
+			"confidence":      result.Prediction.Confidence,
+		}
+	}
+
+	// populate sentiment if available
+	if result.Sentiment != nil {
+		rec.SentimentData = map[string]interface{}{
+			"label": result.Sentiment.Label,
+			"score": result.Sentiment.Score,
+		}
+	}
+
+	id, err := a.decisions.Insert(ctx, rec)
+	if err != nil {
+		slog.Error("failed to log ai decision", "symbol", symbol, "user_id", userID, "error", err)
+		return 0
+	}
+
+	// increment daily stats counter (best-effort)
+	if err := a.daily.IncrementDecision(ctx, userID, approved); err != nil {
+		slog.Error("failed to increment decision stats", "user_id", userID, "error", err)
+	}
+
+	return id
+}
+
+func (a *decisionLoggerAdapter) IncrementNotification(ctx context.Context, userID int) {
+	if err := a.daily.IncrementNotification(ctx, userID); err != nil {
+		slog.Error("failed to increment notification stats", "user_id", userID, "error", err)
+	}
+}
+
+// spotTradeLoggerAdapter implements papertrading.TradeLogger using TradeRepository + DailyStatsRepository.
+type spotTradeLoggerAdapter struct {
+	trades *database.TradeRepository
+	daily  *database.DailyStatsRepository
+}
+
+func (a *spotTradeLoggerAdapter) LogOpen(ctx context.Context, pos *papertrading.Position) error {
+	side := "BUY"
+	if pos.Action == claude.ActionSell {
+		side = "SELL"
+	}
+	rec := &database.TradeRecord{
+		UserID:     pos.UserID,
+		Symbol:     pos.Symbol,
+		Side:       side,
+		TradeType:  "SPOT",
+		Quantity:   pos.Quantity,
+		Price:      pos.EntryPrice,
+		IsPaper:    true,
+		ExecutedAt: pos.OpenedAt,
+	}
+	_, err := a.trades.Insert(ctx, rec)
+	return err
+}
+
+func (a *spotTradeLoggerAdapter) LogClose(ctx context.Context, pos *papertrading.Position) error {
+	side := "SELL"
+	if pos.Action == claude.ActionSell {
+		side = "BUY"
+	}
+	executedAt := time.Now()
+	if pos.ClosedAt != nil {
+		executedAt = *pos.ClosedAt
+	}
+	rec := &database.TradeRecord{
+		UserID:     pos.UserID,
+		Symbol:     pos.Symbol,
+		Side:       side,
+		TradeType:  "SPOT",
+		Quantity:   pos.Quantity,
+		Price:      pos.ClosePrice,
+		IsPaper:    true,
+		ExecutedAt: executedAt,
+	}
+	if _, err := a.trades.Insert(ctx, rec); err != nil {
+		return err
+	}
+
+	// increment daily trade stats
+	pnl := pos.PnL()
+	isWin := pnl > 0
+	if err := a.daily.IncrementTrade(ctx, pos.UserID, pnl, 0, isWin); err != nil {
+		slog.Error("failed to increment trade stats", "user_id", pos.UserID, "error", err)
+	}
+	return nil
+}
+
+// leverageTradeLoggerAdapter implements leverage.LeverageTradeLogger using TradeRepository + DailyStatsRepository.
+type leverageTradeLoggerAdapter struct {
+	trades *database.TradeRepository
+	daily  *database.DailyStatsRepository
+}
+
+func (a *leverageTradeLoggerAdapter) LogOpen(ctx context.Context, pos *leverage.LeveragePosition) error {
+	side := "BUY"
+	tradeType := "FUTURES_LONG"
+	if pos.Side == leverage.SideShort {
+		side = "SELL"
+		tradeType = "FUTURES_SHORT"
+	}
+	rec := &database.TradeRecord{
+		UserID:     pos.UserID,
+		Symbol:     pos.Symbol,
+		Side:       side,
+		TradeType:  tradeType,
+		Quantity:   pos.Quantity,
+		Price:      pos.EntryPrice,
+		IsPaper:    pos.IsPaper,
+		ExecutedAt: pos.OpenedAt,
+	}
+	_, err := a.trades.Insert(ctx, rec)
+	return err
+}
+
+func (a *leverageTradeLoggerAdapter) LogClose(ctx context.Context, pos *leverage.LeveragePosition) error {
+	// closing side is opposite of opening side
+	side := "SELL"
+	tradeType := "FUTURES_LONG"
+	if pos.Side == leverage.SideShort {
+		side = "BUY"
+		tradeType = "FUTURES_SHORT"
+	}
+	executedAt := time.Now()
+	if pos.ClosedAt != nil {
+		executedAt = *pos.ClosedAt
+	}
+	rec := &database.TradeRecord{
+		UserID:     pos.UserID,
+		Symbol:     pos.Symbol,
+		Side:       side,
+		TradeType:  tradeType,
+		Quantity:   pos.Quantity,
+		Price:      pos.ClosePrice,
+		IsPaper:    pos.IsPaper,
+		ExecutedAt: executedAt,
+	}
+	if _, err := a.trades.Insert(ctx, rec); err != nil {
+		return err
+	}
+
+	// increment daily trade stats
+	isWin := pos.PnL > 0
+	if err := a.daily.IncrementTrade(ctx, pos.UserID, pos.PnL, pos.FundingPaid, isWin); err != nil {
+		slog.Error("failed to increment leverage trade stats", "user_id", pos.UserID, "error", err)
+	}
+	return nil
 }

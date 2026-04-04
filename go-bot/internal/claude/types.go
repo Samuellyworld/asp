@@ -49,12 +49,34 @@ type Sentiment struct {
 	Confidence float64 `json:"confidence"`
 }
 
+// trading cost context for fee-aware decision making
+type TradingCosts struct {
+	SpotMakerFeePct  float64 `json:"spot_maker_fee_pct"`  // e.g. 0.10 for 0.10%
+	SpotTakerFeePct  float64 `json:"spot_taker_fee_pct"`  // e.g. 0.10
+	FuturesMakerPct  float64 `json:"futures_maker_pct"`   // e.g. 0.02
+	FuturesTakerPct  float64 `json:"futures_taker_pct"`   // e.g. 0.04
+	FundingRatePct   float64 `json:"funding_rate_pct"`    // current 8h funding rate
+	EstSlippageBps   float64 `json:"est_slippage_bps"`    // avg slippage in bps
+	AvgRoundTripCost float64 `json:"avg_round_trip_cost"` // total cost estimate in %
+}
+
+// DefaultTradingCosts returns Binance standard fee tier.
+func DefaultTradingCosts() *TradingCosts {
+	return &TradingCosts{
+		SpotMakerFeePct: 0.10,
+		SpotTakerFeePct: 0.10,
+		FuturesMakerPct: 0.02,
+		FuturesTakerPct: 0.04,
+	}
+}
+
 // bundles all context for claude to analyze
 type AnalysisInput struct {
 	Market     MarketData    `json:"market"`
 	Indicators *Indicators   `json:"indicators,omitempty"`
 	Prediction *MLPrediction `json:"prediction,omitempty"`
 	Sentiment  *Sentiment    `json:"sentiment,omitempty"`
+	Costs      *TradingCosts `json:"costs,omitempty"`
 }
 
 // the trade plan extracted from claude's response

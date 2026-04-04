@@ -1,9 +1,13 @@
 package leverage
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/trading-bot/go-bot/internal/circuitbreaker"
 )
 
 // mock price provider for testing
@@ -497,5 +501,174 @@ func TestPaperExecutor_OpenPositionsFiltering(t *testing.T) {
 	user99 := exec.OpenPositions(99)
 	if len(user99) != 0 {
 		t.Errorf("OpenPositions(99) count = %d, want 0", len(user99))
+	}
+}
+
+// --- leverage trade logger tests ---
+
+type levTradeLogEntry struct {
+	isOpen bool
+	pos    *LeveragePosition
+}
+
+type mockLeverageTradeLogger struct {
+	entries []levTradeLogEntry
+	err     error
+}
+
+func (m *mockLeverageTradeLogger) LogOpen(_ context.Context, pos *LeveragePosition) error {
+	m.entries = append(m.entries, levTradeLogEntry{isOpen: true, pos: pos})
+	return m.err
+}
+
+func (m *mockLeverageTradeLogger) LogClose(_ context.Context, pos *LeveragePosition) error {
+	m.entries = append(m.entries, levTradeLogEntry{isOpen: false, pos: pos})
+	return m.err
+}
+
+func TestLeverageTradeLoggerCalledOnOpen(t *testing.T) {
+	exec := newTestExecutor(50000)
+	logger := &mockLeverageTradeLogger{}
+	exec.SetTradeLogger(logger)
+
+	pos, err := exec.OpenPosition(1, "BTCUSDT", SideLong, 10, 500, 49000, 52000, "telegram")
+	if err != nil {
+		t.Fatalf("open failed: %v", err)
+	}
+
+	if len(logger.entries) != 1 || !logger.entries[0].isOpen {
+		t.Fatalf("expected 1 open entry, got %d entries", len(logger.entries))
+	}
+	if logger.entries[0].pos.ID != pos.ID {
+		t.Errorf("expected ID %s, got %s", pos.ID, logger.entries[0].pos.ID)
+	}
+}
+
+func TestLeverageTradeLoggerCalledOnClose(t *testing.T) {
+	exec := newTestExecutor(50000)
+	logger := &mockLeverageTradeLogger{}
+	exec.SetTradeLogger(logger)
+
+	pos, _ := exec.OpenPosition(1, "BTCUSDT", SideLong, 10, 500, 0, 0, "telegram")
+	_, err := exec.Close(pos.ID, "take_profit")
+	if err != nil {
+		t.Fatalf("close failed: %v", err)
+	}
+
+	opens := 0
+	closes := 0
+	for _, e := range logger.entries {
+		if e.isOpen {
+			opens++
+		} else {
+			closes++
+		}
+	}
+	if opens != 1 || closes != 1 {
+		t.Errorf("expected 1 open + 1 close, got %d opens + %d closes", opens, closes)
+	}
+}
+
+func TestLeverageTradeLoggerNilSafe(t *testing.T) {
+	exec := newTestExecutor(50000)
+	// no logger configured
+
+	pos, err := exec.OpenPosition(1, "BTCUSDT", SideLong, 10, 500, 0, 0, "telegram")
+	if err != nil {
+		t.Fatalf("open should succeed without logger: %v", err)
+	}
+
+	_, err = exec.Close(pos.ID, "manual")
+	if err != nil {
+		t.Fatalf("close should succeed without logger: %v", err)
+	}
+}
+
+func TestLeverageTradeLoggerErrorDoesNotFailTrade(t *testing.T) {
+	exec := newTestExecutor(50000)
+	logger := &mockLeverageTradeLogger{err: fmt.Errorf("db write failed")}
+	exec.SetTradeLogger(logger)
+
+	pos, err := exec.OpenPosition(1, "BTCUSDT", SideLong, 10, 500, 0, 0, "telegram")
+	if err != nil {
+		t.Fatalf("open should succeed despite logger error: %v", err)
+	}
+	if pos == nil {
+		t.Fatal("position should not be nil")
+	}
+}
+
+// --- circuit breaker integration tests ---
+
+func TestPaperExecutor_CircuitBreakerBlocks(t *testing.T) {
+	exec := newTestExecutor(50000)
+
+	cb := circuitbreaker.New(circuitbreaker.Config{
+		MaxDailyLoss:         20,
+		MaxConsecutiveLosses: 0,
+		CooldownDuration:     time.Hour,
+	})
+	exec.SetCircuitBreaker(cb)
+
+	// trip the breaker
+	cb.RecordTrade(1, -25)
+
+	_, err := exec.OpenPosition(1, "BTCUSDT", SideLong, 10, 500, 48000, 55000, "telegram")
+	if err == nil {
+		t.Fatal("expected circuit breaker to block trade")
+	}
+	if !strings.Contains(err.Error(), "circuit breaker") {
+		t.Errorf("error should mention circuit breaker, got: %v", err)
+	}
+}
+
+func TestPaperExecutor_CircuitBreakerAllows(t *testing.T) {
+	exec := newTestExecutor(50000)
+
+	cb := circuitbreaker.New(circuitbreaker.Config{
+		MaxDailyLoss:         100,
+		MaxConsecutiveLosses: 10,
+		CooldownDuration:     time.Hour,
+	})
+	exec.SetCircuitBreaker(cb)
+
+	// small loss — shouldn't trip
+	cb.RecordTrade(1, -10)
+
+	pos, err := exec.OpenPosition(1, "BTCUSDT", SideLong, 10, 500, 48000, 55000, "telegram")
+	if err != nil {
+		t.Fatalf("trade should be allowed: %v", err)
+	}
+	if pos == nil {
+		t.Fatal("position should not be nil")
+	}
+}
+
+func TestPaperExecutor_SharedBreakerAcrossUsers(t *testing.T) {
+	exec := newTestExecutor(50000)
+
+	cb := circuitbreaker.New(circuitbreaker.Config{
+		MaxDailyLoss:         30,
+		MaxConsecutiveLosses: 0,
+		CooldownDuration:     time.Hour,
+	})
+	exec.SetCircuitBreaker(cb)
+
+	// user 1 trips the breaker
+	cb.RecordTrade(1, -35)
+
+	// user 1 blocked
+	_, err := exec.OpenPosition(1, "BTCUSDT", SideLong, 10, 500, 0, 0, "telegram")
+	if err == nil {
+		t.Fatal("user 1 should be blocked")
+	}
+
+	// user 2 still allowed (per-user tracking)
+	pos, err := exec.OpenPosition(2, "BTCUSDT", SideLong, 10, 500, 0, 0, "telegram")
+	if err != nil {
+		t.Fatalf("user 2 should be allowed: %v", err)
+	}
+	if pos == nil {
+		t.Fatal("position should not be nil")
 	}
 }

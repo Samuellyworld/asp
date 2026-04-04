@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/trading-bot/go-bot/internal/circuitbreaker"
 )
 
 // provides current market prices for position management
@@ -22,6 +24,12 @@ type LeveragePositionStore interface {
 	AdjustPosition(ctx context.Context, posID string, sl, tp float64) error
 }
 
+// optional trade record logger for leverage positions (nil = no logging)
+type LeverageTradeLogger interface {
+	LogOpen(ctx context.Context, pos *LeveragePosition) error
+	LogClose(ctx context.Context, pos *LeveragePosition) error
+}
+
 // manages simulated leverage positions for paper trading
 type PaperExecutor struct {
 	mu        sync.RWMutex
@@ -31,6 +39,8 @@ type PaperExecutor struct {
 	safety    *SafetyChecker
 	funding   *FundingTracker
 	store     LeveragePositionStore
+	trades    LeverageTradeLogger // nil if no logging configured
+	breaker   *circuitbreaker.Breaker // nil if no circuit breaker configured
 	nextID    int
 }
 
@@ -47,6 +57,16 @@ func NewPaperExecutor(prices PriceProvider, safety *SafetyChecker, funding *Fund
 // SetStore configures position persistence. Call before Start.
 func (e *PaperExecutor) SetStore(store LeveragePositionStore) {
 	e.store = store
+}
+
+// SetTradeLogger configures trade record logging. Call before Start.
+func (e *PaperExecutor) SetTradeLogger(logger LeverageTradeLogger) {
+	e.trades = logger
+}
+
+// SetCircuitBreaker configures portfolio circuit breaker. Call before Start.
+func (e *PaperExecutor) SetCircuitBreaker(b *circuitbreaker.Breaker) {
+	e.breaker = b
 }
 
 // SetNextID sets the starting ID for new positions (used for recovery).
@@ -84,6 +104,13 @@ func (e *PaperExecutor) OpenPosition(
 	price, err := e.prices.GetPrice(symbol)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get price for %s: %w", symbol, err)
+	}
+
+	// check circuit breaker before executing
+	if e.breaker != nil {
+		if ok, reason := e.breaker.AllowTrade(userID); !ok {
+			return nil, fmt.Errorf("circuit breaker: %s", reason)
+		}
 	}
 
 	// run safety checks if configured
@@ -130,6 +157,13 @@ func (e *PaperExecutor) OpenPosition(
 	if e.store != nil {
 		if err := e.store.SavePosition(context.Background(), pos); err != nil {
 			slog.Error("failed to persist leverage paper position", "id", id, "error", err)
+		}
+	}
+
+	// log trade record (best-effort)
+	if e.trades != nil {
+		if err := e.trades.LogOpen(context.Background(), pos); err != nil {
+			slog.Error("failed to log leverage trade open", "id", id, "error", err)
 		}
 	}
 
@@ -208,6 +242,13 @@ func (e *PaperExecutor) Close(posID string, reason string) (*LeveragePosition, e
 	if e.store != nil {
 		if err := e.store.ClosePosition(context.Background(), pos); err != nil {
 			slog.Error("failed to persist leverage position close", "id", posID, "error", err)
+		}
+	}
+
+	// log trade close record (best-effort)
+	if e.trades != nil {
+		if err := e.trades.LogClose(context.Background(), pos); err != nil {
+			slog.Error("failed to log leverage trade close", "id", posID, "error", err)
 		}
 	}
 

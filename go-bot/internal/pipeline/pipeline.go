@@ -263,5 +263,7 @@ func buildAIInput(
 		}
 	}
 
+	input.Costs = claude.DefaultTradingCosts()
+
 	return input
 }

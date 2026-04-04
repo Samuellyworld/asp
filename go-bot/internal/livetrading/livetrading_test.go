@@ -393,8 +393,10 @@ func TestSafety_InsufficientBalance(t *testing.T) {
 	cm.Confirm(1, DefaultConfirmPhrase)
 	config := DefaultSafetyConfig()
 	balance := &mockBalance{balances: map[int]float64{1: 30}}
+	positions := &mockPositionCounter{counts: map[int]int{1: 0}}
+	losses := NewLossTracker()
 
-	checker := NewSafetyChecker(config, balance, nil, nil, cm)
+	checker := NewSafetyChecker(config, balance, positions, losses, cm)
 	result := checker.Check(1, "BTCUSDT", 50, "USDT")
 
 	if result.Passed {
@@ -410,8 +412,10 @@ func TestSafety_BalanceError(t *testing.T) {
 	cm.Confirm(1, DefaultConfirmPhrase)
 	config := DefaultSafetyConfig()
 	balance := &mockBalance{err: fmt.Errorf("api error")}
+	positions := &mockPositionCounter{counts: map[int]int{1: 0}}
+	losses := NewLossTracker()
 
-	checker := NewSafetyChecker(config, balance, nil, nil, cm)
+	checker := NewSafetyChecker(config, balance, positions, losses, cm)
 	result := checker.Check(1, "BTCUSDT", 50, "USDT")
 
 	if result.Passed {
@@ -423,10 +427,12 @@ func TestSafety_DailyLossLimitReached(t *testing.T) {
 	cm := NewConfirmationManager()
 	cm.Confirm(1, DefaultConfirmPhrase)
 	config := DefaultSafetyConfig()
+	balance := &mockBalance{balances: map[int]float64{1: 1000}}
+	positions := &mockPositionCounter{counts: map[int]int{1: 0}}
 	losses := NewLossTracker()
 	losses.RecordLoss(1, -50) // full daily limit
 
-	checker := NewSafetyChecker(config, nil, nil, losses, cm)
+	checker := NewSafetyChecker(config, balance, positions, losses, cm)
 	result := checker.Check(1, "BTCUSDT", 50, "USDT")
 
 	if result.Passed {
@@ -440,8 +446,11 @@ func TestSafety_DailyLossLimitReached(t *testing.T) {
 func TestSafety_NoConfirmationRequired(t *testing.T) {
 	config := DefaultSafetyConfig()
 	config.RequireConfirmation = false
+	balance := &mockBalance{balances: map[int]float64{1: 1000}}
+	positions := &mockPositionCounter{counts: map[int]int{1: 0}}
+	losses := NewLossTracker()
 
-	checker := NewSafetyChecker(config, nil, nil, nil, nil)
+	checker := NewSafetyChecker(config, balance, positions, losses, nil)
 	result := checker.Check(1, "BTCUSDT", 50, "USDT")
 
 	if !result.Passed {

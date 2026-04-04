@@ -141,8 +141,9 @@ func (s *SafetyChecker) Check(userID int, symbol string, positionSize float64, a
 			countCheck.Message = fmt.Sprintf("%d/%d positions used", count, s.config.MaxOpenPositions)
 		}
 	} else {
-		countCheck.Passed = true
-		countCheck.Message = "position tracking not available"
+		countCheck.Passed = false
+		countCheck.Message = "position tracking not configured (fail-closed)"
+		allPassed = false
 	}
 	checks = append(checks, countCheck)
 
@@ -163,8 +164,9 @@ func (s *SafetyChecker) Check(userID int, symbol string, positionSize float64, a
 			balCheck.Message = fmt.Sprintf("$%.2f available", available)
 		}
 	} else {
-		balCheck.Passed = true
-		balCheck.Message = "balance check not available"
+		balCheck.Passed = false
+		balCheck.Message = "balance provider not configured (fail-closed)"
+		allPassed = false
 	}
 	checks = append(checks, balCheck)
 
@@ -182,8 +184,9 @@ func (s *SafetyChecker) Check(userID int, symbol string, positionSize float64, a
 			lossCheck.Message = fmt.Sprintf("$%.2f loss remaining today", remaining)
 		}
 	} else {
-		lossCheck.Passed = true
-		lossCheck.Message = "loss tracking not available"
+		lossCheck.Passed = false
+		lossCheck.Message = "loss tracking not configured (fail-closed)"
+		allPassed = false
 	}
 	checks = append(checks, lossCheck)
 

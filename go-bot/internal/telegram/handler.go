@@ -7,6 +7,8 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/trading-bot/go-bot/internal/exchange"
 	"github.com/trading-bot/go-bot/internal/preferences"
@@ -30,6 +32,47 @@ type exchangeClient interface {
 	GetBalance(ctx context.Context, apiKey, apiSecret string) ([]exchange.Balance, error)
 }
 
+// per-user rate limiter for expensive commands
+type rateLimiter struct {
+	mu       sync.Mutex
+	requests map[int64][]time.Time // telegramID -> timestamps
+	limit    int
+	window   time.Duration
+}
+
+func newRateLimiter(limit int, window time.Duration) *rateLimiter {
+	return &rateLimiter{
+		requests: make(map[int64][]time.Time),
+		limit:    limit,
+		window:   window,
+	}
+}
+
+func (r *rateLimiter) allow(userID int64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-r.window)
+
+	// prune old entries
+	timestamps := r.requests[userID]
+	valid := timestamps[:0]
+	for _, t := range timestamps {
+		if t.After(cutoff) {
+			valid = append(valid, t)
+		}
+	}
+
+	if len(valid) >= r.limit {
+		r.requests[userID] = valid
+		return false
+	}
+
+	r.requests[userID] = append(valid, now)
+	return true
+}
+
 // Handler processes incoming telegram messages
 type Handler struct {
 	bot       botClient
@@ -39,6 +82,7 @@ type Handler struct {
 	prefsSvc  *preferences.Service
 	exchange  exchangeClient
 	trading   *TradingDeps // optional, set via SetTradingDeps
+	limiter   *rateLimiter
 }
 
 func NewHandler(
@@ -56,6 +100,7 @@ func NewHandler(
 		watchSvc: watchSvc,
 		prefsSvc: prefsSvc,
 		exchange: exch,
+		limiter:  newRateLimiter(5, 1*time.Minute), // 5 expensive commands per minute per user
 	}
 }
 
@@ -108,19 +153,41 @@ func (h *Handler) HandleUpdate(ctx context.Context, update Update) {
 		h.handleSettings(ctx, telegramID, chatID)
 	case "set":
 		h.handleSet(ctx, msg, telegramID, chatID)
-	// exchange data commands
+	// exchange data commands (rate limited)
 	case "price", "p":
+		if !h.limiter.allow(telegramID) {
+			h.send(chatID, "⏳ rate limit reached. please wait a moment before trying again.")
+			return
+		}
 		h.handlePrice(ctx, msg, chatID)
 	case "balance", "bal":
+		if !h.limiter.allow(telegramID) {
+			h.send(chatID, "⏳ rate limit reached. please wait a moment before trying again.")
+			return
+		}
 		h.handleBalance(ctx, telegramID, chatID)
 	case "orderbook", "ob":
+		if !h.limiter.allow(telegramID) {
+			h.send(chatID, "⏳ rate limit reached. please wait a moment before trying again.")
+			return
+		}
 		h.handleOrderBook(ctx, msg, chatID)
 	case "portfolio", "pf":
+		if !h.limiter.allow(telegramID) {
+			h.send(chatID, "⏳ rate limit reached. please wait a moment before trying again.")
+			return
+		}
 		h.handlePortfolio(ctx, telegramID, chatID)
 	default:
-		// try trading commands before falling back to unknown
-		if command != "" && !h.handleTradingCommand(ctx, command, args, telegramID, chatID) {
-			h.send(chatID, "unknown command. type /help for available commands.")
+		// try trading commands before falling back to unknown (rate limited)
+		if command != "" {
+			if !h.limiter.allow(telegramID) {
+				h.send(chatID, "⏳ rate limit reached. please wait a moment before trying again.")
+				return
+			}
+			if !h.handleTradingCommand(ctx, command, args, telegramID, chatID) {
+				h.send(chatID, "unknown command. type /help for available commands.")
+			}
 		}
 	}
 }

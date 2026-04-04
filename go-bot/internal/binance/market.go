@@ -45,7 +45,13 @@ func (c *Client) GetPrice(ctx context.Context, symbol string) (*exchange.Ticker,
 		return nil, fmt.Errorf("failed to parse price response: %w", err)
 	}
 
-	price, _ := strconv.ParseFloat(resp.LastPrice, 64)
+	price, err := strconv.ParseFloat(resp.LastPrice, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse last price %q: %w", resp.LastPrice, err)
+	}
+	if price <= 0 {
+		return nil, fmt.Errorf("invalid price for %s: %f", symbol, price)
+	}
 	change, _ := strconv.ParseFloat(resp.PriceChange, 64)
 	changePct, _ := strconv.ParseFloat(resp.PriceChangePercent, 64)
 	volume, _ := strconv.ParseFloat(resp.Volume, 64)

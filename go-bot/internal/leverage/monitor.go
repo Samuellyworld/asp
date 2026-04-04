@@ -50,6 +50,11 @@ type PositionLister interface {
 	AllOpen() []*LeveragePosition
 }
 
+// updates mark price on a position under the executor's mutex
+type MarkPriceUpdater interface {
+	UpdateMarkPrice(posID string, price float64)
+}
+
 // monitor configuration with per-alert-level cooldowns
 type MonitorConfig struct {
 	CheckInterval    time.Duration // 30s default
@@ -71,12 +76,13 @@ func DefaultMonitorConfig() MonitorConfig {
 // background goroutine that monitors leverage positions for mark price
 // changes, liquidation proximity, tp/sl hits, and funding fee events
 type Monitor struct {
-	lister  PositionLister
-	closer  PositionCloser
-	prices  MarkPriceProvider
-	funding *FundingTracker
-	config  MonitorConfig
-	OnEvent func(LevEvent)
+	lister       PositionLister
+	closer       PositionCloser
+	priceUpdater MarkPriceUpdater
+	prices       MarkPriceProvider
+	funding      *FundingTracker
+	config       MonitorConfig
+	OnEvent      func(LevEvent)
 
 	mu             sync.Mutex
 	lastNotified   map[string]time.Time
@@ -94,8 +100,9 @@ func NewMonitor(
 	prices MarkPriceProvider,
 	funding *FundingTracker,
 	config MonitorConfig,
+	opts ...MonitorOption,
 ) *Monitor {
-	return &Monitor{
+	m := &Monitor{
 		lister:         lister,
 		closer:         closer,
 		prices:         prices,
@@ -103,6 +110,20 @@ func NewMonitor(
 		config:         config,
 		lastNotified:   make(map[string]time.Time),
 		lastAlertLevel: make(map[string]AlertLevel),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// MonitorOption configures optional monitor dependencies
+type MonitorOption func(*Monitor)
+
+// WithMarkPriceUpdater sets the mark price updater for thread-safe position updates
+func WithMarkPriceUpdater(u MarkPriceUpdater) MonitorOption {
+	return func(m *Monitor) {
+		m.priceUpdater = u
 	}
 }
 
@@ -180,8 +201,12 @@ func (m *Monitor) checkPosition(pos *LeveragePosition) {
 		return
 	}
 
-	// update position mark price
-	pos.MarkPrice = markPrice
+	// update position mark price through executor's mutex if available
+	if m.priceUpdater != nil {
+		m.priceUpdater.UpdateMarkPrice(pos.ID, markPrice)
+	} else {
+		pos.MarkPrice = markPrice
+	}
 
 	// check tp/sl hits first (highest priority)
 	if pos.IsTPHit() {

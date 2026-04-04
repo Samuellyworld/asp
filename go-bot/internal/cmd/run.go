@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -47,6 +48,18 @@ func runBot(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
+	// set up structured logging based on config level
+	logLevel := slog.LevelInfo
+	switch cfg.LogLevel {
+	case "debug":
+		logLevel = slog.LevelDebug
+	case "warn":
+		logLevel = slog.LevelWarn
+	case "error":
+		logLevel = slog.LevelError
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel})))
+
 	if err := config.Validate(cfg); err != nil {
 		return fmt.Errorf("config validation failed: %w", err)
 	}
@@ -70,6 +83,12 @@ func runBot(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("postgres ping failed: %w", err)
 	}
 	log.Println("connected to postgres")
+
+	// start health check server
+	healthSrv := newHealthServer(pg.Pool(), nil)
+	httpSrv := healthSrv.start(":8080")
+	defer httpSrv.Shutdown(ctx)
+	log.Println("health check server started on :8080")
 
 	encryptor, err := security.NewEncryptor(cfg.Security.MasterKey)
 	if err != nil {
@@ -139,10 +158,11 @@ func runBot(cmd *cobra.Command, args []string) error {
 
 	// paper trading
 	paperExecutor := papertrading.NewExecutor(prices)
+
+	// position persistence — wire store and recover open positions
+	posRepo := database.NewPositionRepository(pg.Pool())
+	paperExecutor.SetStore(&spotPositionStoreAdapter{repo: posRepo})
 	paperMonitor := papertrading.NewMonitor(paperExecutor, prices, papertrading.DefaultMonitorConfig())
-	paperMonitor.Start(ctx)
-	defer paperMonitor.Stop()
-	log.Println("paper trading monitor started (60s interval)")
 
 	// live trading adapters
 	credRepo := &credRepoAdapter{repo: userRepo}
@@ -170,9 +190,6 @@ func runBot(cmd *cobra.Command, args []string) error {
 	liveMonitor := livetrading.NewMonitor(
 		liveExecutor, orderClient, keyDecryptor, prices, livetrading.DefaultMonitorConfig(),
 	)
-	liveMonitor.Start(ctx)
-	defer liveMonitor.Stop()
-	log.Println("live trading monitor started (30s interval)")
 
 	// --- phase 4: leverage trading ---
 
@@ -197,21 +214,24 @@ func runBot(cmd *cobra.Command, args []string) error {
 
 	// paper leverage executor
 	levPaperExecutor := leverage.NewPaperExecutor(prices, levSafetyChecker, fundingTracker)
+	levPaperExecutor.SetStore(&leveragePositionStoreAdapter{repo: posRepo})
 
 	// live leverage executor
 	levLiveExecutor := leverage.NewLiveExecutor(futuresClient, keyDecryptor, levSafetyChecker, fundingTracker, markPrices)
 
 	// leverage monitor (uses paper executor by default — handles both via interfaces)
 	levMonitorConfig := leverage.DefaultMonitorConfig()
-	levPaperMonitor := leverage.NewMonitor(levPaperExecutor, levPaperExecutor, markPrices, fundingTracker, levMonitorConfig)
-	levPaperMonitor.Start(ctx)
-	defer levPaperMonitor.Stop()
-	log.Println("leverage paper monitor started (30s interval)")
+	levPaperMonitor := leverage.NewMonitor(levPaperExecutor, levPaperExecutor, markPrices, fundingTracker, levMonitorConfig, leverage.WithMarkPriceUpdater(levPaperExecutor))
 
-	levLiveMonitor := leverage.NewMonitor(levLiveExecutor, levLiveExecutor, markPrices, fundingTracker, levMonitorConfig)
-	levLiveMonitor.Start(ctx)
-	defer levLiveMonitor.Stop()
-	log.Println("leverage live monitor started (30s interval)")
+	levLiveMonitor := leverage.NewMonitor(levLiveExecutor, levLiveExecutor, markPrices, fundingTracker, levMonitorConfig, leverage.WithMarkPriceUpdater(levLiveExecutor))
+
+	// --- position recovery (restore open paper positions from database) ---
+	if err := recoverSpotPositions(ctx, posRepo, paperExecutor); err != nil {
+		slog.Error("spot position recovery failed", "error", err)
+	}
+	if err := recoverLeveragePositions(ctx, posRepo, levPaperExecutor); err != nil {
+		slog.Error("leverage position recovery failed", "error", err)
+	}
 
 	// --- phase 3: scanner ---
 
@@ -251,6 +271,13 @@ func runBot(cmd *cobra.Command, args []string) error {
 		offset := 0
 		go func() {
 			for {
+				select {
+				case <-ctx.Done():
+					log.Println("telegram polling stopped")
+					return
+				default:
+				}
+
 				updates, err := telegramBot.GetUpdates(offset, 30)
 				if err != nil {
 					log.Printf("error getting updates: %v", err)
@@ -296,9 +323,21 @@ func runBot(cmd *cobra.Command, args []string) error {
 
 		go func() {
 			for {
+				select {
+				case <-ctx.Done():
+					log.Println("discord gateway stopped")
+					return
+				default:
+				}
+
 				if err := gateway.Run(ctx); err != nil {
 					log.Printf("discord gateway error: %v, reconnecting in 5s...", err)
-					time.Sleep(5 * time.Second)
+					select {
+					case <-ctx.Done():
+						log.Println("discord gateway stopped")
+						return
+					case <-time.After(5 * time.Second):
+					}
 				}
 			}
 		}()
@@ -325,6 +364,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 	log.Printf("scanner started (%s interval)", scannerCfg.Interval)
 
 	// --- monitor event routing ---
+	// wire these BEFORE starting monitors to avoid dropping events from the first scan cycle
 
 	// paper trading events -> notifications
 	paperMonitor.OnEvent = func(event papertrading.Event) {
@@ -345,6 +385,23 @@ func runBot(cmd *cobra.Command, args []string) error {
 	levLiveMonitor.OnEvent = func(event leverage.LevEvent) {
 		routeLeverageEvent(event, telegramBot, notifier)
 	}
+
+	// --- start monitors now that event routing is wired ---
+	paperMonitor.Start(ctx)
+	defer paperMonitor.Stop()
+	log.Println("paper trading monitor started (60s interval)")
+
+	liveMonitor.Start(ctx)
+	defer liveMonitor.Stop()
+	log.Println("live trading monitor started (30s interval)")
+
+	levPaperMonitor.Start(ctx)
+	defer levPaperMonitor.Stop()
+	log.Println("leverage paper monitor started (30s interval)")
+
+	levLiveMonitor.Start(ctx)
+	defer levLiveMonitor.Stop()
+	log.Println("leverage live monitor started (30s interval)")
 
 	// --- wait for shutdown ---
 

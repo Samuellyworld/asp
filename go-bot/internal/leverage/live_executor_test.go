@@ -349,18 +349,27 @@ func TestLiveExecutor_OpenSLTPErrors(t *testing.T) {
 	futures.placeStopErr = fmt.Errorf("stop market failed")
 	futures.placeTPErr = fmt.Errorf("take profit failed")
 
+	// SL failure should now abort and reverse the position (safety-critical)
+	_, err := exec.OpenPosition(1, "BTCUSDT", SideLong, 10, 100, 48000, 55000, "telegram")
+	if err == nil {
+		t.Fatal("OpenPosition() should fail when SL placement fails")
+	}
+}
+
+func TestLiveExecutor_OpenTPErrorContinues(t *testing.T) {
+	exec, futures, _, _, _ := newTestLiveExecutor()
+	futures.placeTPErr = fmt.Errorf("take profit failed")
+
+	// TP failure should warn but NOT abort (SL still protects)
 	pos, err := exec.OpenPosition(1, "BTCUSDT", SideLong, 10, 100, 48000, 55000, "telegram")
 	if err != nil {
-		t.Fatalf("OpenPosition() should succeed even with SL/TP errors: %v", err)
-	}
-	if pos.SLOrderID != 0 {
-		t.Errorf("SLOrderID = %d, want 0 (SL order failed)", pos.SLOrderID)
+		t.Fatalf("OpenPosition() should succeed with only TP error: %v", err)
 	}
 	if pos.TPOrderID != 0 {
 		t.Errorf("TPOrderID = %d, want 0 (TP order failed)", pos.TPOrderID)
 	}
-	if pos.MainOrderID != 100 {
-		t.Errorf("MainOrderID = %d, want 100", pos.MainOrderID)
+	if pos.SLOrderID == 0 {
+		t.Error("SLOrderID should be set (SL succeeded)")
 	}
 }
 

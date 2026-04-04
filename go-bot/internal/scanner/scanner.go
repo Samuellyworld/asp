@@ -5,7 +5,7 @@ package scanner
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -86,6 +86,7 @@ type Scanner struct {
 	mu          sync.RWMutex
 	states      map[int]*userState // keyed by user id
 	running     bool
+	stopOnce    sync.Once
 	stopCh      chan struct{}
 	cycleCount  int
 	lastCycleAt time.Time
@@ -130,15 +131,14 @@ func (s *Scanner) Start(ctx context.Context) {
 	go s.midnightResetLoop(ctx)
 }
 
-// signals the scanner to stop
+// signals the scanner to stop (safe to call multiple times)
 func (s *Scanner) Stop() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.running {
-		return
-	}
-	s.running = false
-	close(s.stopCh)
+	s.stopOnce.Do(func() {
+		s.mu.Lock()
+		s.running = false
+		s.mu.Unlock()
+		close(s.stopCh)
+	})
 }
 
 // returns true if the scanner is running
@@ -191,7 +191,7 @@ func (s *Scanner) runCycle(ctx context.Context) {
 
 	users, err := s.users.ListActive(ctx)
 	if err != nil {
-		log.Printf("scanner: failed to list users: %v", err)
+		slog.Error("scanner: failed to list users", "error", err)
 		return
 	}
 
@@ -218,7 +218,7 @@ func (s *Scanner) runCycle(ctx context.Context) {
 
 		items, err := s.watchlists.List(ctx, u.ID)
 		if err != nil {
-			log.Printf("scanner: failed to list watchlist for user %d: %v", u.ID, err)
+			slog.Error("scanner: failed to list watchlist", "user_id", u.ID, "error", err)
 			continue
 		}
 
@@ -250,8 +250,13 @@ func (s *Scanner) runCycle(ctx context.Context) {
 	s.mu.Unlock()
 
 	elapsed := s.now().Sub(start)
-	log.Printf("scanner: cycle %d done — %d users, %d symbols, %d opportunities, %s elapsed",
-		s.cycleCount, len(users), totalSymbols, opportunities, elapsed.Round(time.Millisecond))
+	slog.Info("scanner: cycle complete",
+		"cycle", s.cycleCount,
+		"users", len(users),
+		"symbols", totalSymbols,
+		"opportunities", opportunities,
+		"elapsed", elapsed.Round(time.Millisecond),
+	)
 }
 
 // analyzes one symbol for one user and sends notification if warranted
@@ -269,7 +274,7 @@ func (s *Scanner) analyzeAndNotify(
 
 	result, err := s.analyzer.Analyze(ctx, symbol)
 	if err != nil {
-		log.Printf("scanner: analysis failed for %s (user %d): %v", symbol, u.ID, err)
+		slog.Error("scanner: analysis failed", "symbol", symbol, "user_id", u.ID, "error", err)
 		return false
 	}
 
@@ -320,7 +325,7 @@ func (s *Scanner) sendNotifications(u *user.User, result *pipeline.Result) {
 		msg := pipeline.FormatTelegramMessage(result)
 		header := fmt.Sprintf("🎯 *Opportunity Detected*\n\n%s", msg)
 		if err := s.notifier.NotifyTelegram(*u.TelegramID, header); err != nil {
-			log.Printf("scanner: telegram notify failed for user %d: %v", u.ID, err)
+			slog.Error("scanner: telegram notify failed", "user_id", u.ID, "error", err)
 		}
 	}
 
@@ -328,7 +333,7 @@ func (s *Scanner) sendNotifications(u *user.User, result *pipeline.Result) {
 		title, desc, fields, color := pipeline.FormatDiscordFields(result)
 		channelID := fmt.Sprintf("%d", *u.DiscordID)
 		if err := s.notifier.NotifyDiscord(channelID, title, desc, fields, color); err != nil {
-			log.Printf("scanner: discord notify failed for user %d: %v", u.ID, err)
+			slog.Error("scanner: discord notify failed", "user_id", u.ID, "error", err)
 		}
 	}
 }
@@ -421,7 +426,7 @@ func (s *Scanner) midnightResetLoop(ctx context.Context) {
 			return
 		case <-time.After(sleepDur):
 			s.ResetDaily()
-			log.Printf("scanner: daily counters reset at midnight")
+			slog.Info("scanner: daily counters reset at midnight")
 		}
 	}
 }

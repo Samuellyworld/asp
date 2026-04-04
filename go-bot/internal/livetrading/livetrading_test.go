@@ -1,6 +1,7 @@
 package livetrading
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -1245,5 +1246,269 @@ func TestOrderTypes(t *testing.T) {
 	}
 	if exchange.OrderStatusFilled != "FILLED" {
 		t.Fatal("OrderStatusFilled should be FILLED")
+	}
+}
+
+// --- store/logger persistence tests ---
+
+type mockPositionStore struct {
+	mu     sync.Mutex
+	saved  []*LivePosition
+	closed []*LivePosition
+	err    error
+}
+
+func (m *mockPositionStore) SavePosition(ctx context.Context, pos *LivePosition) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	m.saved = append(m.saved, pos)
+	return nil
+}
+
+func (m *mockPositionStore) ClosePosition(ctx context.Context, pos *LivePosition) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	m.closed = append(m.closed, pos)
+	return nil
+}
+
+type mockTradeLogger struct {
+	mu     sync.Mutex
+	opens  []*LivePosition
+	closes []*LivePosition
+	err    error
+}
+
+func (m *mockTradeLogger) LogOpen(ctx context.Context, pos *LivePosition) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	m.opens = append(m.opens, pos)
+	return nil
+}
+
+func (m *mockTradeLogger) LogClose(ctx context.Context, pos *LivePosition) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
+	m.closes = append(m.closes, pos)
+	return nil
+}
+
+func TestExecutor_SetStore_PersistsOnExecute(t *testing.T) {
+	orders := newMockOrders()
+	keys := newMockKeys()
+	cm := NewConfirmationManager()
+	cm.Confirm(1, DefaultConfirmPhrase)
+
+	config := DefaultSafetyConfig()
+	balance := &mockBalance{balances: map[int]float64{1: 10000}}
+	positions := &mockPositionCounter{counts: map[int]int{1: 0}}
+	losses := NewLossTracker()
+	checker := NewSafetyChecker(config, balance, positions, losses, cm)
+
+	store := &mockPositionStore{}
+	logger := &mockTradeLogger{}
+
+	exec := NewExecutor(orders, keys, checker, losses)
+	exec.SetStore(store)
+	exec.SetTradeLogger(logger)
+
+	opp := testOpp("BTCUSDT", claude.ActionBuy, 42000, 43000, 50)
+
+	pos, err := exec.Execute(opp)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	store.mu.Lock()
+	if len(store.saved) != 1 {
+		t.Fatalf("expected 1 saved position, got %d", len(store.saved))
+	}
+	if store.saved[0].ID != pos.ID {
+		t.Errorf("saved position ID = %q, want %q", store.saved[0].ID, pos.ID)
+	}
+	store.mu.Unlock()
+
+	logger.mu.Lock()
+	if len(logger.opens) != 1 {
+		t.Fatalf("expected 1 logged open, got %d", len(logger.opens))
+	}
+	logger.mu.Unlock()
+}
+
+func TestExecutor_SetStore_PersistsOnClose(t *testing.T) {
+	orders := newMockOrders()
+	keys := newMockKeys()
+	cm := NewConfirmationManager()
+	cm.Confirm(1, DefaultConfirmPhrase)
+
+	config := DefaultSafetyConfig()
+	balance := &mockBalance{balances: map[int]float64{1: 10000}}
+	positions := &mockPositionCounter{counts: map[int]int{1: 0}}
+	losses := NewLossTracker()
+	checker := NewSafetyChecker(config, balance, positions, losses, cm)
+
+	store := &mockPositionStore{}
+	logger := &mockTradeLogger{}
+
+	exec := NewExecutor(orders, keys, checker, losses)
+	exec.SetStore(store)
+	exec.SetTradeLogger(logger)
+
+	opp := testOpp("BTCUSDT", claude.ActionBuy, 42000, 43000, 50)
+	pos, err := exec.Execute(opp)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	_, err = exec.Close(pos.ID, "test close")
+	if err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	store.mu.Lock()
+	if len(store.closed) != 1 {
+		t.Fatalf("expected 1 closed position in store, got %d", len(store.closed))
+	}
+	store.mu.Unlock()
+
+	logger.mu.Lock()
+	if len(logger.closes) != 1 {
+		t.Fatalf("expected 1 logged close, got %d", len(logger.closes))
+	}
+	logger.mu.Unlock()
+}
+
+func TestExecutor_NilStore_NoError(t *testing.T) {
+	orders := newMockOrders()
+	keys := newMockKeys()
+	cm := NewConfirmationManager()
+	cm.Confirm(1, DefaultConfirmPhrase)
+
+	config := DefaultSafetyConfig()
+	balance := &mockBalance{balances: map[int]float64{1: 10000}}
+	positions := &mockPositionCounter{counts: map[int]int{1: 0}}
+	losses := NewLossTracker()
+	checker := NewSafetyChecker(config, balance, positions, losses, cm)
+
+	// no store or logger set — should not panic
+	exec := NewExecutor(orders, keys, checker, losses)
+	opp := testOpp("BTCUSDT", claude.ActionBuy, 42000, 43000, 50)
+
+	pos, err := exec.Execute(opp)
+	if err != nil {
+		t.Fatalf("Execute without store should succeed: %v", err)
+	}
+
+	_, err = exec.Close(pos.ID, "test close")
+	if err != nil {
+		t.Fatalf("Close without store should succeed: %v", err)
+	}
+}
+
+func TestExecutor_StoreError_BestEffort(t *testing.T) {
+	orders := newMockOrders()
+	keys := newMockKeys()
+	cm := NewConfirmationManager()
+	cm.Confirm(1, DefaultConfirmPhrase)
+
+	config := DefaultSafetyConfig()
+	balance := &mockBalance{balances: map[int]float64{1: 10000}}
+	positions := &mockPositionCounter{counts: map[int]int{1: 0}}
+	losses := NewLossTracker()
+	checker := NewSafetyChecker(config, balance, positions, losses, cm)
+
+	store := &mockPositionStore{err: fmt.Errorf("db connection failed")}
+	logger := &mockTradeLogger{err: fmt.Errorf("log write failed")}
+
+	exec := NewExecutor(orders, keys, checker, losses)
+	exec.SetStore(store)
+	exec.SetTradeLogger(logger)
+
+	opp := testOpp("BTCUSDT", claude.ActionBuy, 42000, 43000, 50)
+
+	// Execute should succeed despite store/logger errors
+	pos, err := exec.Execute(opp)
+	if err != nil {
+		t.Fatalf("Execute should succeed even with store error: %v", err)
+	}
+
+	// Close should succeed despite store/logger errors
+	_, err = exec.Close(pos.ID, "test close")
+	if err != nil {
+		t.Fatalf("Close should succeed even with store error: %v", err)
+	}
+}
+
+func TestExecutor_SetNextID(t *testing.T) {
+	orders := newMockOrders()
+	keys := newMockKeys()
+	cm := NewConfirmationManager()
+	cm.Confirm(1, DefaultConfirmPhrase)
+
+	config := DefaultSafetyConfig()
+	balance := &mockBalance{balances: map[int]float64{1: 10000}}
+	positions := &mockPositionCounter{counts: map[int]int{1: 0}}
+	losses := NewLossTracker()
+	checker := NewSafetyChecker(config, balance, positions, losses, cm)
+
+	exec := NewExecutor(orders, keys, checker, losses)
+	exec.SetNextID(100)
+
+	opp := testOpp("BTCUSDT", claude.ActionBuy, 42000, 43000, 50)
+	pos, err := exec.Execute(opp)
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	if pos.ID != "live_101" {
+		t.Fatalf("expected ID 'live_101', got %q", pos.ID)
+	}
+}
+
+func TestExecutor_RestorePosition(t *testing.T) {
+	orders := newMockOrders()
+	keys := newMockKeys()
+
+	exec := NewExecutor(orders, keys, nil, nil)
+
+	restored := &LivePosition{
+		ID:     "live_50",
+		UserID: 1,
+		Symbol: "ETHUSDT",
+		Status: "open",
+	}
+
+	exec.RestorePosition(restored)
+
+	got := exec.Get("live_50")
+	if got == nil {
+		t.Fatal("restored position should be retrievable")
+	}
+	if got.Symbol != "ETHUSDT" {
+		t.Fatalf("expected ETHUSDT, got %s", got.Symbol)
+	}
+}
+
+func TestDbCtx_HasTimeout(t *testing.T) {
+	ctx := dbCtx()
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("dbCtx should have a deadline")
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 || remaining > 6*time.Second {
+		t.Fatalf("expected ~5s deadline, got %v", remaining)
 	}
 }

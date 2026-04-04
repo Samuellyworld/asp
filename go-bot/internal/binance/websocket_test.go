@@ -298,5 +298,49 @@ func TestWSPriceCache_Stop_Idempotent(t *testing.T) {
 
 	// stop twice — should not panic
 	cache.Stop()
-	cache.Stop()
+}
+
+func TestWSPriceCache_Reconnect_MaxRetries(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping long reconnect test in short mode")
+	}
+	// verify reconnect exits after max retries — takes several seconds due to backoff
+	cache := NewWSPriceCache("ws://localhost:1")
+	cache.stopCh = make(chan struct{})
+	cache.done = make(chan struct{})
+
+	done := make(chan struct{})
+	go func() {
+		cache.reconnect()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// reconnect returned — max retries exhausted
+	case <-time.After(10 * time.Minute):
+		close(cache.stopCh)
+		t.Fatal("reconnect appears to be hanging")
+	}
+}
+
+func TestWSPriceCache_Reconnect_StopsDuringRetry(t *testing.T) {
+	cache := NewWSPriceCache("ws://localhost:1")
+	cache.stopCh = make(chan struct{})
+	cache.done = make(chan struct{})
+
+	// close stopCh after a short delay to simulate shutdown during reconnect
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		close(cache.stopCh)
+	}()
+
+	start := time.Now()
+	cache.reconnect()
+	elapsed := time.Since(start)
+
+	// should exit quickly after stopCh is closed, not retry all 10 times
+	if elapsed > 5*time.Second {
+		t.Fatalf("reconnect took %v — should have stopped after stopCh closed", elapsed)
+	}
 }

@@ -15,9 +15,10 @@ import (
 )
 
 type Client struct {
-	httpClient *http.Client
-	baseURL    string
-	testnet    bool
+	httpClient  *http.Client
+	baseURL     string
+	testnet     bool
+	rateLimiter *RateLimiter
 }
 
 // api permission flags returned by binance
@@ -44,10 +45,21 @@ type apiError struct {
 
 func NewClient(baseURL string, testnet bool) *Client {
 	return &Client{
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		baseURL:    baseURL,
-		testnet:    testnet,
+		httpClient:  &http.Client{Timeout: 10 * time.Second},
+		baseURL:     baseURL,
+		testnet:     testnet,
+		rateLimiter: NewRateLimiter(SpotWeightLimit),
 	}
+}
+
+// SetRateLimiter allows sharing a rate limiter across clients
+func (c *Client) SetRateLimiter(rl *RateLimiter) {
+	c.rateLimiter = rl
+}
+
+// RateLimiter returns the client's rate limiter (for sharing with other clients)
+func (c *Client) RateLimiter() *RateLimiter {
+	return c.rateLimiter
 }
 
 // sign a query string with the api secret using hmac-sha256
@@ -59,6 +71,10 @@ func sign(queryString, secret string) string {
 
 // validateKeys tests the api key/secret pair against binance and returns permissions
 func (c *Client) ValidateKeys(ctx context.Context, apiKey, apiSecret string) (*APIPermissions, error) {
+	if err := c.rateLimiter.Wait(ctx, WeightForEndpoint("/api/v3/account")); err != nil {
+		return nil, fmt.Errorf("rate limit: %w", err)
+	}
+
 	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
 	queryString := "timestamp=" + timestamp
 	signature := sign(queryString, apiSecret)
@@ -77,6 +93,7 @@ func (c *Client) ValidateKeys(ctx context.Context, apiKey, apiSecret string) (*A
 		return nil, fmt.Errorf("failed to connect to binance: %w", err)
 	}
 	defer resp.Body.Close()
+	c.rateLimiter.RecordResponse(resp.StatusCode)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

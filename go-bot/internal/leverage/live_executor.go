@@ -3,6 +3,7 @@
 package leverage
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -20,13 +21,13 @@ type KeyDecryptor interface {
 
 // places and manages futures orders
 type FuturesOrderClient interface {
-	SetLeverage(symbol string, leverage int, apiKey, apiSecret string) error
-	SetMarginType(symbol string, marginType string, apiKey, apiSecret string) error
-	PlaceOrder(symbol string, side exchange.OrderSide, orderType exchange.OrderType, quantity, price float64, apiKey, apiSecret string) (*binance.FuturesOrder, error)
-	PlaceStopMarket(symbol string, side exchange.OrderSide, quantity, stopPrice float64, apiKey, apiSecret string) (*binance.FuturesOrder, error)
-	PlaceTakeProfitMarket(symbol string, side exchange.OrderSide, quantity, stopPrice float64, apiKey, apiSecret string) (*binance.FuturesOrder, error)
-	CancelOrder(symbol string, orderID int64, apiKey, apiSecret string) error
-	GetPositions(apiKey, apiSecret string) ([]binance.FuturesPosition, error)
+	SetLeverage(ctx context.Context, symbol string, leverage int, apiKey, apiSecret string) error
+	SetMarginType(ctx context.Context, symbol string, marginType string, apiKey, apiSecret string) error
+	PlaceOrder(ctx context.Context, symbol string, side exchange.OrderSide, orderType exchange.OrderType, quantity, price float64, apiKey, apiSecret string) (*binance.FuturesOrder, error)
+	PlaceStopMarket(ctx context.Context, symbol string, side exchange.OrderSide, quantity, stopPrice float64, apiKey, apiSecret string) (*binance.FuturesOrder, error)
+	PlaceTakeProfitMarket(ctx context.Context, symbol string, side exchange.OrderSide, quantity, stopPrice float64, apiKey, apiSecret string) (*binance.FuturesOrder, error)
+	CancelOrder(ctx context.Context, symbol string, orderID int64, apiKey, apiSecret string) error
+	GetPositions(ctx context.Context, apiKey, apiSecret string) ([]binance.FuturesPosition, error)
 }
 
 // executes real leveraged futures trades on binance
@@ -78,8 +79,12 @@ func (e *LiveExecutor) OpenPosition(
 	stopLoss, takeProfit float64,
 	platform string,
 ) (*LeveragePosition, error) {
+	// create a timeout context for exchange operations
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	// get current mark price for quantity calculation and safety checks
-	markPrice, err := e.prices.GetMarkPrice(symbol)
+	markPrice, err := e.prices.GetMarkPrice(ctx, symbol)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get mark price: %w", err)
 	}
@@ -109,12 +114,12 @@ func (e *LiveExecutor) OpenPosition(
 	}
 
 	// configure leverage on exchange
-	if err := e.futures.SetLeverage(symbol, leverage, apiKey, apiSecret); err != nil {
+	if err := e.futures.SetLeverage(ctx, symbol, leverage, apiKey, apiSecret); err != nil {
 		return nil, fmt.Errorf("failed to set leverage: %w", err)
 	}
 
 	// set isolated margin mode
-	if err := e.futures.SetMarginType(symbol, "ISOLATED", apiKey, apiSecret); err != nil {
+	if err := e.futures.SetMarginType(ctx, symbol, "ISOLATED", apiKey, apiSecret); err != nil {
 		return nil, fmt.Errorf("failed to set margin type: %w", err)
 	}
 
@@ -132,7 +137,7 @@ func (e *LiveExecutor) OpenPosition(
 
 	// place market order
 	mainOrder, err := e.futures.PlaceOrder(
-		symbol, orderSide, exchange.OrderTypeMarket,
+		ctx, symbol, orderSide, exchange.OrderTypeMarket,
 		quantity, 0,
 		apiKey, apiSecret,
 	)
@@ -162,7 +167,7 @@ func (e *LiveExecutor) OpenPosition(
 	var slOrderID int64
 	if stopLoss > 0 {
 		slOrder, err := e.futures.PlaceStopMarket(
-			symbol, closeSide, filledQty, stopLoss,
+			ctx, symbol, closeSide, filledQty, stopLoss,
 			apiKey, apiSecret,
 		)
 		if err != nil {
@@ -170,7 +175,7 @@ func (e *LiveExecutor) OpenPosition(
 			slog.Error("failed to place SL on leveraged position, closing immediately",
 				"symbol", symbol, "leverage", leverage, "error", err)
 			_, _ = e.futures.PlaceOrder(
-				symbol, closeSide, exchange.OrderTypeMarket,
+				ctx, symbol, closeSide, exchange.OrderTypeMarket,
 				filledQty, 0, apiKey, apiSecret,
 			)
 			return nil, fmt.Errorf("failed to place stop loss on leveraged position (position reversed): %w", err)
@@ -182,7 +187,7 @@ func (e *LiveExecutor) OpenPosition(
 	var tpOrderID int64
 	if takeProfit > 0 {
 		tpOrder, err := e.futures.PlaceTakeProfitMarket(
-			symbol, closeSide, filledQty, takeProfit,
+			ctx, symbol, closeSide, filledQty, takeProfit,
 			apiKey, apiSecret,
 		)
 		if err != nil {
@@ -194,7 +199,7 @@ func (e *LiveExecutor) OpenPosition(
 	}
 
 	// try to get exchange liquidation price for higher accuracy
-	positions, err := e.futures.GetPositions(apiKey, apiSecret)
+	positions, err := e.futures.GetPositions(ctx, apiKey, apiSecret)
 	if err == nil {
 		for _, p := range positions {
 			if p.Symbol == symbol && p.LiquidationPrice > 0 {
@@ -241,6 +246,10 @@ func (e *LiveExecutor) OpenPosition(
 // closes a live leveraged position by canceling sl/tp and placing a closing order.
 // calculates realized pnl including cumulative funding fees.
 func (e *LiveExecutor) Close(posID string, reason string) (*LeveragePosition, error) {
+	// create a timeout context for exchange operations
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	e.mu.Lock()
 	pos, ok := e.positions[posID]
 	if !ok {
@@ -261,13 +270,13 @@ func (e *LiveExecutor) Close(posID string, reason string) (*LeveragePosition, er
 
 	// cancel existing sl/tp orders (log failures — stale orders could fill unexpectedly)
 	if pos.SLOrderID > 0 {
-		if err := e.futures.CancelOrder(pos.Symbol, pos.SLOrderID, apiKey, apiSecret); err != nil {
+		if err := e.futures.CancelOrder(ctx, pos.Symbol, pos.SLOrderID, apiKey, apiSecret); err != nil {
 			slog.Warn("failed to cancel SL order during leverage close",
 				"position", posID, "sl_order", pos.SLOrderID, "error", err)
 		}
 	}
 	if pos.TPOrderID > 0 {
-		if err := e.futures.CancelOrder(pos.Symbol, pos.TPOrderID, apiKey, apiSecret); err != nil {
+		if err := e.futures.CancelOrder(ctx, pos.Symbol, pos.TPOrderID, apiKey, apiSecret); err != nil {
 			slog.Warn("failed to cancel TP order during leverage close",
 				"position", posID, "tp_order", pos.TPOrderID, "error", err)
 		}
@@ -281,7 +290,7 @@ func (e *LiveExecutor) Close(posID string, reason string) (*LeveragePosition, er
 
 	// place closing market order
 	closeOrder, err := e.futures.PlaceOrder(
-		pos.Symbol, closeSide, exchange.OrderTypeMarket,
+		ctx, pos.Symbol, closeSide, exchange.OrderTypeMarket,
 		pos.Quantity, 0,
 		apiKey, apiSecret,
 	)

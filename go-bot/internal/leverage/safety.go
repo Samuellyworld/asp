@@ -3,6 +3,7 @@
 package leverage
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -31,7 +32,7 @@ type SafetyConfig struct {
 
 // provides balance information for futures account
 type FuturesBalanceProvider interface {
-	GetFuturesBalance(userID int, asset string) (float64, error)
+	GetFuturesBalance(ctx context.Context, userID int, asset string) (float64, error)
 }
 
 // provides leverage opt-in status for a user
@@ -137,7 +138,7 @@ func (s *SafetyChecker) Check(userID int, symbol string, leverage int, margin fl
 
 	// 6. futures balance check
 	if s.balance != nil {
-		balance, err := s.balance.GetFuturesBalance(userID, "USDT")
+		balance, err := s.balance.GetFuturesBalance(context.Background(), userID, "USDT")
 		if err != nil {
 			checks = append(checks, CheckResult{
 				Name:    "balance",

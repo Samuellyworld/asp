@@ -1,6 +1,7 @@
 package leverage
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -33,17 +34,17 @@ type mockFutures struct {
 	lastTPPrice       float64
 }
 
-func (m *mockFutures) SetLeverage(symbol string, leverage int, apiKey, apiSecret string) error {
+func (m *mockFutures) SetLeverage(ctx context.Context, symbol string, leverage int, apiKey, apiSecret string) error {
 	m.setLeverageCalls++
 	return m.setLeverageErr
 }
 
-func (m *mockFutures) SetMarginType(symbol string, marginType string, apiKey, apiSecret string) error {
+func (m *mockFutures) SetMarginType(ctx context.Context, symbol string, marginType string, apiKey, apiSecret string) error {
 	m.setMarginCalls++
 	return m.setMarginTypeErr
 }
 
-func (m *mockFutures) PlaceOrder(symbol string, side exchange.OrderSide, orderType exchange.OrderType, quantity, price float64, apiKey, apiSecret string) (*binance.FuturesOrder, error) {
+func (m *mockFutures) PlaceOrder(ctx context.Context, symbol string, side exchange.OrderSide, orderType exchange.OrderType, quantity, price float64, apiKey, apiSecret string) (*binance.FuturesOrder, error) {
 	m.lastOrderSide = side
 	m.lastOrderQty = quantity
 	if m.placeOrderErr != nil {
@@ -63,7 +64,7 @@ func (m *mockFutures) PlaceOrder(symbol string, side exchange.OrderSide, orderTy
 	}, nil
 }
 
-func (m *mockFutures) PlaceStopMarket(symbol string, side exchange.OrderSide, quantity, stopPrice float64, apiKey, apiSecret string) (*binance.FuturesOrder, error) {
+func (m *mockFutures) PlaceStopMarket(ctx context.Context, symbol string, side exchange.OrderSide, quantity, stopPrice float64, apiKey, apiSecret string) (*binance.FuturesOrder, error) {
 	m.lastStopPrice = stopPrice
 	if m.placeStopErr != nil {
 		return nil, m.placeStopErr
@@ -81,7 +82,7 @@ func (m *mockFutures) PlaceStopMarket(symbol string, side exchange.OrderSide, qu
 	}, nil
 }
 
-func (m *mockFutures) PlaceTakeProfitMarket(symbol string, side exchange.OrderSide, quantity, stopPrice float64, apiKey, apiSecret string) (*binance.FuturesOrder, error) {
+func (m *mockFutures) PlaceTakeProfitMarket(ctx context.Context, symbol string, side exchange.OrderSide, quantity, stopPrice float64, apiKey, apiSecret string) (*binance.FuturesOrder, error) {
 	m.lastTPPrice = stopPrice
 	if m.placeTPErr != nil {
 		return nil, m.placeTPErr
@@ -99,12 +100,12 @@ func (m *mockFutures) PlaceTakeProfitMarket(symbol string, side exchange.OrderSi
 	}, nil
 }
 
-func (m *mockFutures) CancelOrder(symbol string, orderID int64, apiKey, apiSecret string) error {
+func (m *mockFutures) CancelOrder(ctx context.Context, symbol string, orderID int64, apiKey, apiSecret string) error {
 	m.cancelCalls++
 	return m.cancelErr
 }
 
-func (m *mockFutures) GetPositions(apiKey, apiSecret string) ([]binance.FuturesPosition, error) {
+func (m *mockFutures) GetPositions(ctx context.Context, apiKey, apiSecret string) ([]binance.FuturesPosition, error) {
 	if m.positionsErr != nil {
 		return nil, m.positionsErr
 	}
@@ -129,7 +130,7 @@ type mockMarkPrice struct {
 	err    error
 }
 
-func (m *mockMarkPrice) GetMarkPrice(symbol string) (float64, error) {
+func (m *mockMarkPrice) GetMarkPrice(ctx context.Context, symbol string) (float64, error) {
 	if m.err != nil {
 		return 0, m.err
 	}
@@ -145,7 +146,7 @@ type mockLiveBalance struct {
 	err     error
 }
 
-func (m *mockLiveBalance) GetFuturesBalance(userID int, asset string) (float64, error) {
+func (m *mockLiveBalance) GetFuturesBalance(ctx context.Context, userID int, asset string) (float64, error) {
 	if m.err != nil {
 		return 0, m.err
 	}

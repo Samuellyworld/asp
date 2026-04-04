@@ -5,11 +5,14 @@ package cmd
 import (
 	"context"
 	"log"
+	"time"
 
 	"github.com/trading-bot/go-bot/internal/binance"
+	"github.com/trading-bot/go-bot/internal/database"
 	"github.com/trading-bot/go-bot/internal/livetrading"
 	"github.com/trading-bot/go-bot/internal/pipeline"
 	"github.com/trading-bot/go-bot/internal/user"
+	"github.com/trading-bot/go-bot/internal/watchlist"
 )
 
 // adapts binance.WSPriceCache to the PriceProvider interface.
@@ -74,8 +77,8 @@ type markPriceAdapter struct {
 	client *binance.FuturesClient
 }
 
-func (a *markPriceAdapter) GetMarkPrice(symbol string) (float64, error) {
-	mp, err := a.client.GetMarkPrice(symbol)
+func (a *markPriceAdapter) GetMarkPrice(ctx context.Context, symbol string) (float64, error) {
+	mp, err := a.client.GetMarkPrice(ctx, symbol)
 	if err != nil {
 		return 0, err
 	}
@@ -91,12 +94,12 @@ type futuresBalanceAdapter struct {
 	}
 }
 
-func (a *futuresBalanceAdapter) GetFuturesBalance(userID int, asset string) (float64, error) {
+func (a *futuresBalanceAdapter) GetFuturesBalance(ctx context.Context, userID int, asset string) (float64, error) {
 	apiKey, apiSecret, err := a.keys.DecryptKeys(userID)
 	if err != nil {
 		return 0, err
 	}
-	balances, err := a.futures.GetFuturesBalance(apiKey, apiSecret)
+	balances, err := a.futures.GetFuturesBalance(ctx, apiKey, apiSecret)
 	if err != nil {
 		return 0, err
 	}
@@ -158,4 +161,66 @@ func (n *scannerNotifier) NotifyWhatsApp(recipientID string, message string) err
 		return nil
 	}
 	return n.whatsappBot.SendMessage(recipientID, message)
+}
+
+// --- data ingestion adapters ---
+
+// adapts database.CandleRepository to pipeline.CandleStore interface.
+// converts between pipeline.CandleRecord and database.CandleRecord.
+type candleStoreAdapter struct {
+	repo *database.CandleRepository
+}
+
+func (a *candleStoreAdapter) UpsertBatch(ctx context.Context, candles []*pipeline.CandleRecord) (int, error) {
+	dbCandles := make([]*database.CandleRecord, len(candles))
+	for i, c := range candles {
+		dbCandles[i] = &database.CandleRecord{
+			Time:        c.Time,
+			Symbol:      c.Symbol,
+			Interval:    c.Interval,
+			Open:        c.Open,
+			High:        c.High,
+			Low:         c.Low,
+			Close:       c.Close,
+			Volume:      c.Volume,
+			QuoteVolume: c.QuoteVolume,
+			TradeCount:  c.TradeCount,
+		}
+	}
+	return a.repo.UpsertBatch(ctx, dbCandles)
+}
+
+func (a *candleStoreAdapter) LatestTime(ctx context.Context, symbol, interval string) (time.Time, error) {
+	return a.repo.LatestTime(ctx, symbol, interval)
+}
+
+// aggregates all unique symbols across all users' watchlists.
+// implements pipeline.SymbolProvider.
+type watchlistSymbolProvider struct {
+	userSvc  *user.Service
+	watchSvc *watchlist.Service
+}
+
+func (p *watchlistSymbolProvider) ActiveSymbols(ctx context.Context) ([]string, error) {
+	users, err := p.userSvc.ListActive(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]bool)
+	for _, u := range users {
+		items, err := p.watchSvc.List(ctx, u.ID)
+		if err != nil {
+			continue
+		}
+		for _, item := range items {
+			seen[item.Symbol] = true
+		}
+	}
+
+	symbols := make([]string, 0, len(seen))
+	for s := range seen {
+		symbols = append(symbols, s)
+	}
+	return symbols, nil
 }

@@ -129,15 +129,20 @@ func (r *PositionRepository) UpdateSLTP(ctx context.Context, internalID string, 
 
 // LoadOpenPaperSpot loads all open paper SPOT positions for startup recovery.
 func (r *PositionRepository) LoadOpenPaperSpot(ctx context.Context) ([]*PersistedPosition, error) {
-	return r.loadOpen(ctx, "SPOT")
+	return r.loadOpen(ctx, "SPOT", true)
 }
 
 // LoadOpenPaperFutures loads all open paper FUTURES positions for startup recovery.
 func (r *PositionRepository) LoadOpenPaperFutures(ctx context.Context) ([]*PersistedPosition, error) {
-	return r.loadOpen(ctx, "FUTURES")
+	return r.loadOpen(ctx, "FUTURES", true)
 }
 
-func (r *PositionRepository) loadOpen(ctx context.Context, posType string) ([]*PersistedPosition, error) {
+// LoadOpenLiveSpot loads all open non-paper SPOT positions for startup recovery.
+func (r *PositionRepository) LoadOpenLiveSpot(ctx context.Context) ([]*PersistedPosition, error) {
+	return r.loadOpen(ctx, "SPOT", false)
+}
+
+func (r *PositionRepository) loadOpen(ctx context.Context, posType string, isPaper bool) ([]*PersistedPosition, error) {
 	query := `
 		SELECT id, internal_id, user_id, symbol, side, action, position_type, status,
 			   entry_price, COALESCE(current_price, 0), COALESCE(mark_price, 0),
@@ -149,10 +154,10 @@ func (r *PositionRepository) loadOpen(ctx context.Context, posType string) ([]*P
 			   COALESCE(unrealized_pnl, 0), COALESCE(realized_pnl, 0),
 			   is_paper, COALESCE(platform, ''), opened_at
 		FROM positions
-		WHERE is_paper = TRUE AND status = 'OPEN' AND position_type = $1
+		WHERE is_paper = $1 AND status = 'OPEN' AND position_type = $2
 		ORDER BY opened_at ASC`
 
-	rows, err := r.pool.Query(ctx, query, posType)
+	rows, err := r.pool.Query(ctx, query, isPaper, posType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load open %s positions: %w", posType, err)
 	}
@@ -219,4 +224,119 @@ func nullStr(v string) interface{} {
 		return nil
 	}
 	return v
+}
+
+// ListByUser returns positions for a user, optionally filtered by status (OPEN/CLOSED).
+// Pass empty string for status to return all. Results limited to `limit` rows.
+func (r *PositionRepository) ListByUser(ctx context.Context, userID int, status string, limit int) ([]*PersistedPosition, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+
+	query := `
+		SELECT id, internal_id, user_id, symbol, side, action, position_type, status,
+			   entry_price, COALESCE(current_price, 0), COALESCE(mark_price, 0),
+			   COALESCE(close_price, 0),
+			   quantity, COALESCE(position_size, 0),
+			   COALESCE(margin, 0), COALESCE(notional_value, 0), COALESCE(leverage, 1),
+			   COALESCE(stop_loss, 0), COALESCE(take_profit, 0),
+			   COALESCE(liquidation_price, 0), COALESCE(funding_paid, 0),
+			   COALESCE(margin_type, 'isolated'),
+			   COALESCE(unrealized_pnl, 0), COALESCE(realized_pnl, 0),
+			   is_paper, COALESCE(close_reason, ''), COALESCE(platform, ''),
+			   opened_at, closed_at
+		FROM positions
+		WHERE user_id = $1`
+
+	args := []any{userID}
+	argIdx := 2
+
+	if status != "" {
+		query += fmt.Sprintf(" AND status = $%d", argIdx)
+		args = append(args, status)
+		argIdx++
+	}
+
+	query += fmt.Sprintf(" ORDER BY opened_at DESC LIMIT $%d", argIdx)
+	args = append(args, limit)
+
+	rows, err := r.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list positions for user %d: %w", userID, err)
+	}
+	defer rows.Close()
+
+	return scanPositionRows(rows)
+}
+
+// GetByID returns a single position by database ID.
+func (r *PositionRepository) GetByID(ctx context.Context, id int) (*PersistedPosition, error) {
+	query := `
+		SELECT id, internal_id, user_id, symbol, side, action, position_type, status,
+			   entry_price, COALESCE(current_price, 0), COALESCE(mark_price, 0),
+			   COALESCE(close_price, 0),
+			   quantity, COALESCE(position_size, 0),
+			   COALESCE(margin, 0), COALESCE(notional_value, 0), COALESCE(leverage, 1),
+			   COALESCE(stop_loss, 0), COALESCE(take_profit, 0),
+			   COALESCE(liquidation_price, 0), COALESCE(funding_paid, 0),
+			   COALESCE(margin_type, 'isolated'),
+			   COALESCE(unrealized_pnl, 0), COALESCE(realized_pnl, 0),
+			   is_paper, COALESCE(close_reason, ''), COALESCE(platform, ''),
+			   opened_at, closed_at
+		FROM positions
+		WHERE id = $1`
+
+	p := &PersistedPosition{}
+	var action, closeReason *string
+	err := r.pool.QueryRow(ctx, query, id).Scan(
+		&p.ID, &p.InternalID, &p.UserID, &p.Symbol, &p.Side, &action, &p.PositionType, &p.Status,
+		&p.EntryPrice, &p.CurrentPrice, &p.MarkPrice, &p.ClosePrice,
+		&p.Quantity, &p.PositionSize,
+		&p.Margin, &p.NotionalValue, &p.Leverage,
+		&p.StopLoss, &p.TakeProfit,
+		&p.LiquidationPrice, &p.FundingPaid, &p.MarginType,
+		&p.UnrealizedPnL, &p.RealizedPnL,
+		&p.IsPaper, &closeReason, &p.Platform,
+		&p.OpenedAt, &p.ClosedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get position %d: %w", id, err)
+	}
+	if action != nil {
+		p.Action = *action
+	}
+	if closeReason != nil {
+		p.CloseReason = *closeReason
+	}
+	return p, nil
+}
+
+func scanPositionRows(rows pgx.Rows) ([]*PersistedPosition, error) {
+	var positions []*PersistedPosition
+	for rows.Next() {
+		p := &PersistedPosition{}
+		var action, closeReason *string
+		err := rows.Scan(
+			&p.ID, &p.InternalID, &p.UserID, &p.Symbol, &p.Side, &action, &p.PositionType, &p.Status,
+			&p.EntryPrice, &p.CurrentPrice, &p.MarkPrice, &p.ClosePrice,
+			&p.Quantity, &p.PositionSize,
+			&p.Margin, &p.NotionalValue, &p.Leverage,
+			&p.StopLoss, &p.TakeProfit,
+			&p.LiquidationPrice, &p.FundingPaid, &p.MarginType,
+			&p.UnrealizedPnL, &p.RealizedPnL,
+			&p.IsPaper, &closeReason, &p.Platform,
+			&p.OpenedAt, &p.ClosedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan position row: %w", err)
+		}
+		if action != nil {
+			p.Action = *action
+		}
+		if closeReason != nil {
+			p.CloseReason = *closeReason
+		}
+		positions = append(positions, p)
+	}
+	return positions, rows.Err()
 }

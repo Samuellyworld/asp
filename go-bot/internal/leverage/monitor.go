@@ -38,7 +38,7 @@ type LevEvent struct {
 
 // provides current mark price for a symbol
 type MarkPriceProvider interface {
-	GetMarkPrice(symbol string) (float64, error)
+	GetMarkPrice(ctx context.Context, symbol string) (float64, error)
 }
 
 // can close a position (paper or live executor)
@@ -197,7 +197,9 @@ func (m *Monitor) CheckPositions() {
 // checks a single position for all conditions
 func (m *Monitor) checkPosition(pos *LeveragePosition) {
 	// fetch mark price
-	markPrice, err := m.prices.GetMarkPrice(pos.Symbol)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	markPrice, err := m.prices.GetMarkPrice(ctx, pos.Symbol)
 	if err != nil {
 		return
 	}

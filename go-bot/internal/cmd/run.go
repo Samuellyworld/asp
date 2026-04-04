@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/trading-bot/go-bot/internal/api"
 	"github.com/trading-bot/go-bot/internal/analysis"
 	"github.com/trading-bot/go-bot/internal/binance"
 	"github.com/trading-bot/go-bot/internal/circuitbreaker"
@@ -86,9 +87,13 @@ func runBot(cmd *cobra.Command, args []string) error {
 	}
 	log.Println("connected to postgres")
 
-	// start health check server
+	// start health check + analytics API server
 	healthSrv := newHealthServer(pg.Pool(), nil)
-	httpSrv := healthSrv.start(":8080")
+	healthSrv.SetBinanceURL(cfg.Binance.APIURL())
+	if cfg.MLService.BaseURL != "" {
+		healthSrv.SetMLURL(cfg.MLService.BaseURL)
+	}
+	httpMux, httpSrv := healthSrv.start(":8080")
 	defer httpSrv.Shutdown(ctx)
 	log.Println("health check server started on :8080")
 
@@ -185,6 +190,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 	credRepo := &credRepoAdapter{repo: userRepo}
 	keyDecryptor := livetrading.NewKeyDecryptorAdapter(credRepo, encryptor, auditLogger)
 	orderClient := binance.NewOrderClient(cfg.Binance.APIURL(), cfg.Binance.Testnet)
+	orderClient.SetRateLimiter(binanceClient.RateLimiter()) // share spot rate limiter
 	balanceProvider := livetrading.NewBalanceProviderAdapter(keyDecryptor, binanceClient)
 
 	// live trading safety
@@ -197,6 +203,8 @@ func runBot(cmd *cobra.Command, args []string) error {
 
 	// live trading executor and monitor
 	liveExecutor := livetrading.NewExecutor(orderClient, keyDecryptor, safetyChecker, lossTracker)
+	liveExecutor.SetStore(&livePositionStoreAdapter{repo: posRepo})
+	liveExecutor.SetTradeLogger(&liveTradeLoggerAdapter{trades: tradeRepo, daily: dailyStatsRepo})
 	emergencyStop := livetrading.NewEmergencyStop(liveExecutor)
 
 	// wire safety checker's position counter to the live executor
@@ -259,6 +267,9 @@ func runBot(cmd *cobra.Command, args []string) error {
 	}
 	if err := recoverLeveragePositions(ctx, posRepo, levPaperExecutor); err != nil {
 		slog.Error("leverage position recovery failed", "error", err)
+	}
+	if err := recoverLivePositions(ctx, posRepo, liveExecutor); err != nil {
+		slog.Error("live position recovery failed", "error", err)
 	}
 
 	// --- phase 3: scanner ---
@@ -400,9 +411,26 @@ func runBot(cmd *cobra.Command, args []string) error {
 	decisionRepo := database.NewAIDecisionRepository(pg.Pool())
 	bgScanner.SetLogger(&decisionLoggerAdapter{decisions: decisionRepo, daily: dailyStatsRepo})
 
+	// candle repository (shared by analytics API and data ingestion)
+	candleRepo := database.NewCandleRepository(pg.Pool())
+
+	// --- analytics REST API ---
+	if cfg.API.Enabled {
+		apiSrv := api.NewServer(posRepo, tradeRepo, decisionRepo, dailyStatsRepo, candleRepo, cfg.API.Key)
+		apiSrv.RegisterRoutes(httpMux)
+		log.Println("analytics API enabled on :8080/api/*")
+	}
+
 	bgScanner.Start(ctx)
 	defer bgScanner.Stop()
 	log.Printf("scanner started (%s interval)", scannerCfg.Interval)
+
+	// --- data ingestion (background candle fetching) ---
+	symbolProvider := &watchlistSymbolProvider{userSvc: userSvc, watchSvc: watchSvc}
+	dataIngest := pipeline.NewDataIngestion(binanceClient, &candleStoreAdapter{repo: candleRepo}, symbolProvider, pipeline.DefaultIngestionConfig())
+	dataIngest.Start(ctx)
+	defer dataIngest.Stop()
+	log.Println("data ingestion started (5m poll interval)")
 
 	// --- monitor event routing ---
 	// wire these BEFORE starting monitors to avoid dropping events from the first scan cycle
@@ -447,8 +475,22 @@ func runBot(cmd *cobra.Command, args []string) error {
 	// --- wait for shutdown ---
 
 	sig := <-sigCh
-	log.Printf("received %s, shutting down...", sig)
+	log.Printf("received %s, shutting down gracefully (10s timeout)...", sig)
 	cancel()
+
+	// give deferred cleanup functions time to finish
+	shutdownDone := make(chan struct{})
+	go func() {
+		// deferred functions will run when this goroutine's caller returns
+		close(shutdownDone)
+	}()
+
+	select {
+	case <-shutdownDone:
+		log.Println("shutdown complete")
+	case sig2 := <-sigCh:
+		log.Printf("received %s during shutdown, forcing exit", sig2)
+	}
 
 	return nil
 }
@@ -481,7 +523,7 @@ func routePaperEvent(event papertrading.Event, tgBot *telegram.Bot, notifier *sc
 
 	// route based on platform
 	if event.Position.Platform == "discord" {
-		_ = notifier.discordBot.SendMessage("", msg)
+		if err := notifier.discordBot.SendMessage("", msg); err != nil { log.Printf("warning: failed to send notification: %v", err) }
 	} else if tgBot != nil {
 		// would need chat id — in production, stored on position or user
 		log.Printf("paper event [%s]: %s", event.Type, msg)
@@ -510,7 +552,7 @@ func routeLiveEvent(event livetrading.Event, tgBot *telegram.Bot, notifier *scan
 	}
 
 	if event.Position.Platform == "discord" {
-		_ = notifier.discordBot.SendMessage("", msg)
+		if err := notifier.discordBot.SendMessage("", msg); err != nil { log.Printf("warning: failed to send notification: %v", err) }
 	} else if tgBot != nil {
 		log.Printf("live event [%s]: %s", event.Type, msg)
 	}
@@ -545,7 +587,7 @@ func routeLeverageEvent(event leverage.LevEvent, tgBot *telegram.Bot, notifier *
 	}
 
 	if event.Position.Platform == "discord" && notifier.discordBot != nil {
-		_ = notifier.discordBot.SendMessage("", msg)
+		if err := notifier.discordBot.SendMessage("", msg); err != nil { log.Printf("warning: failed to send notification: %v", err) }
 	} else if tgBot != nil {
 		log.Printf("leverage event [%s]: %s", event.Type, msg)
 	}

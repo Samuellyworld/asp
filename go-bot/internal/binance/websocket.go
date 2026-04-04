@@ -207,9 +207,10 @@ func (w *WSPriceCache) updatePrice(t miniTickerMsg) {
 
 func (w *WSPriceCache) reconnect() {
 	maxBackoff := 60 * time.Second
+	maxRetries := 10
 	backoff := time.Second
 
-	for {
+	for attempt := 1; attempt <= maxRetries; attempt++ {
 		select {
 		case <-w.stopCh:
 			return
@@ -221,13 +222,15 @@ func (w *WSPriceCache) reconnect() {
 		url := w.wsURL + "/ws/!miniTicker@arr"
 		conn, _, err := websocket.DefaultDialer.Dial(url, nil)
 		if err != nil {
-			slog.Warn("websocket reconnect failed", "error", err, "retry_in", backoff)
+			slog.Warn("websocket reconnect failed", "error", err, "attempt", attempt, "max", maxRetries, "retry_in", backoff)
 			backoff = min(backoff*2, maxBackoff)
 			continue
 		}
 
 		w.conn = conn
-		slog.Info("websocket reconnected")
+		slog.Info("websocket reconnected", "after_attempts", attempt)
 		return
 	}
+
+	slog.Error("websocket reconnect failed after max retries, giving up", "max_retries", maxRetries)
 }

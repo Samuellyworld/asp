@@ -32,6 +32,9 @@ type orderBookResponse struct {
 
 // returns the current 24hr ticker for a symbol
 func (c *Client) GetPrice(ctx context.Context, symbol string) (*exchange.Ticker, error) {
+	if err := c.rateLimiter.Wait(ctx, WeightForEndpoint("/api/v3/ticker/24hr")); err != nil {
+		return nil, fmt.Errorf("rate limit: %w", err)
+	}
 	binanceSymbol := toBinanceSymbol(symbol)
 	url := fmt.Sprintf("%s/api/v3/ticker/24hr?symbol=%s", c.baseURL, binanceSymbol)
 
@@ -69,6 +72,9 @@ func (c *Client) GetPrice(ctx context.Context, symbol string) (*exchange.Ticker,
 
 // returns the current order book for a symbol
 func (c *Client) GetOrderBook(ctx context.Context, symbol string, depth int) (*exchange.OrderBook, error) {
+	if err := c.rateLimiter.Wait(ctx, WeightForEndpoint("/api/v3/depth")); err != nil {
+		return nil, fmt.Errorf("rate limit: %w", err)
+	}
 	binanceSymbol := toBinanceSymbol(symbol)
 	if depth <= 0 || depth > 100 {
 		depth = 10
@@ -106,6 +112,9 @@ func (c *Client) GetOrderBook(ctx context.Context, symbol string, depth int) (*e
 
 // returns historical kline/candlestick data for a symbol
 func (c *Client) GetCandles(ctx context.Context, symbol string, interval string, limit int) ([]exchange.Candle, error) {
+	if err := c.rateLimiter.Wait(ctx, WeightForEndpoint("/api/v3/klines")); err != nil {
+		return nil, fmt.Errorf("rate limit: %w", err)
+	}
 	binanceSymbol := toBinanceSymbol(symbol)
 	if limit <= 0 || limit > 1000 {
 		limit = 100
@@ -159,6 +168,7 @@ func (c *Client) doPublicGet(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	c.rateLimiter.RecordResponse(resp.StatusCode)
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

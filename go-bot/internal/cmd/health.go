@@ -4,6 +4,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -18,9 +19,11 @@ type healthStatus struct {
 }
 
 type healthServer struct {
-	pg      *pgxpool.Pool
-	redis   *redis.Client
-	startAt time.Time
+	pg         *pgxpool.Pool
+	redis      *redis.Client
+	startAt    time.Time
+	binanceURL string // optional: Binance API base URL for health check
+	mlURL      string // optional: ML service base URL for health check
 }
 
 func newHealthServer(pg *pgxpool.Pool, redis *redis.Client) *healthServer {
@@ -31,7 +34,10 @@ func newHealthServer(pg *pgxpool.Pool, redis *redis.Client) *healthServer {
 	}
 }
 
-func (h *healthServer) start(addr string) *http.Server {
+func (h *healthServer) SetBinanceURL(url string) { h.binanceURL = url }
+func (h *healthServer) SetMLURL(url string)      { h.mlURL = url }
+
+func (h *healthServer) start(addr string) (*http.ServeMux, *http.Server) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", h.handleHealth)
 	mux.HandleFunc("/health/ready", h.handleReady)
@@ -40,7 +46,7 @@ func (h *healthServer) start(addr string) *http.Server {
 		Addr:         addr,
 		Handler:      mux,
 		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
+		WriteTimeout: 10 * time.Second,
 	}
 
 	go func() {
@@ -49,7 +55,7 @@ func (h *healthServer) start(addr string) *http.Server {
 		}
 	}()
 
-	return srv
+	return mux, srv
 }
 
 // liveness probe — always returns 200 if the process is up
@@ -98,6 +104,24 @@ func (h *healthServer) handleReady(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// check binance api
+	if h.binanceURL != "" {
+		if err := httpPing(ctx, h.binanceURL+"/api/v3/ping"); err != nil {
+			status.Services["binance"] = "down"
+		} else {
+			status.Services["binance"] = "up"
+		}
+	}
+
+	// check ml service
+	if h.mlURL != "" {
+		if err := httpPing(ctx, h.mlURL+"/health"); err != nil {
+			status.Services["ml_service"] = "down"
+		} else {
+			status.Services["ml_service"] = "up"
+		}
+	}
+
 	if !allHealthy {
 		status.Status = "degraded"
 	}
@@ -109,4 +133,22 @@ func (h *healthServer) handleReady(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
 	json.NewEncoder(w).Encode(status)
+}
+
+// httpPing performs a quick GET request to check if a service is reachable
+func httpPing(ctx context.Context, url string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	return nil
 }

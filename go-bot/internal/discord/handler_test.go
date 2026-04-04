@@ -226,6 +226,18 @@ func (m *mockUserRepo) GetCredentials(_ context.Context, userID int, _ string) (
 	return m.credentials[userID], nil
 }
 
+func (m *mockUserRepo) ListActive(_ context.Context) ([]*user.User, error) {
+	return nil, nil
+}
+
+func (m *mockUserRepo) SetLeverageEnabled(_ context.Context, _ int, _ bool) error {
+	return nil
+}
+
+func (m *mockUserRepo) IsLeverageEnabled(_ context.Context, _ int) (bool, error) {
+	return false, nil
+}
+
 func (m *mockUserRepo) seedDiscord(discordID int64, username string) *user.User {
 	u := &user.User{
 		ID:          m.nextID,

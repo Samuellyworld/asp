@@ -37,6 +37,11 @@ type Opportunity struct {
 	// modified trade plan (set when user modifies)
 	ModifiedPlan *claude.TradePlan
 
+	// leverage options (zero means spot trade)
+	UseLeverage  bool
+	Leverage     int
+	PositionSide string // "LONG" or "SHORT" (empty for spot)
+
 	// platform tracking for the notification
 	Platform  string // "telegram" or "discord"
 	MessageID int    // telegram message id for editing
@@ -194,6 +199,22 @@ func (m *Manager) Modify(id string, userID int, plan *claude.TradePlan) bool {
 	opp.Status = StatusModified
 	opp.ResolvedAt = &now
 	opp.ModifiedPlan = plan
+	return true
+}
+
+// sets leverage parameters on a pending opportunity
+func (m *Manager) SetLeverage(id string, userID int, leverage int, side string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	opp, ok := m.opportunities[id]
+	if !ok || opp.UserID != userID || opp.Status != StatusPending {
+		return false
+	}
+
+	opp.UseLeverage = true
+	opp.Leverage = leverage
+	opp.PositionSide = side
 	return true
 }
 

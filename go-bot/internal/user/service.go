@@ -23,6 +23,9 @@ type userRepository interface {
 	SaveCredentials(ctx context.Context, cred *Credentials) (*Credentials, error)
 	HasValidCredentials(ctx context.Context, userID int) (bool, error)
 	GetCredentials(ctx context.Context, userID int, exchange string) (*Credentials, error)
+	ListActive(ctx context.Context) ([]*User, error)
+	SetLeverageEnabled(ctx context.Context, userID int, enabled bool) error
+	IsLeverageEnabled(ctx context.Context, userID int) (bool, error)
 }
 
 // keyValidator validates exchange api keys
@@ -260,6 +263,26 @@ func (s *Service) LinkDiscordToTelegram(ctx context.Context, telegramID, discord
 	}
 
 	return linked, nil
+}
+
+// returns all activated, non-banned users for background scanning
+func (s *Service) ListActive(ctx context.Context) ([]*User, error) {
+	return s.repo.ListActive(ctx)
+}
+
+// enables leverage trading for a user
+func (s *Service) EnableLeverage(ctx context.Context, userID int) error {
+	return s.repo.SetLeverageEnabled(ctx, userID, true)
+}
+
+// disables leverage trading for a user
+func (s *Service) DisableLeverage(ctx context.Context, userID int) error {
+	return s.repo.SetLeverageEnabled(ctx, userID, false)
+}
+
+// checks if leverage is enabled for a user
+func (s *Service) IsLeverageEnabled(ctx context.Context, userID int) (bool, error) {
+	return s.repo.IsLeverageEnabled(ctx, userID)
 }
 
 func (s *Service) logAudit(ctx context.Context, userID, credentialID int, action string, success bool, errMsg string) {

@@ -2,7 +2,11 @@
 // provides pnl calculations, tp/sl hit detection, and auto-close logic.
 package leverage
 
-import "time"
+import (
+	"time"
+
+	"github.com/trading-bot/go-bot/internal/trailingstop"
+)
 
 // position side for futures
 type PositionSide string
@@ -40,6 +44,7 @@ type LeveragePosition struct {
 	MainOrderID      int64 // binance order id (0 for paper)
 	SLOrderID        int64
 	TPOrderID        int64
+	TrailingStop     trailingstop.TrailingStop
 }
 
 // unrealized pnl based on mark price (amplified by leverage)
@@ -105,4 +110,36 @@ func (p *LeveragePosition) ShouldAutoClose(maintenanceMarginRate float64) bool {
 	dist := DistanceToLiquidation(p.MarkPrice, p.LiquidationPrice, string(p.Side))
 	risk := ClassifyLiquidationRisk(dist)
 	return risk == AlertAutoClose
+}
+
+// checks if the trailing stop has been triggered
+func (p *LeveragePosition) IsTrailingStopHit() bool {
+	if !p.TrailingStop.Enabled() {
+		return false
+	}
+	switch p.Side {
+	case SideLong:
+		return p.TrailingStop.IsHitLong(p.MarkPrice)
+	case SideShort:
+		return p.TrailingStop.IsHitShort(p.MarkPrice)
+	default:
+		return false
+	}
+}
+
+// updates the trailing stop based on current mark price
+func (p *LeveragePosition) UpdateTrailingStop() bool {
+	if !p.TrailingStop.Enabled() {
+		return false
+	}
+	switch p.Side {
+	case SideLong:
+		_, updated := p.TrailingStop.UpdateLong(p.EntryPrice, p.MarkPrice)
+		return updated
+	case SideShort:
+		_, updated := p.TrailingStop.UpdateShort(p.EntryPrice, p.MarkPrice)
+		return updated
+	default:
+		return false
+	}
 }

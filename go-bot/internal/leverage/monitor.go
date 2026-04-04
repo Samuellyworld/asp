@@ -16,6 +16,7 @@ const (
 	LevEventOpened         LevEventType = "leverage_opened"
 	LevEventTPHit          LevEventType = "tp_hit"
 	LevEventSLHit          LevEventType = "sl_hit"
+	LevEventTrailingStop   LevEventType = "trailing_stop"
 	LevEventLiqWarning     LevEventType = "liquidation_warning"
 	LevEventLiqCritical    LevEventType = "liquidation_critical"
 	LevEventAutoClose      LevEventType = "auto_close"
@@ -229,6 +230,21 @@ func (m *Monitor) checkPosition(pos *LeveragePosition) {
 		}
 		m.emit(LevEvent{
 			Type:     LevEventSLHit,
+			Position: closed,
+			IsUrgent: true,
+		})
+		return
+	}
+
+	// update trailing stop and check if hit
+	pos.UpdateTrailingStop()
+	if pos.IsTrailingStopHit() {
+		closed, err := m.closer.Close(pos.ID, "trailing_stop")
+		if err != nil {
+			return
+		}
+		m.emit(LevEvent{
+			Type:     LevEventTrailingStop,
 			Position: closed,
 			IsUrgent: true,
 		})

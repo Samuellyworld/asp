@@ -376,7 +376,7 @@ func TestBuildAIInputFull(t *testing.T) {
 	pred := testPrediction()
 	sent := testSentiment()
 
-	input := buildAIInput("BTC/USDT", ticker, ind, pred, sent)
+	input := buildAIInput("BTC/USDT", ticker, nil, ind, pred, sent)
 
 	if input.Market.Symbol != "BTC/USDT" {
 		t.Errorf("expected symbol BTC/USDT, got %s", input.Market.Symbol)
@@ -406,7 +406,7 @@ func TestBuildAIInputFull(t *testing.T) {
 
 func TestBuildAIInputMinimal(t *testing.T) {
 	ticker := testTicker()
-	input := buildAIInput("ETH/USDT", ticker, nil, nil, nil)
+	input := buildAIInput("ETH/USDT", ticker, nil, nil, nil, nil)
 
 	if input.Market.Symbol != "ETH/USDT" {
 		t.Errorf("expected symbol ETH/USDT, got %s", input.Market.Symbol)

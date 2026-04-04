@@ -70,6 +70,16 @@ func DefaultTradingCosts() *TradingCosts {
 	}
 }
 
+// market regime classification
+type RegimeInfo struct {
+	Regime      string  `json:"regime"`       // trending, ranging, volatile, quiet
+	ADX         float64 `json:"adx"`          // trend strength 0-100
+	ATRPercent  float64 `json:"atr_percent"`  // volatility as % of price
+	TrendDir    string  `json:"trend_dir"`    // up, down, neutral
+	Confidence  float64 `json:"confidence"`   // 0-100
+	Description string  `json:"description"`  // human-readable
+}
+
 // bundles all context for claude to analyze
 type AnalysisInput struct {
 	Market     MarketData    `json:"market"`
@@ -77,6 +87,7 @@ type AnalysisInput struct {
 	Prediction *MLPrediction `json:"prediction,omitempty"`
 	Sentiment  *Sentiment    `json:"sentiment,omitempty"`
 	Costs      *TradingCosts `json:"costs,omitempty"`
+	Regime     *RegimeInfo   `json:"regime,omitempty"`
 }
 
 // the trade plan extracted from claude's response

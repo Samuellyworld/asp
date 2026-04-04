@@ -41,6 +41,7 @@ type Analyzer interface {
 type Notifier interface {
 	NotifyTelegram(chatID int64, message string) error
 	NotifyDiscord(channelID string, title, description string, fields []pipeline.DiscordField, color int) error
+	NotifyWhatsApp(recipientID string, message string) error
 }
 
 // logs AI decisions and daily stats to the database (best-effort)
@@ -366,6 +367,14 @@ func (s *Scanner) sendNotifications(u *user.User, result *pipeline.Result) {
 		channelID := fmt.Sprintf("%d", *u.DiscordID)
 		if err := s.notifier.NotifyDiscord(channelID, title, desc, fields, color); err != nil {
 			slog.Error("scanner: discord notify failed", "user_id", u.ID, "error", err)
+		}
+	}
+
+	if u.WhatsAppID != nil {
+		msg := pipeline.FormatTelegramMessage(result)
+		header := fmt.Sprintf("🎯 *Opportunity Detected*\n\n%s", msg)
+		if err := s.notifier.NotifyWhatsApp(*u.WhatsAppID, header); err != nil {
+			slog.Error("scanner: whatsapp notify failed", "user_id", u.ID, "error", err)
 		}
 	}
 }

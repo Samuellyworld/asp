@@ -31,6 +31,7 @@ import (
 	"github.com/trading-bot/go-bot/internal/telegram"
 	"github.com/trading-bot/go-bot/internal/user"
 	"github.com/trading-bot/go-bot/internal/watchlist"
+	"github.com/trading-bot/go-bot/internal/whatsapp"
 )
 
 func init() {
@@ -145,8 +146,17 @@ func runBot(cmd *cobra.Command, args []string) error {
 
 	// --- phase 3: trading infrastructure ---
 
-	// price adapter bridges binance client to papertrading/livetrading PriceProvider
-	prices := &priceAdapter{client: binanceClient}
+	// websocket price feed — provides sub-second price updates with REST fallback
+	wsCache := binance.NewWSPriceCache(cfg.Binance.WSURL())
+	if err := wsCache.SubscribeAll(); err != nil {
+		log.Printf("warning: websocket price feed not available: %v (falling back to REST)", err)
+	} else {
+		defer wsCache.Stop()
+		log.Println("websocket price feed connected")
+	}
+
+	// price adapter uses WS cache with REST fallback
+	prices := &wsPriceAdapter{ws: wsCache, rest: binanceClient}
 
 	// opportunity manager
 	oppConfig := opportunity.DefaultConfig()
@@ -361,6 +371,14 @@ func runBot(cmd *cobra.Command, args []string) error {
 		}()
 
 		log.Println("discord bot started")
+	}
+
+	// --- start whatsapp bot ---
+
+	if cfg.WhatsApp.PhoneNumberID != "" && cfg.WhatsApp.AccessToken != "" {
+		waBot := whatsapp.NewBot(cfg.WhatsApp.PhoneNumberID, cfg.WhatsApp.AccessToken)
+		notifier.whatsappBot = waBot
+		log.Println("whatsapp notifications enabled")
 	}
 
 	// --- start scanner ---

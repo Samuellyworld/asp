@@ -12,6 +12,26 @@ import (
 	"github.com/trading-bot/go-bot/internal/user"
 )
 
+// adapts binance.WSPriceCache to the PriceProvider interface.
+// uses the websocket cache for instant prices, with REST fallback.
+type wsPriceAdapter struct {
+	ws   *binance.WSPriceCache
+	rest *binance.Client
+}
+
+func (a *wsPriceAdapter) GetPrice(symbol string) (float64, error) {
+	price, err := a.ws.GetPrice(symbol)
+	if err == nil {
+		return price, nil
+	}
+	// fallback to REST if websocket hasn't received this symbol yet
+	ticker, err := a.rest.GetPrice(context.Background(), symbol)
+	if err != nil {
+		return 0, err
+	}
+	return ticker.Price, nil
+}
+
 // adapts binance.Client (which takes context) to the simpler
 // PriceProvider interface used by paper/live trading monitors
 type priceAdapter struct {
@@ -101,13 +121,16 @@ func (a *leverageStatusAdapter) IsLeverageEnabled(userID int) bool {
 	return enabled
 }
 
-// implements scanner.Notifier by sending messages via telegram and discord bots
+// implements scanner.Notifier by sending messages via telegram, discord, and whatsapp bots
 type scannerNotifier struct {
 	telegramBot interface {
 		SendMessage(chatID int64, text string) error
 	}
 	discordBot interface {
 		SendMessage(channelID string, content string) error
+	}
+	whatsappBot interface {
+		SendMessage(recipientID string, text string) error
 	}
 }
 
@@ -127,4 +150,12 @@ func (n *scannerNotifier) NotifyDiscord(channelID string, title, description str
 	// format a simple text message from the discord fields
 	msg := "**" + title + "**\n" + description
 	return n.discordBot.SendMessage(channelID, msg)
+}
+
+func (n *scannerNotifier) NotifyWhatsApp(recipientID string, message string) error {
+	if n.whatsappBot == nil {
+		log.Printf("whatsapp not configured, skipping notification for %s", recipientID)
+		return nil
+	}
+	return n.whatsappBot.SendMessage(recipientID, message)
 }

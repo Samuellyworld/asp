@@ -16,6 +16,7 @@ const (
 	EventTradeExecuted  EventType = "trade_executed"
 	EventTPHit          EventType = "tp_hit"
 	EventSLHit          EventType = "sl_hit"
+	EventTrailingStop   EventType = "trailing_stop"
 	EventManualClose    EventType = "manual_close"
 	EventMilestone      EventType = "milestone"
 	EventPeriodicUpdate EventType = "periodic_update"
@@ -159,6 +160,16 @@ func (m *Monitor) CheckPositions() {
 			closed, err := m.executor.Close(pos.ID, CloseTP, price)
 			if err == nil {
 				m.emit(Event{Type: EventTPHit, Position: closed, IsUrgent: true})
+			}
+			continue
+		}
+
+		// update trailing stop and check if hit — urgent
+		pos.UpdateTrailingStop()
+		if pos.IsTrailingStopHit() {
+			closed, err := m.executor.Close(pos.ID, CloseTrailingStop, price)
+			if err == nil {
+				m.emit(Event{Type: EventTrailingStop, Position: closed, IsUrgent: true})
 			}
 			continue
 		}

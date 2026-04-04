@@ -35,6 +35,7 @@ type SlippageTracker struct {
 	mu      sync.Mutex
 	records []SlippageRecord
 	maxSize int
+	model   *SlippageModel // optional adaptive model
 }
 
 // NewSlippageTracker creates a tracker that retains at most maxSize recent records.
@@ -46,6 +47,13 @@ func NewSlippageTracker(maxSize int) *SlippageTracker {
 		records: make([]SlippageRecord, 0, 256),
 		maxSize: maxSize,
 	}
+}
+
+// SetModel attaches an adaptive slippage model that learns from observations
+func (s *SlippageTracker) SetModel(model *SlippageModel) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.model = model
 }
 
 // Record records a slippage observation. expectedPrice is the AI decision price,
@@ -69,7 +77,13 @@ func (s *SlippageTracker) Record(symbol, side string, expectedPrice, actualPrice
 	if len(s.records) > s.maxSize {
 		s.records = s.records[len(s.records)-s.maxSize:]
 	}
+	model := s.model
 	s.mu.Unlock()
+
+	// feed the adaptive model
+	if model != nil {
+		model.Update(&rec)
+	}
 
 	return rec
 }

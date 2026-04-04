@@ -376,7 +376,7 @@ func TestBuildAIInputFull(t *testing.T) {
 	pred := testPrediction()
 	sent := testSentiment()
 
-	input := buildAIInput("BTC/USDT", ticker, nil, ind, pred, sent)
+	input := buildAIInput("BTC/USDT", ticker, nil, ind, pred, sent, nil)
 
 	if input.Market.Symbol != "BTC/USDT" {
 		t.Errorf("expected symbol BTC/USDT, got %s", input.Market.Symbol)
@@ -406,7 +406,7 @@ func TestBuildAIInputFull(t *testing.T) {
 
 func TestBuildAIInputMinimal(t *testing.T) {
 	ticker := testTicker()
-	input := buildAIInput("ETH/USDT", ticker, nil, nil, nil, nil)
+	input := buildAIInput("ETH/USDT", ticker, nil, nil, nil, nil, nil)
 
 	if input.Market.Symbol != "ETH/USDT" {
 		t.Errorf("expected symbol ETH/USDT, got %s", input.Market.Symbol)
@@ -674,5 +674,125 @@ func TestFormatIndicatorsSummaryEmpty(t *testing.T) {
 	summary := formatIndicatorsSummary(ind)
 	if summary != "" {
 		t.Errorf("expected empty string for no indicators, got %q", summary)
+	}
+}
+
+// --- alt data provider mock ---
+
+type mockAltData struct {
+	data *claude.AltData
+}
+
+func (m *mockAltData) Fetch(_ context.Context, _ string) *claude.AltData {
+	return m.data
+}
+
+// --- alt data and multi-timeframe tests ---
+
+func TestPipelineWithAltData(t *testing.T) {
+	ex := &mockExchange{ticker: testTicker(), candles: testCandles(100)}
+	ind := &mockIndicators{result: testIndicators()}
+	ml := &mockML{available: false}
+	ai := &mockAI{decision: testDecision()}
+
+	alt := &mockAltData{data: &claude.AltData{
+		OrderFlow: &claude.OrderFlowData{BuySellRatio: 1.3, DepthImbalance: 0.2},
+		FundingRate: &claude.FundingData{Rate: 0.0001, Annualized: 10.95},
+	}}
+
+	p := New(ex, ind, ml, ai)
+	p.SetAltData(alt)
+
+	result, err := p.Analyze(context.Background(), "BTC/USDT")
+	if err != nil {
+		t.Fatalf("pipeline failed: %v", err)
+	}
+	if result.AltData == nil {
+		t.Fatal("expected alt data in result")
+	}
+	if result.AltData.OrderFlow == nil {
+		t.Error("expected order flow data")
+	}
+	if result.AltData.FundingRate == nil {
+		t.Error("expected funding rate data")
+	}
+}
+
+func TestPipelineNilAltData(t *testing.T) {
+	ex := &mockExchange{ticker: testTicker(), candles: testCandles(100)}
+	ind := &mockIndicators{result: testIndicators()}
+	ml := &mockML{available: false}
+	ai := &mockAI{decision: testDecision()}
+
+	p := New(ex, ind, ml, ai)
+	result, err := p.Analyze(context.Background(), "BTC/USDT")
+	if err != nil {
+		t.Fatalf("pipeline failed: %v", err)
+	}
+	if result.AltData != nil {
+		t.Error("expected nil alt data when no provider set")
+	}
+}
+
+func TestPipelineMultiTimeframe(t *testing.T) {
+	ex := &mockExchange{ticker: testTicker(), candles: testCandles(100)}
+	ind := &mockIndicators{result: testIndicators()}
+	ml := &mockML{available: false}
+	ai := &mockAI{decision: testDecision()}
+
+	p := New(ex, ind, ml, ai)
+	p.SetTimeframes([]string{"4h", "1d"})
+
+	result, err := p.Analyze(context.Background(), "BTC/USDT")
+	if err != nil {
+		t.Fatalf("pipeline failed: %v", err)
+	}
+	if result.Decision == nil {
+		t.Fatal("expected decision")
+	}
+}
+
+func TestSetTimeframesUpdatesDefault(t *testing.T) {
+	p := New(nil, nil, nil, nil)
+	p.SetTimeframes([]string{"1h", "4h", "1d"})
+	if p.timeframe != "1h" {
+		t.Errorf("expected primary timeframe 1h, got %s", p.timeframe)
+	}
+	if len(p.timeframes) != 3 {
+		t.Errorf("expected 3 timeframes, got %d", len(p.timeframes))
+	}
+}
+
+func TestSetTimeframesEmpty(t *testing.T) {
+	p := New(nil, nil, nil, nil)
+	p.SetTimeframes([]string{})
+	if p.timeframe != "4h" {
+		t.Errorf("expected default 4h, got %s", p.timeframe)
+	}
+}
+
+func TestBuildAIInputWithAltData(t *testing.T) {
+	ticker := testTicker()
+	alt := &claude.AltData{
+		OrderFlow: &claude.OrderFlowData{BuySellRatio: 1.5},
+	}
+	input := buildAIInput("BTC/USDT", ticker, nil, nil, nil, nil, alt)
+	if input.AltData == nil {
+		t.Fatal("expected alt data")
+	}
+	if input.AltData.OrderFlow.BuySellRatio != 1.5 {
+		t.Errorf("expected 1.5, got %.2f", input.AltData.OrderFlow.BuySellRatio)
+	}
+}
+
+func TestBuildAIInputWithRegime(t *testing.T) {
+	ticker := testTicker()
+	candles := testCandles(50)
+	input := buildAIInput("BTC/USDT", ticker, candles, testIndicators(), nil, nil, nil)
+	if input.Regime == nil {
+		t.Fatal("expected regime detection with 50 candles")
+	}
+	if input.Regime.Regime == "" {
+		t.Error("expected non-empty regime")
 	}
 }

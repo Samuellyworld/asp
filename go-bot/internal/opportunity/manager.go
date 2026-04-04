@@ -4,7 +4,9 @@
 package opportunity
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -74,6 +76,9 @@ type Manager struct {
 	stopCh        chan struct{}
 	running       bool
 
+	// optional db persistence
+	store *Store
+
 	// callbacks
 	onExpire StateChangeCallback
 
@@ -89,6 +94,13 @@ func NewManager(cfg Config) *Manager {
 		stopCh:        make(chan struct{}),
 		nowFunc:       time.Now,
 	}
+}
+
+// SetStore enables db persistence for opportunities
+func (m *Manager) SetStore(store *Store) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.store = store
 }
 
 // sets a callback for when opportunities expire
@@ -118,6 +130,7 @@ func (m *Manager) Create(userID int, symbol string, result *pipeline.Result, pla
 	}
 
 	m.opportunities[id] = opp
+	go m.syncToDB(opp)
 	return id
 }
 
@@ -166,6 +179,7 @@ func (m *Manager) Approve(id string, userID int) bool {
 	now := m.now()
 	opp.Status = StatusApproved
 	opp.ResolvedAt = &now
+	go m.syncToDB(opp)
 	return true
 }
 
@@ -182,6 +196,7 @@ func (m *Manager) Reject(id string, userID int) bool {
 	now := m.now()
 	opp.Status = StatusRejected
 	opp.ResolvedAt = &now
+	go m.syncToDB(opp)
 	return true
 }
 
@@ -199,6 +214,7 @@ func (m *Manager) Modify(id string, userID int, plan *claude.TradePlan) bool {
 	opp.Status = StatusModified
 	opp.ResolvedAt = &now
 	opp.ModifiedPlan = plan
+	go m.syncToDB(opp)
 	return true
 }
 
@@ -215,6 +231,7 @@ func (m *Manager) SetLeverage(id string, userID int, leverage int, side string) 
 	opp.UseLeverage = true
 	opp.Leverage = leverage
 	opp.PositionSide = side
+	go m.syncToDB(opp)
 	return true
 }
 
@@ -291,12 +308,16 @@ func (m *Manager) expireOld() {
 		}
 	}
 
+	store := m.store
 	cb := m.onExpire
 	m.mu.Unlock()
 
-	// fire callbacks outside the lock
-	if cb != nil {
-		for _, opp := range expired {
+	// sync to db and fire callbacks outside the lock
+	for _, opp := range expired {
+		if store != nil {
+			go m.syncToDB(opp)
+		}
+		if cb != nil {
 			cb(opp)
 		}
 	}
@@ -341,4 +362,56 @@ func (m *Manager) Count() int {
 
 func (m *Manager) now() time.Time {
 	return m.nowFunc()
+}
+
+// syncToDB persists opportunity state to the database (best-effort, logs errors)
+func (m *Manager) syncToDB(opp *Opportunity) {
+	if m.store == nil {
+		return
+	}
+	row := opportunityToRow(opp)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := m.store.Save(ctx, row); err != nil {
+		log.Printf("[opportunity] db sync failed for %s: %v", opp.ID, err)
+	}
+}
+
+// opportunityToRow converts an Opportunity to a db row
+func opportunityToRow(opp *Opportunity) *OpportunityRow {
+	row := &OpportunityRow{
+		ID:           opp.ID,
+		UserID:       opp.UserID,
+		Symbol:       opp.Symbol,
+		Action:       string(opp.Action),
+		Status:       opp.Status,
+		UseLeverage:  opp.UseLeverage,
+		Leverage:     opp.Leverage,
+		PositionSide: opp.PositionSide,
+		Platform:     opp.Platform,
+		MessageID:    opp.MessageID,
+		ChannelID:    opp.ChannelID,
+		CreatedAt:    opp.CreatedAt,
+		ResolvedAt:   opp.ResolvedAt,
+	}
+	if opp.Result != nil && opp.Result.Decision != nil {
+		row.Confidence = opp.Result.Decision.Confidence
+		row.EntryPrice = opp.Result.Decision.Plan.Entry
+		row.StopLoss = opp.Result.Decision.Plan.StopLoss
+		row.TakeProfit = opp.Result.Decision.Plan.TakeProfit
+		row.PositionSize = opp.Result.Decision.Plan.PositionSize
+		row.RiskReward = opp.Result.Decision.Plan.RiskReward
+		row.Reasoning = opp.Result.Decision.Reasoning
+	}
+	if opp.ModifiedPlan != nil {
+		e := opp.ModifiedPlan.Entry
+		sl := opp.ModifiedPlan.StopLoss
+		tp := opp.ModifiedPlan.TakeProfit
+		sz := opp.ModifiedPlan.PositionSize
+		row.ModEntry = &e
+		row.ModSL = &sl
+		row.ModTP = &tp
+		row.ModSize = &sz
+	}
+	return row
 }

@@ -335,3 +335,189 @@ func TestDefaultTradingCosts(t *testing.T) {
 		t.Error("default slippage should be 0")
 	}
 }
+
+func TestBuildSystemPromptAltDataRules(t *testing.T) {
+	prompt := buildSystemPrompt()
+	checks := []string{
+		"order flow",
+		"on-chain",
+		"fear/greed",
+		"higher-timeframe",
+	}
+	for _, check := range checks {
+		if !strings.Contains(prompt, check) {
+			t.Errorf("system prompt should mention %q", check)
+		}
+	}
+}
+
+func TestFormatAltDataOrderFlow(t *testing.T) {
+	alt := &AltData{
+		OrderFlow: &OrderFlowData{
+			BuySellRatio:    1.5,
+			DepthImbalance:  0.3,
+			LargeBuyOrders:  5,
+			LargeSellOrders: 2,
+			SpreadBps:       1.2,
+		},
+	}
+	result := formatAltData(alt)
+	if !strings.Contains(result, "buyer dominated") {
+		t.Error("1.5 ratio should show buyer dominated")
+	}
+	if !strings.Contains(result, "buy wall") {
+		t.Error("0.3 imbalance should show buy wall")
+	}
+	if !strings.Contains(result, "Large Buy Orders: 5") {
+		t.Error("should show large buy orders")
+	}
+}
+
+func TestFormatAltDataSellerDominated(t *testing.T) {
+	alt := &AltData{
+		OrderFlow: &OrderFlowData{
+			BuySellRatio:   0.7,
+			DepthImbalance: -0.3,
+		},
+	}
+	result := formatAltData(alt)
+	if !strings.Contains(result, "seller dominated") {
+		t.Error("0.7 ratio should show seller dominated")
+	}
+	if !strings.Contains(result, "sell wall") {
+		t.Error("-0.3 imbalance should show sell wall")
+	}
+}
+
+func TestFormatAltDataFundingCrowdedLongs(t *testing.T) {
+	alt := &AltData{
+		FundingRate: &FundingData{
+			Rate:       0.002,
+			Annualized: 21.9,
+		},
+	}
+	result := formatAltData(alt)
+	if !strings.Contains(result, "crowded longs") {
+		t.Error("high positive funding should signal crowded longs")
+	}
+}
+
+func TestFormatAltDataFundingCrowdedShorts(t *testing.T) {
+	alt := &AltData{
+		FundingRate: &FundingData{
+			Rate:       -0.002,
+			Annualized: -21.9,
+		},
+	}
+	result := formatAltData(alt)
+	if !strings.Contains(result, "crowded shorts") {
+		t.Error("negative funding should signal crowded shorts")
+	}
+}
+
+func TestFormatAltDataSentiment(t *testing.T) {
+	alt := &AltData{
+		Sentiment: &SentimentData{
+			OverallScore:   0.5,
+			OverallLabel:   "BULLISH",
+			FearGreedIndex: 72,
+		},
+	}
+	result := formatAltData(alt)
+	if !strings.Contains(result, "BULLISH") {
+		t.Error("should show overall label")
+	}
+	if !strings.Contains(result, "72/100") {
+		t.Error("should show fear/greed index")
+	}
+}
+
+func TestFormatAltDataOnChainPositiveNetFlow(t *testing.T) {
+	alt := &AltData{
+		OnChain: &OnChainData{
+			NetFlow:           500,
+			WhaleTransactions: 10,
+			ActiveAddresses:   100000,
+		},
+	}
+	result := formatAltData(alt)
+	if !strings.Contains(result, "potential sell pressure") {
+		t.Error("positive net flow should indicate sell pressure")
+	}
+	if !strings.Contains(result, "Whale Transactions") {
+		t.Error("should show whale transactions")
+	}
+}
+
+func TestFormatHTFContext(t *testing.T) {
+	htf := []HTFSnapshot{
+		{
+			Timeframe:  "1d",
+			TrendDir:   "up",
+			RSI:        55,
+			MACDHist:   0.5,
+			BBPosition: 0.6,
+			EMASlope:   0.5,
+		},
+		{
+			Timeframe:  "1w",
+			TrendDir:   "down",
+			RSI:        72,
+			MACDHist:   -0.2,
+			BBPosition: 0.8,
+			EMASlope:   -0.3,
+		},
+	}
+	result := formatHTFContext(htf)
+	if !strings.Contains(result, "1d Timeframe") {
+		t.Error("should contain 1d timeframe header")
+	}
+	if !strings.Contains(result, "1w Timeframe") {
+		t.Error("should contain 1w timeframe header")
+	}
+	if !strings.Contains(result, "Trend: up") {
+		t.Error("should show up trend")
+	}
+	if !strings.Contains(result, "overbought") {
+		t.Error("RSI 72 should show overbought")
+	}
+	if !strings.Contains(result, "rising") {
+		t.Error("positive EMA slope should show rising")
+	}
+	if !strings.Contains(result, "falling") {
+		t.Error("negative EMA slope should show falling")
+	}
+}
+
+func TestFormatHTFContextEmpty(t *testing.T) {
+	result := formatHTFContext(nil)
+	if result != "" {
+		t.Error("expected empty string for nil HTF context")
+	}
+}
+
+func TestBuildUserPromptWithAltData(t *testing.T) {
+	input := &AnalysisInput{
+		Market: MarketData{Symbol: "BTC/USDT", Price: 42000},
+		AltData: &AltData{
+			OrderFlow: &OrderFlowData{BuySellRatio: 1.1, DepthImbalance: 0.05},
+		},
+	}
+	prompt := buildUserPrompt(input)
+	if !strings.Contains(prompt, "Alternative Data") {
+		t.Error("prompt should contain Alternative Data section")
+	}
+}
+
+func TestBuildUserPromptWithHTFContext(t *testing.T) {
+	input := &AnalysisInput{
+		Market: MarketData{Symbol: "BTC/USDT", Price: 42000},
+		HTFContext: []HTFSnapshot{
+			{Timeframe: "1d", TrendDir: "up", RSI: 55},
+		},
+	}
+	prompt := buildUserPrompt(input)
+	if !strings.Contains(prompt, "Higher Timeframe Context") {
+		t.Error("prompt should contain Higher Timeframe Context section")
+	}
+}

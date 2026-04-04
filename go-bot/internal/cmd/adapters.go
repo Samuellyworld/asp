@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/trading-bot/go-bot/internal/binance"
+	"github.com/trading-bot/go-bot/internal/claude"
 	"github.com/trading-bot/go-bot/internal/database"
+	"github.com/trading-bot/go-bot/internal/datasources"
 	"github.com/trading-bot/go-bot/internal/livetrading"
 	"github.com/trading-bot/go-bot/internal/pipeline"
 	"github.com/trading-bot/go-bot/internal/user"
@@ -223,4 +225,56 @@ func (p *watchlistSymbolProvider) ActiveSymbols(ctx context.Context) ([]string, 
 		symbols = append(symbols, s)
 	}
 	return symbols, nil
+}
+
+// altDataAdapter bridges datasources.Aggregator to pipeline.AltDataProvider.
+// Converts datasources.AlternativeData -> claude.AltData for the pipeline.
+type altDataAdapter struct {
+	agg *datasources.Aggregator
+}
+
+func (a *altDataAdapter) Fetch(ctx context.Context, symbol string) *claude.AltData {
+	raw := a.agg.Fetch(ctx, symbol)
+	if raw == nil {
+		return nil
+	}
+
+	result := &claude.AltData{}
+
+	if raw.OrderFlow != nil {
+		result.OrderFlow = &claude.OrderFlowData{
+			BuySellRatio:    raw.OrderFlow.BuySellRatio,
+			DepthImbalance:  raw.OrderFlow.DepthImbalance,
+			LargeBuyOrders:  raw.OrderFlow.LargeBuyOrders,
+			LargeSellOrders: raw.OrderFlow.LargeSellOrders,
+			SpreadBps:       raw.OrderFlow.SpreadBps,
+		}
+	}
+
+	if raw.OnChain != nil {
+		result.OnChain = &claude.OnChainData{
+			NetFlow:           raw.OnChain.NetFlow,
+			WhaleTransactions: raw.OnChain.WhaleTransactions,
+			ActiveAddresses:   raw.OnChain.ActiveAddresses24h,
+			NVTRatio:          raw.OnChain.NVTRatio,
+		}
+	}
+
+	if raw.FundingRate != nil {
+		// use the max rate as primary (from whatever exchange has highest deviation)
+		result.FundingRate = &claude.FundingData{
+			Rate:       raw.FundingRate.MaxRate,
+			Annualized: raw.FundingRate.Annualized,
+		}
+	}
+
+	if raw.Sentiment != nil {
+		result.Sentiment = &claude.SentimentData{
+			OverallScore:   raw.Sentiment.OverallScore,
+			OverallLabel:   raw.Sentiment.OverallLabel,
+			FearGreedIndex: raw.Sentiment.FearGreedIndex,
+		}
+	}
+
+	return result
 }

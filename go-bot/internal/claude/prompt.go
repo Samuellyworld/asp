@@ -28,7 +28,12 @@ Rules:
 - If data is insufficient or conflicting, choose HOLD
 - Be conservative — false positives are worse than missed opportunities
 - Consider ALL available signals: indicators, ML predictions, and sentiment
-- Keep reasoning concise (under 100 words)`
+- Keep reasoning concise (under 100 words)
+- IMPORTANT: Account for trading costs when sizing positions and setting targets.
+  Typical spot fees are 0.10% maker / 0.10% taker (round-trip ~0.20%).
+  Futures fees are 0.02% maker / 0.04% taker plus 8h funding rate.
+  Only recommend trades where expected profit clearly exceeds total costs.
+  Avoid small scalps that fees would eat up.`
 }
 
 // builds the user prompt with all available analysis data
@@ -61,6 +66,13 @@ func buildUserPrompt(input *AnalysisInput) string {
 	if input.Sentiment != nil {
 		b.WriteString("## Sentiment Analysis\n")
 		b.WriteString(formatSentiment(input.Sentiment))
+		b.WriteString("\n")
+	}
+
+	// trading costs
+	if input.Costs != nil {
+		b.WriteString("## Trading Costs\n")
+		b.WriteString(formatTradingCosts(input.Costs))
 		b.WriteString("\n")
 	}
 
@@ -122,4 +134,21 @@ func formatPrediction(pred *MLPrediction) string {
 func formatSentiment(sent *Sentiment) string {
 	return fmt.Sprintf("- Label: %s\n- Score: %.2f\n- Confidence: %.0f%%\n",
 		sent.Label, sent.Score, sent.Confidence*100)
+}
+
+// formats trading cost context for the prompt
+func formatTradingCosts(costs *TradingCosts) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("- Spot fees: %.2f%% maker / %.2f%% taker\n", costs.SpotMakerFeePct, costs.SpotTakerFeePct))
+	b.WriteString(fmt.Sprintf("- Futures fees: %.2f%% maker / %.2f%% taker\n", costs.FuturesMakerPct, costs.FuturesTakerPct))
+	if costs.FundingRatePct != 0 {
+		b.WriteString(fmt.Sprintf("- Current 8h funding rate: %.4f%%\n", costs.FundingRatePct))
+	}
+	if costs.EstSlippageBps != 0 {
+		b.WriteString(fmt.Sprintf("- Estimated slippage: %.1f bps\n", costs.EstSlippageBps))
+	}
+	if costs.AvgRoundTripCost != 0 {
+		b.WriteString(fmt.Sprintf("- Estimated round-trip cost: %.3f%%\n", costs.AvgRoundTripCost))
+	}
+	return b.String()
 }

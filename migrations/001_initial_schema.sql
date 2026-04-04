@@ -276,6 +276,7 @@ CREATE TABLE IF NOT EXISTS ai_decisions (
     latency_ms          INTEGER,
     was_approved        BOOLEAN,
     was_executed        BOOLEAN DEFAULT FALSE,
+    filter_reason       VARCHAR(30) DEFAULT 'none' CHECK (filter_reason IN ('none', 'hold', 'low_confidence', 'duplicate', 'daily_limit', 'safety_blocked', 'expired', 'user_rejected')),
     created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -414,3 +415,53 @@ BEGIN
     PERFORM populate_default_watchlist(p_user_id);
 END;
 $$ LANGUAGE plpgsql;
+
+-- =============================================
+-- TimescaleDB time-series tables
+-- =============================================
+
+-- OHLCV candle data for all tracked symbols
+CREATE TABLE IF NOT EXISTS candles (
+    time        TIMESTAMPTZ NOT NULL,
+    symbol      VARCHAR(20) NOT NULL,
+    interval    VARCHAR(5)  NOT NULL,  -- '1m', '5m', '15m', '1h', '4h', '1d'
+    open        DOUBLE PRECISION NOT NULL,
+    high        DOUBLE PRECISION NOT NULL,
+    low         DOUBLE PRECISION NOT NULL,
+    close       DOUBLE PRECISION NOT NULL,
+    volume      DOUBLE PRECISION NOT NULL,
+    quote_volume DOUBLE PRECISION DEFAULT 0,
+    trade_count INTEGER DEFAULT 0,
+    UNIQUE (time, symbol, interval)
+);
+
+-- convert to hypertable if TimescaleDB is available
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb') THEN
+        PERFORM create_hypertable('candles', 'time', if_not_exists => TRUE);
+    END IF;
+END $$;
+
+-- index for symbol+interval lookups
+CREATE INDEX IF NOT EXISTS idx_candles_symbol_interval
+    ON candles (symbol, interval, time DESC);
+
+-- futures funding rate history
+CREATE TABLE IF NOT EXISTS funding_rates (
+    time        TIMESTAMPTZ NOT NULL,
+    symbol      VARCHAR(20) NOT NULL,
+    rate        DOUBLE PRECISION NOT NULL,
+    mark_price  DOUBLE PRECISION,
+    UNIQUE (time, symbol)
+);
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb') THEN
+        PERFORM create_hypertable('funding_rates', 'time', if_not_exists => TRUE);
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_funding_rates_symbol
+    ON funding_rates (symbol, time DESC);

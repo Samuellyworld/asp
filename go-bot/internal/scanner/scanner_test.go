@@ -146,6 +146,67 @@ func (m *mockNotifier) discordCount() int {
 	return count
 }
 
+// mock decision logger for testing
+type loggedDecision struct {
+	userID       int
+	symbol       string
+	filterReason string
+	action       claude.Action
+	confidence   float64
+}
+
+type mockDecisionLogger struct {
+	mu           sync.Mutex
+	decisions    []loggedDecision
+	notifications int
+}
+
+func (m *mockDecisionLogger) LogDecision(_ context.Context, userID int, symbol string, result *pipeline.Result, filterReason string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d := loggedDecision{
+		userID:       userID,
+		symbol:       symbol,
+		filterReason: filterReason,
+	}
+	if result != nil && result.Decision != nil {
+		d.action = result.Decision.Action
+		d.confidence = result.Decision.Confidence
+	}
+	m.decisions = append(m.decisions, d)
+	return len(m.decisions)
+}
+
+func (m *mockDecisionLogger) IncrementNotification(_ context.Context, userID int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.notifications++
+}
+
+func (m *mockDecisionLogger) decisionCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.decisions)
+}
+
+func (m *mockDecisionLogger) decisionsForReason(reason string) []loggedDecision {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []loggedDecision
+	for _, d := range m.decisions {
+		if d.filterReason == reason {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func (m *mockDecisionLogger) notificationCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.notifications
+}
+
 // --- test helpers ---
 
 func ptr[T any](v T) *T { return &v }
@@ -979,5 +1040,170 @@ func TestEmptyWatchlist(t *testing.T) {
 	}
 	if s.CycleCount() != 1 {
 		t.Error("cycle should still complete")
+	}
+}
+
+// --- decision logging tests ---
+
+func TestDecisionLoggerLogsBuyApproved(t *testing.T) {
+	users := []*user.User{testUser(1, 100)}
+	items := map[int][]watchlist.Item{
+		1: {{Symbol: "BTC/USDT", IsActive: true}},
+	}
+	results := map[string]*pipeline.Result{
+		"BTC/USDT": buyResult("BTC/USDT", 85),
+	}
+
+	s, _, _ := testScanner(users, items, results)
+	logger := &mockDecisionLogger{}
+	s.SetLogger(logger)
+
+	s.runCycle(context.Background())
+
+	if logger.decisionCount() != 1 {
+		t.Fatalf("expected 1 logged decision, got %d", logger.decisionCount())
+	}
+	approved := logger.decisionsForReason("none")
+	if len(approved) != 1 {
+		t.Fatalf("expected 1 approved decision, got %d", len(approved))
+	}
+	if approved[0].action != claude.ActionBuy {
+		t.Errorf("expected BUY action, got %s", approved[0].action)
+	}
+	if approved[0].symbol != "BTC/USDT" {
+		t.Errorf("expected BTC/USDT symbol, got %s", approved[0].symbol)
+	}
+	if logger.notificationCount() != 1 {
+		t.Errorf("expected 1 notification increment, got %d", logger.notificationCount())
+	}
+}
+
+func TestDecisionLoggerLogsHold(t *testing.T) {
+	users := []*user.User{testUser(1, 100)}
+	items := map[int][]watchlist.Item{
+		1: {{Symbol: "ETH/USDT", IsActive: true}},
+	}
+	results := map[string]*pipeline.Result{
+		"ETH/USDT": holdResult("ETH/USDT"),
+	}
+
+	s, _, _ := testScanner(users, items, results)
+	logger := &mockDecisionLogger{}
+	s.SetLogger(logger)
+
+	s.runCycle(context.Background())
+
+	holds := logger.decisionsForReason("hold")
+	if len(holds) != 1 {
+		t.Fatalf("expected 1 hold decision, got %d", len(holds))
+	}
+	if holds[0].action != claude.ActionHold {
+		t.Errorf("expected HOLD action, got %s", holds[0].action)
+	}
+	if logger.notificationCount() != 0 {
+		t.Error("should not increment notifications for HOLD")
+	}
+}
+
+func TestDecisionLoggerLogsLowConfidence(t *testing.T) {
+	users := []*user.User{testUser(1, 100)}
+	items := map[int][]watchlist.Item{
+		1: {{Symbol: "BTC/USDT", IsActive: true}},
+	}
+	results := map[string]*pipeline.Result{
+		"BTC/USDT": buyResult("BTC/USDT", 60), // below default 80 threshold
+	}
+
+	s, _, _ := testScanner(users, items, results)
+	logger := &mockDecisionLogger{}
+	s.SetLogger(logger)
+
+	s.runCycle(context.Background())
+
+	lowConf := logger.decisionsForReason("low_confidence")
+	if len(lowConf) != 1 {
+		t.Fatalf("expected 1 low_confidence decision, got %d", len(lowConf))
+	}
+	if lowConf[0].confidence != 60 {
+		t.Errorf("expected confidence 60, got %f", lowConf[0].confidence)
+	}
+}
+
+func TestDecisionLoggerLogsDuplicate(t *testing.T) {
+	users := []*user.User{testUser(1, 100)}
+	items := map[int][]watchlist.Item{
+		1: {{Symbol: "BTC/USDT", IsActive: true}},
+	}
+	results := map[string]*pipeline.Result{
+		"BTC/USDT": buyResult("BTC/USDT", 85),
+	}
+
+	s, _, _ := testScanner(users, items, results)
+	logger := &mockDecisionLogger{}
+	s.SetLogger(logger)
+
+	// first cycle: approved
+	s.runCycle(context.Background())
+	// second cycle: duplicate
+	s.runCycle(context.Background())
+
+	dupes := logger.decisionsForReason("duplicate")
+	if len(dupes) != 1 {
+		t.Fatalf("expected 1 duplicate decision, got %d", len(dupes))
+	}
+	approved := logger.decisionsForReason("none")
+	if len(approved) != 1 {
+		t.Fatalf("expected 1 approved decision, got %d", len(approved))
+	}
+}
+
+func TestDecisionLoggerLogsDailyLimit(t *testing.T) {
+	users := []*user.User{testUser(1, 100)}
+	symbols := make([]watchlist.Item, 15)
+	results := make(map[string]*pipeline.Result)
+	for i := 0; i < 15; i++ {
+		sym := fmt.Sprintf("SYM%d/USDT", i)
+		symbols[i] = watchlist.Item{Symbol: sym, IsActive: true}
+		results[sym] = buyResult(sym, 90)
+	}
+	items := map[int][]watchlist.Item{1: symbols}
+
+	s, _, _ := testScanner(users, items, results)
+	logger := &mockDecisionLogger{}
+	s.SetLogger(logger)
+
+	s.runCycle(context.Background())
+
+	approved := logger.decisionsForReason("none")
+	// scanner breaks early when daily limit hit (doesn't analyze remaining symbols)
+	// so all logged decisions should be approved — the remaining symbols are skipped entirely
+	if len(approved) != 10 {
+		t.Errorf("expected 10 approved, got %d", len(approved))
+	}
+	if logger.notificationCount() != 10 {
+		t.Errorf("expected 10 notification increments, got %d", logger.notificationCount())
+	}
+	// total logged decisions == 10 (only the approved ones that were analyzed)
+	if logger.decisionCount() != 10 {
+		t.Errorf("expected 10 total logged decisions, got %d", logger.decisionCount())
+	}
+}
+
+func TestDecisionLoggerNilSafe(t *testing.T) {
+	// no logger set — should not panic
+	users := []*user.User{testUser(1, 100)}
+	items := map[int][]watchlist.Item{
+		1: {{Symbol: "BTC/USDT", IsActive: true}},
+	}
+	results := map[string]*pipeline.Result{
+		"BTC/USDT": buyResult("BTC/USDT", 85),
+	}
+
+	s, notifier, _ := testScanner(users, items, results)
+	// deliberately NOT setting logger
+	s.runCycle(context.Background())
+
+	if notifier.count() != 1 {
+		t.Errorf("expected 1 notification even without logger, got %d", notifier.count())
 	}
 }

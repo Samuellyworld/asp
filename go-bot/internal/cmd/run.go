@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/trading-bot/go-bot/internal/analysis"
 	"github.com/trading-bot/go-bot/internal/binance"
+	"github.com/trading-bot/go-bot/internal/circuitbreaker"
 	"github.com/trading-bot/go-bot/internal/claude"
 	"github.com/trading-bot/go-bot/internal/config"
 	"github.com/trading-bot/go-bot/internal/database"
@@ -162,6 +163,12 @@ func runBot(cmd *cobra.Command, args []string) error {
 	// position persistence — wire store and recover open positions
 	posRepo := database.NewPositionRepository(pg.Pool())
 	paperExecutor.SetStore(&spotPositionStoreAdapter{repo: posRepo})
+
+	// trade logging repositories (shared by all executors and scanner)
+	tradeRepo := database.NewTradeRepository(pg.Pool())
+	dailyStatsRepo := database.NewDailyStatsRepository(pg.Pool())
+	paperExecutor.SetTradeLogger(&spotTradeLoggerAdapter{trades: tradeRepo, daily: dailyStatsRepo})
+
 	paperMonitor := papertrading.NewMonitor(paperExecutor, prices, papertrading.DefaultMonitorConfig())
 
 	// live trading adapters
@@ -215,6 +222,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 	// paper leverage executor
 	levPaperExecutor := leverage.NewPaperExecutor(prices, levSafetyChecker, fundingTracker)
 	levPaperExecutor.SetStore(&leveragePositionStoreAdapter{repo: posRepo})
+	levPaperExecutor.SetTradeLogger(&leverageTradeLoggerAdapter{trades: tradeRepo, daily: dailyStatsRepo})
 
 	// live leverage executor
 	levLiveExecutor := leverage.NewLiveExecutor(futuresClient, keyDecryptor, levSafetyChecker, fundingTracker, markPrices)
@@ -224,6 +232,16 @@ func runBot(cmd *cobra.Command, args []string) error {
 	levPaperMonitor := leverage.NewMonitor(levPaperExecutor, levPaperExecutor, markPrices, fundingTracker, levMonitorConfig, leverage.WithMarkPriceUpdater(levPaperExecutor))
 
 	levLiveMonitor := leverage.NewMonitor(levLiveExecutor, levLiveExecutor, markPrices, fundingTracker, levMonitorConfig, leverage.WithMarkPriceUpdater(levLiveExecutor))
+
+	// --- portfolio circuit breaker (shared across all executors) ---
+	cbConfig := circuitbreaker.DefaultConfig()
+	portfolioBreaker := circuitbreaker.New(cbConfig)
+	paperExecutor.SetCircuitBreaker(portfolioBreaker)
+	liveExecutor.SetCircuitBreaker(portfolioBreaker)
+	levPaperExecutor.SetCircuitBreaker(portfolioBreaker)
+	levLiveExecutor.SetCircuitBreaker(portfolioBreaker)
+	log.Printf("portfolio circuit breaker enabled (daily loss limit: $%.0f, max consecutive losses: %d, cooldown: %s)",
+		cbConfig.MaxDailyLoss, cbConfig.MaxConsecutiveLosses, cbConfig.CooldownDuration)
 
 	// --- position recovery (restore open paper positions from database) ---
 	if err := recoverSpotPositions(ctx, posRepo, paperExecutor); err != nil {
@@ -359,6 +377,11 @@ func runBot(cmd *cobra.Command, args []string) error {
 	}
 
 	bgScanner := scanner.New(userSvc, watchSvc, prefsSvc, pipe, notifier, scannerCfg)
+
+	// wire decision logging to persist AI decisions and daily stats
+	decisionRepo := database.NewAIDecisionRepository(pg.Pool())
+	bgScanner.SetLogger(&decisionLoggerAdapter{decisions: decisionRepo, daily: dailyStatsRepo})
+
 	bgScanner.Start(ctx)
 	defer bgScanner.Stop()
 	log.Printf("scanner started (%s interval)", scannerCfg.Interval)

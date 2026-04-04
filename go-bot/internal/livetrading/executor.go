@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/trading-bot/go-bot/internal/circuitbreaker"
 	"github.com/trading-bot/go-bot/internal/claude"
 	"github.com/trading-bot/go-bot/internal/exchange"
 	"github.com/trading-bot/go-bot/internal/opportunity"
@@ -55,6 +56,7 @@ type Executor struct {
 	keys      KeyDecryptor
 	safety    *SafetyChecker
 	losses    LossTracker
+	breaker   *circuitbreaker.Breaker // nil if no circuit breaker configured
 	nextID    int
 }
 
@@ -66,6 +68,11 @@ func NewExecutor(orders exchange.OrderExecutor, keys KeyDecryptor, safety *Safet
 		safety:    safety,
 		losses:    losses,
 	}
+}
+
+// SetCircuitBreaker configures portfolio circuit breaker.
+func (e *Executor) SetCircuitBreaker(b *circuitbreaker.Breaker) {
+	e.breaker = b
 }
 
 // opens a live position from an approved opportunity.
@@ -96,6 +103,13 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*LivePosition, error) 
 		closeSide = exchange.SideBuy
 	}
 	asset := "USDT"
+
+	// check circuit breaker before executing
+	if e.breaker != nil {
+		if ok, reason := e.breaker.AllowTrade(opp.UserID); !ok {
+			return nil, fmt.Errorf("circuit breaker: %s", reason)
+		}
+	}
 
 	// run safety checks
 	if e.safety != nil {

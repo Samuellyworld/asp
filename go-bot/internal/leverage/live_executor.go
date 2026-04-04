@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/trading-bot/go-bot/internal/binance"
+	"github.com/trading-bot/go-bot/internal/circuitbreaker"
 	"github.com/trading-bot/go-bot/internal/exchange"
 )
 
@@ -38,6 +39,7 @@ type LiveExecutor struct {
 	safety    *SafetyChecker
 	funding   *FundingTracker
 	prices    MarkPriceProvider
+	breaker   *circuitbreaker.Breaker // nil if no circuit breaker configured
 	nextID    int
 }
 
@@ -59,6 +61,11 @@ func NewLiveExecutor(
 	}
 }
 
+// SetCircuitBreaker configures portfolio circuit breaker.
+func (e *LiveExecutor) SetCircuitBreaker(b *circuitbreaker.Breaker) {
+	e.breaker = b
+}
+
 // opens a live leveraged position on binance futures.
 // decrypts keys, runs safety checks, configures leverage and margin type,
 // places market order, then sets sl/tp orders.
@@ -78,6 +85,13 @@ func (e *LiveExecutor) OpenPosition(
 	}
 	if markPrice <= 0 {
 		return nil, fmt.Errorf("invalid mark price %.8f for %s", markPrice, symbol)
+	}
+
+	// check circuit breaker before executing
+	if e.breaker != nil {
+		if ok, reason := e.breaker.AllowTrade(userID); !ok {
+			return nil, fmt.Errorf("circuit breaker: %s", reason)
+		}
 	}
 
 	// run safety checks if checker is configured

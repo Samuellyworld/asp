@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/trading-bot/go-bot/internal/circuitbreaker"
 	"github.com/trading-bot/go-bot/internal/claude"
 	"github.com/trading-bot/go-bot/internal/opportunity"
 	"github.com/trading-bot/go-bot/internal/pipeline"
@@ -1652,5 +1653,227 @@ func TestFormatHelpers_FormatQty(t *testing.T) {
 	q = formatQty(0.01177)
 	if q != "0.01177" {
 		t.Fatalf("expected 0.01177, got %s", q)
+	}
+}
+
+// --- trade logger tests ---
+
+type tradeLogEntry struct {
+	isOpen bool
+	pos    *Position
+}
+
+type mockTradeLogger struct {
+	mu      sync.Mutex
+	entries []tradeLogEntry
+	err     error
+}
+
+func (m *mockTradeLogger) LogOpen(_ context.Context, pos *Position) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.entries = append(m.entries, tradeLogEntry{isOpen: true, pos: pos})
+	return m.err
+}
+
+func (m *mockTradeLogger) LogClose(_ context.Context, pos *Position) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.entries = append(m.entries, tradeLogEntry{isOpen: false, pos: pos})
+	return m.err
+}
+
+func (m *mockTradeLogger) opens() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, e := range m.entries {
+		if e.isOpen {
+			n++
+		}
+	}
+	return n
+}
+
+func (m *mockTradeLogger) closes() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, e := range m.entries {
+		if !e.isOpen {
+			n++
+		}
+	}
+	return n
+}
+
+func TestTradeLoggerCalledOnExecute(t *testing.T) {
+	prices := newMockPrices()
+	prices.set("BTC/USDT", 42000)
+
+	exec := NewExecutor(prices)
+	logger := &mockTradeLogger{}
+	exec.SetTradeLogger(logger)
+
+	opp := testOpp("BTC/USDT", claude.ActionBuy, 42000, 41500, 43000, 500)
+	pos, err := exec.Execute(opp)
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	if logger.opens() != 1 {
+		t.Errorf("expected 1 open log, got %d", logger.opens())
+	}
+	if logger.closes() != 0 {
+		t.Errorf("expected 0 close logs, got %d", logger.closes())
+	}
+
+	// verify logged position matches
+	entry := logger.entries[0]
+	if entry.pos.ID != pos.ID {
+		t.Errorf("expected pos ID %s, got %s", pos.ID, entry.pos.ID)
+	}
+	if entry.pos.Symbol != "BTC/USDT" {
+		t.Errorf("expected BTC/USDT, got %s", entry.pos.Symbol)
+	}
+}
+
+func TestTradeLoggerCalledOnClose(t *testing.T) {
+	prices := newMockPrices()
+	prices.set("BTC/USDT", 42000)
+
+	exec := NewExecutor(prices)
+	logger := &mockTradeLogger{}
+	exec.SetTradeLogger(logger)
+
+	opp := testOpp("BTC/USDT", claude.ActionBuy, 42000, 41500, 43000, 500)
+	pos, err := exec.Execute(opp)
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	prices.set("BTC/USDT", 43500)
+	_, err = exec.Close(pos.ID, CloseTP, 43500)
+	if err != nil {
+		t.Fatalf("close failed: %v", err)
+	}
+
+	if logger.opens() != 1 {
+		t.Errorf("expected 1 open log, got %d", logger.opens())
+	}
+	if logger.closes() != 1 {
+		t.Errorf("expected 1 close log, got %d", logger.closes())
+	}
+
+	// verify close entry
+	closeEntry := logger.entries[1]
+	if closeEntry.pos.ClosePrice != 43500 {
+		t.Errorf("expected close price 43500, got %f", closeEntry.pos.ClosePrice)
+	}
+}
+
+func TestTradeLoggerNilSafe(t *testing.T) {
+	prices := newMockPrices()
+	prices.set("BTC/USDT", 42000)
+
+	exec := NewExecutor(prices)
+	// deliberately NOT setting logger
+
+	opp := testOpp("BTC/USDT", claude.ActionBuy, 42000, 41500, 43000, 500)
+	pos, err := exec.Execute(opp)
+	if err != nil {
+		t.Fatalf("execute should succeed without logger: %v", err)
+	}
+
+	_, err = exec.Close(pos.ID, CloseTP, 43500)
+	if err != nil {
+		t.Fatalf("close should succeed without logger: %v", err)
+	}
+}
+
+func TestTradeLoggerErrorDoesNotFailTrade(t *testing.T) {
+	prices := newMockPrices()
+	prices.set("BTC/USDT", 42000)
+
+	exec := NewExecutor(prices)
+	logger := &mockTradeLogger{err: fmt.Errorf("db connection lost")}
+	exec.SetTradeLogger(logger)
+
+	opp := testOpp("BTC/USDT", claude.ActionBuy, 42000, 41500, 43000, 500)
+	pos, err := exec.Execute(opp)
+	if err != nil {
+		t.Fatalf("execute should succeed despite logger error: %v", err)
+	}
+	if pos == nil {
+		t.Fatal("position should not be nil")
+	}
+}
+
+// --- circuit breaker integration tests ---
+
+func TestExecutor_CircuitBreakerBlocks(t *testing.T) {
+	prices := newMockPrices()
+	prices.set("BTCUSDT", 42000)
+	exec := NewExecutor(prices)
+
+	// configure breaker with low threshold
+	cb := circuitbreaker.New(circuitbreaker.Config{
+		MaxDailyLoss:         20,
+		MaxConsecutiveLosses: 0,
+		CooldownDuration:     time.Hour,
+	})
+	exec.SetCircuitBreaker(cb)
+
+	// trip the breaker externally (simulating losses from other executors)
+	cb.RecordTrade(1, -25)
+
+	opp := testOpp("BTCUSDT", claude.ActionBuy, 42000, 41500, 43000, 500)
+	_, err := exec.Execute(opp)
+	if err == nil {
+		t.Fatal("expected circuit breaker to block trade")
+	}
+	if !strings.Contains(err.Error(), "circuit breaker") {
+		t.Errorf("error should mention circuit breaker, got: %v", err)
+	}
+}
+
+func TestExecutor_CircuitBreakerAllows(t *testing.T) {
+	prices := newMockPrices()
+	prices.set("BTCUSDT", 42000)
+	exec := NewExecutor(prices)
+
+	cb := circuitbreaker.New(circuitbreaker.Config{
+		MaxDailyLoss:         100,
+		MaxConsecutiveLosses: 10,
+		CooldownDuration:     time.Hour,
+	})
+	exec.SetCircuitBreaker(cb)
+
+	// small loss — shouldn't trip
+	cb.RecordTrade(1, -10)
+
+	opp := testOpp("BTCUSDT", claude.ActionBuy, 42000, 41500, 43000, 500)
+	pos, err := exec.Execute(opp)
+	if err != nil {
+		t.Fatalf("trade should be allowed: %v", err)
+	}
+	if pos == nil {
+		t.Fatal("position should not be nil")
+	}
+}
+
+func TestExecutor_NilCircuitBreakerAllows(t *testing.T) {
+	prices := newMockPrices()
+	prices.set("BTCUSDT", 42000)
+	exec := NewExecutor(prices)
+	// no breaker set — should work normally
+
+	opp := testOpp("BTCUSDT", claude.ActionBuy, 42000, 41500, 43000, 500)
+	pos, err := exec.Execute(opp)
+	if err != nil {
+		t.Fatalf("trade should work without breaker: %v", err)
+	}
+	if pos == nil {
+		t.Fatal("position should not be nil")
 	}
 }

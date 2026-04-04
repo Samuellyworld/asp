@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/trading-bot/go-bot/internal/circuitbreaker"
 	"github.com/trading-bot/go-bot/internal/opportunity"
 )
 
@@ -24,6 +25,12 @@ type PositionStore interface {
 	AdjustPosition(ctx context.Context, posID string, sl, tp float64) error
 }
 
+// optional trade record logger (nil = no logging)
+type TradeLogger interface {
+	LogOpen(ctx context.Context, pos *Position) error
+	LogClose(ctx context.Context, pos *Position) error
+}
+
 // manages virtual paper trading positions
 type Executor struct {
 	mu        sync.RWMutex
@@ -31,6 +38,8 @@ type Executor struct {
 	closed    []*Position
 	prices    PriceProvider
 	store     PositionStore // nil if no persistence configured
+	trades    TradeLogger   // nil if no logging configured
+	breaker   *circuitbreaker.Breaker // nil if no circuit breaker configured
 	nextID    int
 }
 
@@ -44,6 +53,16 @@ func NewExecutor(prices PriceProvider) *Executor {
 // SetStore configures position persistence. Call before Start.
 func (e *Executor) SetStore(store PositionStore) {
 	e.store = store
+}
+
+// SetTradeLogger configures trade record logging. Call before Start.
+func (e *Executor) SetTradeLogger(logger TradeLogger) {
+	e.trades = logger
+}
+
+// SetCircuitBreaker configures portfolio circuit breaker. Call before Start.
+func (e *Executor) SetCircuitBreaker(b *circuitbreaker.Breaker) {
+	e.breaker = b
 }
 
 // SetNextID sets the starting ID for new positions (used for recovery).
@@ -74,6 +93,13 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*Position, error) {
 	plan := opp.Result.Decision.Plan
 	if opp.ModifiedPlan != nil {
 		plan = *opp.ModifiedPlan
+	}
+
+	// check circuit breaker before executing
+	if e.breaker != nil {
+		if ok, reason := e.breaker.AllowTrade(opp.UserID); !ok {
+			return nil, fmt.Errorf("circuit breaker: %s", reason)
+		}
 	}
 
 	price, err := e.prices.GetPrice(opp.Symbol)
@@ -121,6 +147,13 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*Position, error) {
 		}
 	}
 
+	// log trade record (best-effort)
+	if e.trades != nil {
+		if err := e.trades.LogOpen(context.Background(), pos); err != nil {
+			slog.Error("failed to log paper trade open", "id", id, "error", err)
+		}
+	}
+
 	return pos, nil
 }
 
@@ -154,6 +187,13 @@ func (e *Executor) Close(posID string, reason CloseReason, price float64) (*Posi
 	if e.store != nil {
 		if err := e.store.ClosePosition(context.Background(), pos); err != nil {
 			slog.Error("failed to persist paper position close", "id", posID, "error", err)
+		}
+	}
+
+	// log trade close record (best-effort)
+	if e.trades != nil {
+		if err := e.trades.LogClose(context.Background(), pos); err != nil {
+			slog.Error("failed to log paper trade close", "id", posID, "error", err)
 		}
 	}
 

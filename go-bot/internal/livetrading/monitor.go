@@ -168,9 +168,11 @@ func (m *Monitor) checkOrderFills(pos *LivePosition) bool {
 		slOrder, err := m.orders.GetOrder(pos.Symbol, pos.SLOrderID, apiKey, apiSecret)
 		if err == nil && slOrder.Status == exchange.OrderStatusFilled {
 			closed, err := m.executor.Close(pos.ID, "stop_loss")
-			if err == nil {
-				m.emit(Event{Type: EventSLHit, Position: closed, IsUrgent: true})
+			if err != nil {
+				// close failed — don't skip this position; retry on next cycle
+				return false
 			}
+			m.emit(Event{Type: EventSLHit, Position: closed, IsUrgent: true})
 			return true
 		}
 	}
@@ -180,9 +182,11 @@ func (m *Monitor) checkOrderFills(pos *LivePosition) bool {
 		tpOrder, err := m.orders.GetOrder(pos.Symbol, pos.TPOrderID, apiKey, apiSecret)
 		if err == nil && tpOrder.Status == exchange.OrderStatusFilled {
 			closed, err := m.executor.Close(pos.ID, "take_profit")
-			if err == nil {
-				m.emit(Event{Type: EventTPHit, Position: closed, IsUrgent: true})
+			if err != nil {
+				// close failed — don't skip this position; retry on next cycle
+				return false
 			}
+			m.emit(Event{Type: EventTPHit, Position: closed, IsUrgent: true})
 			return true
 		}
 	}

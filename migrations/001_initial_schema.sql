@@ -105,6 +105,16 @@ CREATE TABLE IF NOT EXISTS positions (
     realized_pnl            DECIMAL(20, 8) DEFAULT 0,
     is_paper                BOOLEAN DEFAULT TRUE,
     ai_decision_id          INTEGER,
+    internal_id             VARCHAR(64) UNIQUE,
+    action                  VARCHAR(10) CHECK (action IN ('BUY', 'SELL', 'HOLD')),
+    position_size           DECIMAL(20, 8),
+    close_reason            VARCHAR(30),
+    close_price             DECIMAL(20, 8),
+    platform                VARCHAR(20),
+    mark_price              DECIMAL(20, 8),
+    notional_value          DECIMAL(20, 8),
+    margin_type             VARCHAR(20) DEFAULT 'isolated',
+    funding_paid            DECIMAL(20, 8) DEFAULT 0,
     opened_at               TIMESTAMPTZ DEFAULT NOW(),
     closed_at               TIMESTAMPTZ,
     last_updated_at         TIMESTAMPTZ DEFAULT NOW()
@@ -113,6 +123,8 @@ CREATE TABLE IF NOT EXISTS positions (
 CREATE INDEX idx_positions_user_id ON positions(user_id);
 CREATE INDEX idx_positions_status ON positions(status) WHERE status = 'OPEN';
 CREATE INDEX idx_positions_symbol ON positions(symbol);
+CREATE INDEX idx_positions_paper_open ON positions(is_paper, status) WHERE is_paper = TRUE AND status = 'OPEN';
+CREATE INDEX idx_positions_internal_id ON positions(internal_id) WHERE internal_id IS NOT NULL;
 
 -- watchlists - user's tracked symbols
 CREATE TABLE IF NOT EXISTS watchlists (
@@ -188,6 +200,47 @@ CREATE TABLE IF NOT EXISTS position_notifications (
 
 CREATE INDEX idx_position_notifications_position_id ON position_notifications(position_id);
 CREATE INDEX idx_position_notifications_sent_at ON position_notifications(sent_at);
+
+-- funding_fee_log - leverage funding fee records
+CREATE TABLE IF NOT EXISTS funding_fee_log (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    position_id VARCHAR(64) NOT NULL,
+    symbol VARCHAR(32) NOT NULL,
+    funding_rate DECIMAL(20, 10) NOT NULL,
+    amount DECIMAL(20, 8) NOT NULL,
+    notional DECIMAL(20, 8) NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_funding_fee_user ON funding_fee_log(user_id);
+CREATE INDEX idx_funding_fee_position ON funding_fee_log(position_id);
+
+-- leverage_confirmations - user consent for leverage trading
+CREATE TABLE IF NOT EXISTS leverage_confirmations (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
+    confirmed BOOLEAN NOT NULL DEFAULT FALSE,
+    confirmed_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- liquidation_alerts - alerts when positions near liquidation
+CREATE TABLE IF NOT EXISTS liquidation_alerts (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    position_id VARCHAR(64) NOT NULL,
+    symbol VARCHAR(32) NOT NULL,
+    alert_level VARCHAR(16) NOT NULL,
+    distance_pct DECIMAL(10, 4) NOT NULL,
+    mark_price DECIMAL(20, 8) NOT NULL,
+    liquidation_price DECIMAL(20, 8) NOT NULL,
+    alerted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_liq_alerts_user ON liquidation_alerts(user_id);
+CREATE INDEX idx_liq_alerts_position ON liquidation_alerts(position_id);
 
 -- daily_notification_log - track daily notification count
 CREATE TABLE IF NOT EXISTS daily_notification_log (

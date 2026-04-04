@@ -4,6 +4,7 @@ package livetrading
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -125,7 +126,7 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*LivePosition, error) 
 		quantity = plan.PositionSize / mainOrder.AvgPrice
 	}
 
-	// place stop loss order
+	// place stop loss order — abort if this fails (position would be unprotected)
 	var slOrderID int64
 	if plan.StopLoss > 0 {
 		slOrder, err := e.orders.PlaceStopLoss(
@@ -133,12 +134,20 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*LivePosition, error) 
 			plan.StopLoss, plan.StopLoss,
 			apiKey, apiSecret,
 		)
-		if err == nil {
-			slOrderID = slOrder.OrderID
+		if err != nil {
+			// close the main order — position must not exist without a stop loss
+			slog.Error("failed to place stop loss, closing main order",
+				"symbol", opp.Symbol, "error", err)
+			_, _ = e.orders.PlaceOrder(
+				opp.Symbol, closeSide, exchange.OrderTypeMarket,
+				quantity, 0, apiKey, apiSecret,
+			)
+			return nil, fmt.Errorf("failed to place stop loss (main order reversed): %w", err)
 		}
+		slOrderID = slOrder.OrderID
 	}
 
-	// place take profit order
+	// place take profit order — log warning but don't abort (SL protects us)
 	var tpOrderID int64
 	if plan.TakeProfit > 0 {
 		tpOrder, err := e.orders.PlaceTakeProfit(
@@ -146,7 +155,10 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*LivePosition, error) 
 			plan.TakeProfit, plan.TakeProfit,
 			apiKey, apiSecret,
 		)
-		if err == nil {
+		if err != nil {
+			slog.Warn("failed to place take profit order, position will rely on SL only",
+				"symbol", opp.Symbol, "error", err)
+		} else {
 			tpOrderID = tpOrder.OrderID
 		}
 	}
@@ -198,12 +210,18 @@ func (e *Executor) Close(posID string, reason string) (*LivePosition, error) {
 		return nil, fmt.Errorf("failed to decrypt keys: %w", err)
 	}
 
-	// cancel existing sl/tp orders
+	// cancel existing sl/tp orders (log failures — stale orders could fill unexpectedly)
 	if pos.SLOrderID > 0 {
-		_ = e.orders.CancelOrder(pos.Symbol, pos.SLOrderID, apiKey, apiSecret)
+		if err := e.orders.CancelOrder(pos.Symbol, pos.SLOrderID, apiKey, apiSecret); err != nil {
+			slog.Warn("failed to cancel SL order during close — may still fill on exchange",
+				"position", posID, "sl_order", pos.SLOrderID, "error", err)
+		}
 	}
 	if pos.TPOrderID > 0 {
-		_ = e.orders.CancelOrder(pos.Symbol, pos.TPOrderID, apiKey, apiSecret)
+		if err := e.orders.CancelOrder(pos.Symbol, pos.TPOrderID, apiKey, apiSecret); err != nil {
+			slog.Warn("failed to cancel TP order during close — may still fill on exchange",
+				"position", posID, "tp_order", pos.TPOrderID, "error", err)
+		}
 	}
 
 	// place closing market order
@@ -240,6 +258,9 @@ func (e *Executor) Close(posID string, reason string) (*LivePosition, error) {
 	}
 
 	e.closed = append(e.closed, pos)
+	if len(e.closed) > 1000 {
+		e.closed = e.closed[len(e.closed)-1000:]
+	}
 	delete(e.positions, posID)
 	e.mu.Unlock()
 

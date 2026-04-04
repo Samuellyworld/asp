@@ -3,7 +3,9 @@
 package papertrading
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -15,12 +17,20 @@ type PriceProvider interface {
 	GetPrice(symbol string) (float64, error)
 }
 
+// optional persistence layer for paper positions (nil = in-memory only)
+type PositionStore interface {
+	SavePosition(ctx context.Context, pos *Position) error
+	ClosePosition(ctx context.Context, pos *Position) error
+	AdjustPosition(ctx context.Context, posID string, sl, tp float64) error
+}
+
 // manages virtual paper trading positions
 type Executor struct {
 	mu        sync.RWMutex
 	positions map[string]*Position
 	closed    []*Position
 	prices    PriceProvider
+	store     PositionStore // nil if no persistence configured
 	nextID    int
 }
 
@@ -29,6 +39,25 @@ func NewExecutor(prices PriceProvider) *Executor {
 		positions: make(map[string]*Position),
 		prices:    prices,
 	}
+}
+
+// SetStore configures position persistence. Call before Start.
+func (e *Executor) SetStore(store PositionStore) {
+	e.store = store
+}
+
+// SetNextID sets the starting ID for new positions (used for recovery).
+func (e *Executor) SetNextID(id int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.nextID = id
+}
+
+// RestorePosition adds a recovered position back into the in-memory map (startup only).
+func (e *Executor) RestorePosition(pos *Position) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.positions[pos.ID] = pos
 }
 
 // opens a paper position from an approved or modified opportunity.
@@ -85,20 +114,28 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*Position, error) {
 	e.positions[id] = pos
 	e.mu.Unlock()
 
+	// persist to database (best-effort — don't fail the trade on DB error)
+	if e.store != nil {
+		if err := e.store.SavePosition(context.Background(), pos); err != nil {
+			slog.Error("failed to persist paper position", "id", id, "error", err)
+		}
+	}
+
 	return pos, nil
 }
 
 // closes a position with the given reason and final price
 func (e *Executor) Close(posID string, reason CloseReason, price float64) (*Position, error) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 
 	pos, ok := e.positions[posID]
 	if !ok {
+		e.mu.Unlock()
 		return nil, fmt.Errorf("position not found: %s", posID)
 	}
 
 	if pos.Status == PositionClosed {
+		e.mu.Unlock()
 		return nil, fmt.Errorf("position already closed: %s", posID)
 	}
 
@@ -111,6 +148,14 @@ func (e *Executor) Close(posID string, reason CloseReason, price float64) (*Posi
 
 	e.closed = append(e.closed, pos)
 	delete(e.positions, posID)
+	e.mu.Unlock()
+
+	// persist close to database
+	if e.store != nil {
+		if err := e.store.ClosePosition(context.Background(), pos); err != nil {
+			slog.Error("failed to persist paper position close", "id", posID, "error", err)
+		}
+	}
 
 	return pos, nil
 }
@@ -132,6 +177,13 @@ func (e *Executor) Adjust(posID string, field string, value float64) error {
 		pos.TakeProfit = value
 	default:
 		return fmt.Errorf("unknown field: %s", field)
+	}
+
+	// persist adjustment (best-effort)
+	if e.store != nil {
+		if err := e.store.AdjustPosition(context.Background(), posID, pos.StopLoss, pos.TakeProfit); err != nil {
+			slog.Error("failed to persist paper position adjust", "id", posID, "error", err)
+		}
 	}
 
 	return nil

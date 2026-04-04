@@ -43,7 +43,7 @@ func (c *FuturesClient) SetLeverage(symbol string, leverage int, apiKey, apiSecr
 	params.Set("symbol", toBinanceSymbol(symbol))
 	params.Set("leverage", strconv.Itoa(leverage))
 
-	_, err := c.signedRawRequest(http.MethodPost, "/fapi/v1/leverage", params, apiKey, apiSecret)
+	_, err := c.signedRawRequest(context.TODO(), http.MethodPost, "/fapi/v1/leverage", params, apiKey, apiSecret)
 	return err
 }
 
@@ -53,7 +53,7 @@ func (c *FuturesClient) SetMarginType(symbol string, marginType string, apiKey, 
 	params.Set("symbol", toBinanceSymbol(symbol))
 	params.Set("marginType", marginType)
 
-	_, err := c.signedRawRequest(http.MethodPost, "/fapi/v1/marginType", params, apiKey, apiSecret)
+	_, err := c.signedRawRequest(context.TODO(), http.MethodPost, "/fapi/v1/marginType", params, apiKey, apiSecret)
 	return err
 }
 
@@ -103,7 +103,7 @@ func (c *FuturesClient) CancelOrder(symbol string, orderID int64, apiKey, apiSec
 	params.Set("symbol", toBinanceSymbol(symbol))
 	params.Set("orderId", strconv.FormatInt(orderID, 10))
 
-	_, err := c.signedRawRequest(http.MethodDelete, "/fapi/v1/order", params, apiKey, apiSecret)
+	_, err := c.signedRawRequest(context.TODO(), http.MethodDelete, "/fapi/v1/order", params, apiKey, apiSecret)
 	return err
 }
 
@@ -113,7 +113,7 @@ func (c *FuturesClient) GetOrder(symbol string, orderID int64, apiKey, apiSecret
 	params.Set("symbol", toBinanceSymbol(symbol))
 	params.Set("orderId", strconv.FormatInt(orderID, 10))
 
-	body, err := c.signedRawRequest(http.MethodGet, "/fapi/v1/order", params, apiKey, apiSecret)
+	body, err := c.signedRawRequest(context.TODO(), http.MethodGet, "/fapi/v1/order", params, apiKey, apiSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +129,7 @@ func (c *FuturesClient) GetOrder(symbol string, orderID int64, apiKey, apiSecret
 func (c *FuturesClient) GetPositions(apiKey, apiSecret string) ([]FuturesPosition, error) {
 	params := url.Values{}
 
-	body, err := c.signedRawRequest(http.MethodGet, "/fapi/v2/positionRisk", params, apiKey, apiSecret)
+	body, err := c.signedRawRequest(context.TODO(), http.MethodGet, "/fapi/v2/positionRisk", params, apiKey, apiSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +150,7 @@ func (c *FuturesClient) GetPositions(apiKey, apiSecret string) ([]FuturesPositio
 func (c *FuturesClient) GetFuturesBalance(apiKey, apiSecret string) ([]FuturesBalance, error) {
 	params := url.Values{}
 
-	body, err := c.signedRawRequest(http.MethodGet, "/fapi/v2/balance", params, apiKey, apiSecret)
+	body, err := c.signedRawRequest(context.TODO(), http.MethodGet, "/fapi/v2/balance", params, apiKey, apiSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +171,7 @@ func (c *FuturesClient) GetFuturesBalance(apiKey, apiSecret string) ([]FuturesBa
 func (c *FuturesClient) GetMarkPrice(symbol string) (*MarkPrice, error) {
 	reqURL := fmt.Sprintf("%s/fapi/v1/premiumIndex?symbol=%s", c.baseURL, toBinanceSymbol(symbol))
 
-	body, err := c.publicGet(reqURL)
+	body, err := c.publicGet(context.TODO(), reqURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get mark price for %s: %w", symbol, err)
 	}
@@ -187,7 +187,7 @@ func (c *FuturesClient) GetMarkPrice(symbol string) (*MarkPrice, error) {
 func (c *FuturesClient) GetFundingRate(symbol string) (*FundingRate, error) {
 	reqURL := fmt.Sprintf("%s/fapi/v1/fundingRate?symbol=%s&limit=1", c.baseURL, toBinanceSymbol(symbol))
 
-	body, err := c.publicGet(reqURL)
+	body, err := c.publicGet(context.TODO(), reqURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get funding rate for %s: %w", symbol, err)
 	}
@@ -204,7 +204,7 @@ func (c *FuturesClient) GetFundingRate(symbol string) (*FundingRate, error) {
 
 // posts a futures order and returns the parsed response
 func (c *FuturesClient) postFuturesOrder(params url.Values, apiKey, apiSecret string) (*FuturesOrder, error) {
-	body, err := c.signedRawRequest(http.MethodPost, "/fapi/v1/order", params, apiKey, apiSecret)
+	body, err := c.signedRawRequest(context.TODO(), http.MethodPost, "/fapi/v1/order", params, apiKey, apiSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +217,7 @@ func (c *FuturesClient) postFuturesOrder(params url.Values, apiKey, apiSecret st
 }
 
 // sends a signed request and returns the raw response body
-func (c *FuturesClient) signedRawRequest(method, path string, params url.Values, apiKey, apiSecret string) ([]byte, error) {
+func (c *FuturesClient) signedRawRequest(ctx context.Context, method, path string, params url.Values, apiKey, apiSecret string) ([]byte, error) {
 	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
 	params.Set("timestamp", timestamp)
 	queryString := params.Encode()
@@ -230,14 +230,14 @@ func (c *FuturesClient) signedRawRequest(method, path string, params url.Values,
 	if method == http.MethodPost {
 		reqURL = fmt.Sprintf("%s%s", c.baseURL, path)
 		bodyStr := queryString + "&signature=" + signature
-		req, err = http.NewRequestWithContext(context.Background(), method, reqURL, strings.NewReader(bodyStr))
+		req, err = http.NewRequestWithContext(ctx, method, reqURL, strings.NewReader(bodyStr))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	} else {
 		reqURL = fmt.Sprintf("%s%s?%s&signature=%s", c.baseURL, path, queryString, signature)
-		req, err = http.NewRequestWithContext(context.Background(), method, reqURL, nil)
+		req, err = http.NewRequestWithContext(ctx, method, reqURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
@@ -268,8 +268,8 @@ func (c *FuturesClient) signedRawRequest(method, path string, params url.Values,
 }
 
 // performs a public GET request (no auth needed)
-func (c *FuturesClient) publicGet(reqURL string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, reqURL, nil)
+func (c *FuturesClient) publicGet(ctx context.Context, reqURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

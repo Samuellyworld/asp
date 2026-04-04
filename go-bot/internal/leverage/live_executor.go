@@ -4,6 +4,7 @@ package leverage
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -143,26 +144,37 @@ func (e *LiveExecutor) OpenPosition(
 	// calculate liquidation price
 	liqPrice := CalculateLiquidationPrice(entryPrice, leverage, string(side), DefaultMaintenanceMarginRate)
 
-	// place stop loss order if specified
+	// place stop loss order — abort if this fails (leveraged position without SL is extremely dangerous)
 	var slOrderID int64
 	if stopLoss > 0 {
 		slOrder, err := e.futures.PlaceStopMarket(
 			symbol, closeSide, filledQty, stopLoss,
 			apiKey, apiSecret,
 		)
-		if err == nil {
-			slOrderID = slOrder.OrderID
+		if err != nil {
+			// close the position immediately — cannot have leverage without SL
+			slog.Error("failed to place SL on leveraged position, closing immediately",
+				"symbol", symbol, "leverage", leverage, "error", err)
+			_, _ = e.futures.PlaceOrder(
+				symbol, closeSide, exchange.OrderTypeMarket,
+				filledQty, 0, apiKey, apiSecret,
+			)
+			return nil, fmt.Errorf("failed to place stop loss on leveraged position (position reversed): %w", err)
 		}
+		slOrderID = slOrder.OrderID
 	}
 
-	// place take profit order if specified
+	// place take profit order — log warning but don't abort (SL protects us)
 	var tpOrderID int64
 	if takeProfit > 0 {
 		tpOrder, err := e.futures.PlaceTakeProfitMarket(
 			symbol, closeSide, filledQty, takeProfit,
 			apiKey, apiSecret,
 		)
-		if err == nil {
+		if err != nil {
+			slog.Warn("failed to place TP on leveraged position, will rely on SL only",
+				"symbol", symbol, "error", err)
+		} else {
 			tpOrderID = tpOrder.OrderID
 		}
 	}
@@ -233,12 +245,18 @@ func (e *LiveExecutor) Close(posID string, reason string) (*LeveragePosition, er
 		return nil, fmt.Errorf("failed to decrypt keys: %w", err)
 	}
 
-	// cancel existing sl/tp orders
+	// cancel existing sl/tp orders (log failures — stale orders could fill unexpectedly)
 	if pos.SLOrderID > 0 {
-		_ = e.futures.CancelOrder(pos.Symbol, pos.SLOrderID, apiKey, apiSecret)
+		if err := e.futures.CancelOrder(pos.Symbol, pos.SLOrderID, apiKey, apiSecret); err != nil {
+			slog.Warn("failed to cancel SL order during leverage close",
+				"position", posID, "sl_order", pos.SLOrderID, "error", err)
+		}
 	}
 	if pos.TPOrderID > 0 {
-		_ = e.futures.CancelOrder(pos.Symbol, pos.TPOrderID, apiKey, apiSecret)
+		if err := e.futures.CancelOrder(pos.Symbol, pos.TPOrderID, apiKey, apiSecret); err != nil {
+			slog.Warn("failed to cancel TP order during leverage close",
+				"position", posID, "tp_order", pos.TPOrderID, "error", err)
+		}
 	}
 
 	// determine closing side
@@ -288,6 +306,9 @@ func (e *LiveExecutor) Close(posID string, reason string) (*LeveragePosition, er
 	pos.FundingPaid = fundingFees
 
 	e.closed = append(e.closed, pos)
+	if len(e.closed) > 1000 {
+		e.closed = e.closed[len(e.closed)-1000:]
+	}
 	delete(e.positions, posID)
 	e.mu.Unlock()
 
@@ -341,4 +362,14 @@ func (e *LiveExecutor) Count() int {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return len(e.positions)
+}
+
+// updates the mark price on an open position under the executor's mutex
+func (e *LiveExecutor) UpdateMarkPrice(posID string, price float64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if pos, ok := e.positions[posID]; ok {
+		pos.MarkPrice = price
+	}
 }

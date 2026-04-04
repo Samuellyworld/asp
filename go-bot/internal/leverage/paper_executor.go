@@ -3,7 +3,9 @@
 package leverage
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -11,6 +13,13 @@ import (
 // provides current market prices for position management
 type PriceProvider interface {
 	GetPrice(symbol string) (float64, error)
+}
+
+// optional persistence layer for leverage paper positions
+type LeveragePositionStore interface {
+	SavePosition(ctx context.Context, pos *LeveragePosition) error
+	ClosePosition(ctx context.Context, pos *LeveragePosition) error
+	AdjustPosition(ctx context.Context, posID string, sl, tp float64) error
 }
 
 // manages simulated leverage positions for paper trading
@@ -21,6 +30,7 @@ type PaperExecutor struct {
 	prices    PriceProvider
 	safety    *SafetyChecker
 	funding   *FundingTracker
+	store     LeveragePositionStore
 	nextID    int
 }
 
@@ -32,6 +42,25 @@ func NewPaperExecutor(prices PriceProvider, safety *SafetyChecker, funding *Fund
 		safety:    safety,
 		funding:   funding,
 	}
+}
+
+// SetStore configures position persistence. Call before Start.
+func (e *PaperExecutor) SetStore(store LeveragePositionStore) {
+	e.store = store
+}
+
+// SetNextID sets the starting ID for new positions (used for recovery).
+func (e *PaperExecutor) SetNextID(id int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.nextID = id
+}
+
+// RestorePosition adds a recovered position back into the in-memory map (startup only).
+func (e *PaperExecutor) RestorePosition(pos *LeveragePosition) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.positions[pos.ID] = pos
 }
 
 // opens a simulated leverage position at the current market price.
@@ -97,6 +126,13 @@ func (e *PaperExecutor) OpenPosition(
 	e.positions[id] = pos
 	e.mu.Unlock()
 
+	// persist to database (best-effort)
+	if e.store != nil {
+		if err := e.store.SavePosition(context.Background(), pos); err != nil {
+			slog.Error("failed to persist leverage paper position", "id", id, "error", err)
+		}
+	}
+
 	return pos, nil
 }
 
@@ -104,29 +140,42 @@ func (e *PaperExecutor) OpenPosition(
 // current market price, position side, and accumulated funding fees.
 func (e *PaperExecutor) Close(posID string, reason string) (*LeveragePosition, error) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 
 	pos, ok := e.positions[posID]
 	if !ok {
 		// check if already in closed list
 		for _, cp := range e.closed {
 			if cp.ID == posID {
+				e.mu.Unlock()
 				return nil, fmt.Errorf("position already closed: %s", posID)
 			}
 		}
+		e.mu.Unlock()
 		return nil, fmt.Errorf("position not found: %s", posID)
 	}
 
 	if pos.Status == "closed" {
+		e.mu.Unlock()
 		return nil, fmt.Errorf("position already closed: %s", posID)
 	}
 
-	// get current price for pnl calculation (unlock temporarily)
+	// get current price for pnl calculation
+	// save symbol before unlock to avoid TOCTOU race
+	symbol := pos.Symbol
 	e.mu.Unlock()
-	closePrice, err := e.prices.GetPrice(pos.Symbol)
+	closePrice, err := e.prices.GetPrice(symbol)
 	e.mu.Lock()
+
+	// re-check that position still exists after relock
+	pos, ok = e.positions[posID]
+	if !ok {
+		e.mu.Unlock()
+		return nil, fmt.Errorf("position closed by another goroutine: %s", posID)
+	}
+
 	if err != nil {
-		return nil, fmt.Errorf("failed to get close price for %s: %w", pos.Symbol, err)
+		e.mu.Unlock()
+		return nil, fmt.Errorf("failed to get close price for %s: %w", symbol, err)
 	}
 
 	// calculate raw pnl based on side
@@ -149,7 +198,18 @@ func (e *PaperExecutor) Close(posID string, reason string) (*LeveragePosition, e
 	pos.ClosedAt = &now
 
 	e.closed = append(e.closed, pos)
+	if len(e.closed) > 1000 {
+		e.closed = e.closed[len(e.closed)-1000:]
+	}
 	delete(e.positions, posID)
+	e.mu.Unlock()
+
+	// persist to database (best-effort)
+	if e.store != nil {
+		if err := e.store.ClosePosition(context.Background(), pos); err != nil {
+			slog.Error("failed to persist leverage position close", "id", posID, "error", err)
+		}
+	}
 
 	return pos, nil
 }
@@ -157,10 +217,10 @@ func (e *PaperExecutor) Close(posID string, reason string) (*LeveragePosition, e
 // modifies the stop loss or take profit on an open position
 func (e *PaperExecutor) Adjust(posID string, field string, value float64) error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 
 	pos, ok := e.positions[posID]
 	if !ok {
+		e.mu.Unlock()
 		return fmt.Errorf("position not found: %s", posID)
 	}
 
@@ -170,7 +230,18 @@ func (e *PaperExecutor) Adjust(posID string, field string, value float64) error 
 	case "tp", "take_profit":
 		pos.TakeProfit = value
 	default:
+		e.mu.Unlock()
 		return fmt.Errorf("unknown field: %s", field)
+	}
+
+	sl, tp := pos.StopLoss, pos.TakeProfit
+	e.mu.Unlock()
+
+	// persist to database (best-effort)
+	if e.store != nil {
+		if err := e.store.AdjustPosition(context.Background(), posID, sl, tp); err != nil {
+			slog.Error("failed to persist leverage position adjust", "id", posID, "error", err)
+		}
 	}
 
 	return nil

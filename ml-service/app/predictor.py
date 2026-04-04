@@ -1,10 +1,13 @@
 # lstm price prediction model
 # predicts price direction and magnitude for crypto assets
 
+import logging
 import numpy as np
 import os
 import json
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 try:
     import torch
@@ -181,11 +184,17 @@ class PricePredictor:
             "timeframe": timeframe,
             "predicted_price": round(predicted_price, 2),
             "current_price": current_price,
+            "is_fallback": False,
         }
 
     def _statistical_predict(self, candles: list[dict], timeframe: str) -> dict:
         """fallback prediction using momentum and trend analysis
         when no trained model is available"""
+        logger.warning(
+            "LSTM model not available — using statistical fallback. "
+            "Predictions will have lower accuracy (confidence capped at 0.75). "
+            "Train a model with train.py to enable full predictions."
+        )
         closes = np.array([c["close"] for c in candles])
         current_price = closes[-1]
 
@@ -233,6 +242,7 @@ class PricePredictor:
             "timeframe": timeframe,
             "predicted_price": round(predicted_price, 2),
             "current_price": current_price,
+            "is_fallback": True,
         }
 
     def _default_prediction(self, candles: list[dict], timeframe: str) -> dict:
@@ -245,4 +255,5 @@ class PricePredictor:
             "timeframe": timeframe,
             "predicted_price": current_price,
             "current_price": current_price,
+            "is_fallback": True,
         }

@@ -77,7 +77,8 @@ func NewBot(token string) *Bot {
 	}
 }
 
-// sendMessage sends a text message to a chat
+// sendMessage sends a text message to a chat.
+// Tries Markdown first; falls back to plain text if Telegram can't parse entities.
 func (b *Bot) SendMessage(chatID int64, text string) error {
 	endpoint := fmt.Sprintf("%s%s/sendMessage", apiBase, b.token)
 
@@ -91,6 +92,25 @@ func (b *Bot) SendMessage(chatID int64, text string) error {
 		return fmt.Errorf("failed to send message: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusBadRequest {
+		body, _ := io.ReadAll(resp.Body)
+		if strings.Contains(string(body), "can't parse entities") {
+			// retry without Markdown
+			data.Del("parse_mode")
+			resp2, err2 := b.client.PostForm(endpoint, data)
+			if err2 != nil {
+				return fmt.Errorf("failed to send plain message: %w", err2)
+			}
+			defer resp2.Body.Close()
+			if resp2.StatusCode != http.StatusOK {
+				body2, _ := io.ReadAll(resp2.Body)
+				return fmt.Errorf("telegram api error (status %d): %s", resp2.StatusCode, string(body2))
+			}
+			return nil
+		}
+		return fmt.Errorf("telegram api error (status %d): %s", resp.StatusCode, string(body))
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

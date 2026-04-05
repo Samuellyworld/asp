@@ -33,6 +33,11 @@ type TradeLogger interface {
 	LogClose(ctx context.Context, pos *LivePosition) error
 }
 
+// records failed order placements for manual review (dead-letter queue)
+type FailedOrderRecorder interface {
+	RecordFailedOrder(ctx context.Context, userID int, positionID, symbol, side, orderType string, quantity, price, stopPrice float64, tradeType, errorMsg string) error
+}
+
 // decrypts stored credentials for order placement
 type KeyDecryptor interface {
 	DecryptKeys(userID int) (apiKey, apiSecret string, err error)
@@ -73,18 +78,19 @@ type SlippageRecorder interface {
 
 // executes real trades on the exchange with full safety validation
 type Executor struct {
-	mu        sync.RWMutex
-	positions map[string]*LivePosition
-	closed    []*LivePosition
-	orders    exchange.OrderExecutor
-	keys      KeyDecryptor
-	safety    *SafetyChecker
-	losses    LossTracker
-	breaker   *circuitbreaker.Breaker // nil if no circuit breaker configured
-	store     PositionStore           // nil if no persistence configured
-	trades    TradeLogger             // nil if no logging configured
-	slippage  SlippageRecorder        // nil if no slippage tracking configured
-	nextID    int
+	mu           sync.RWMutex
+	positions    map[string]*LivePosition
+	closed       []*LivePosition
+	orders       exchange.OrderExecutor
+	keys         KeyDecryptor
+	safety       *SafetyChecker
+	losses       LossTracker
+	breaker      *circuitbreaker.Breaker // nil if no circuit breaker configured
+	store        PositionStore           // nil if no persistence configured
+	trades       TradeLogger             // nil if no logging configured
+	slippage     SlippageRecorder        // nil if no slippage tracking configured
+	failedOrders FailedOrderRecorder     // nil if no dead-letter queue configured
+	nextID       int
 }
 
 func NewExecutor(orders exchange.OrderExecutor, keys KeyDecryptor, safety *SafetyChecker, losses LossTracker) *Executor {
@@ -115,6 +121,11 @@ func (e *Executor) SetTradeLogger(logger TradeLogger) {
 // SetSlippageTracker configures slippage recording. Call before Start.
 func (e *Executor) SetSlippageTracker(tracker SlippageRecorder) {
 	e.slippage = tracker
+}
+
+// SetFailedOrderRecorder configures the dead-letter queue for failed orders.
+func (e *Executor) SetFailedOrderRecorder(recorder FailedOrderRecorder) {
+	e.failedOrders = recorder
 }
 
 // SetNextID sets the starting ID for new positions (used for recovery).
@@ -188,6 +199,10 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*LivePosition, error) 
 		apiKey, apiSecret,
 	)
 	if err != nil {
+		if e.failedOrders != nil {
+			_ = e.failedOrders.RecordFailedOrder(dbCtx(), opp.UserID, "", opp.Symbol,
+				string(side), "MARKET", plan.PositionSize, plan.Entry, 0, "SPOT", err.Error())
+		}
 		return nil, fmt.Errorf("failed to place order: %w", err)
 	}
 
@@ -212,6 +227,10 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*LivePosition, error) 
 				opp.Symbol, closeSide, exchange.OrderTypeMarket,
 				quantity, 0, apiKey, apiSecret,
 			)
+			if e.failedOrders != nil {
+				_ = e.failedOrders.RecordFailedOrder(dbCtx(), opp.UserID, "", opp.Symbol,
+					string(closeSide), "STOP_LOSS_LIMIT", quantity, plan.StopLoss, plan.StopLoss, "SPOT", err.Error())
+			}
 			return nil, fmt.Errorf("failed to place stop loss (main order reversed): %w", err)
 		}
 		slOrderID = slOrder.OrderID

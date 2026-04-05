@@ -89,8 +89,12 @@ func runBot(cmd *cobra.Command, args []string) error {
 	}
 	log.Println("connected to postgres")
 
+	// database circuit breaker — fails fast when DB is unreachable (5 failures, 30s reset)
+	dbBreaker := database.NewDBCircuitBreaker(pg.Pool(), 5, 30*time.Second)
+
 	// start health check + analytics API server
 	healthSrv := newHealthServer(pg.Pool(), nil)
+	healthSrv.SetDBBreaker(dbBreaker)
 	healthSrv.SetBinanceURL(cfg.Binance.APIURL())
 	if cfg.MLService.BaseURL != "" {
 		healthSrv.SetMLURL(cfg.MLService.BaseURL)
@@ -281,6 +285,8 @@ func runBot(cmd *cobra.Command, args []string) error {
 	liveExecutor.SetStore(&livePositionStoreAdapter{repo: posRepo})
 	liveExecutor.SetTradeLogger(&liveTradeLoggerAdapter{trades: tradeRepo, daily: dailyStatsRepo})
 	liveExecutor.SetSlippageTracker(slippageTracker)
+	failedOrderRepo := database.NewFailedOrderRepository(pg.Pool())
+	liveExecutor.SetFailedOrderRecorder(&failedOrderAdapter{repo: failedOrderRepo})
 	emergencyStop := livetrading.NewEmergencyStop(liveExecutor)
 
 	// wire safety checker's position counter to the live executor
@@ -290,6 +296,11 @@ func runBot(cmd *cobra.Command, args []string) error {
 
 	liveMonitor := livetrading.NewMonitor(
 		liveExecutor, orderClient, keyDecryptor, prices, livetrading.DefaultMonitorConfig(),
+	)
+
+	// exchange reconciler — verifies bot state matches exchange every 5 minutes
+	reconciler := livetrading.NewReconciler(
+		liveExecutor, orderClient, keyDecryptor, livetrading.DefaultReconcilerConfig(),
 	)
 
 	// --- phase 4: leverage trading ---
@@ -320,6 +331,8 @@ func runBot(cmd *cobra.Command, args []string) error {
 
 	// live leverage executor
 	levLiveExecutor := leverage.NewLiveExecutor(futuresClient, keyDecryptor, levSafetyChecker, fundingTracker, markPrices)
+	levLiveExecutor.SetStore(&liveLeveragePositionStoreAdapter{repo: posRepo})
+	levLiveExecutor.SetTradeLogger(&leverageTradeLoggerAdapter{trades: tradeRepo, daily: dailyStatsRepo})
 
 	// leverage monitor (uses paper executor by default — handles both via interfaces)
 	levMonitorConfig := leverage.DefaultMonitorConfig()
@@ -347,6 +360,9 @@ func runBot(cmd *cobra.Command, args []string) error {
 	if err := recoverLivePositions(ctx, posRepo, liveExecutor); err != nil {
 		slog.Error("live position recovery failed", "error", err)
 	}
+	if err := recoverLiveLeveragePositions(ctx, posRepo, levLiveExecutor); err != nil {
+		slog.Error("live leverage position recovery failed", "error", err)
+	}
 
 	// --- phase 3: scanner ---
 
@@ -364,6 +380,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 		wizard := user.NewSetupWizard()
 		telegramBot = telegram.NewBot(cfg.Telegram.BotToken)
 		handler := telegram.NewHandler(telegramBot, userSvc, wizard, watchSvc, prefsSvc, binanceClient)
+		handler.SetTestnet(cfg.Binance.Testnet)
 
 		handler.SetTradingDeps(&telegram.TradingDeps{
 			OppManager:       oppManager,
@@ -596,6 +613,19 @@ func runBot(cmd *cobra.Command, args []string) error {
 	defer liveMonitor.Stop()
 	log.Println("live trading monitor started (30s interval)")
 
+	reconciler.SetOnMismatch(func(m livetrading.Mismatch) {
+		msg := fmt.Sprintf("⚠️ RECONCILIATION ALERT\n%s: %s\n%s", m.Symbol, m.Type, m.Details)
+		slog.Error("reconciliation mismatch", "position", m.PositionID, "type", m.Type, "details", m.Details)
+		if telegramBot != nil {
+			if err := telegramBot.SendMessage(0, msg); err != nil {
+				slog.Warn("failed to send reconciliation alert via telegram", "error", err)
+			}
+		}
+	})
+	reconciler.Start(ctx)
+	defer reconciler.Stop()
+	log.Println("exchange reconciler started (5m interval)")
+
 	levPaperMonitor.Start(ctx)
 	defer levPaperMonitor.Stop()
 	log.Println("leverage paper monitor started (30s interval)")
@@ -603,6 +633,15 @@ func runBot(cmd *cobra.Command, args []string) error {
 	levLiveMonitor.Start(ctx)
 	defer levLiveMonitor.Stop()
 	log.Println("leverage live monitor started (30s interval)")
+
+	// infrastructure watchdog — alerts on consecutive DB failures
+	watchdog := NewInfraWatchdog(pg.Pool(), nil, 60*time.Second)
+	if telegramBot != nil {
+		watchdog.SetAlertSender(telegramBot, 0)
+	}
+	watchdog.Start(ctx)
+	defer watchdog.Stop()
+	log.Println("infrastructure watchdog started (60s interval)")
 
 	// --- wait for shutdown ---
 
@@ -654,7 +693,7 @@ func routePaperEvent(event papertrading.Event, tgBot *telegram.Bot, notifier *sc
 	}
 
 	// route based on platform
-	if event.Position.Platform == "discord" {
+	if event.Position.Platform == "discord" && notifier.discordBot != nil {
 		if err := notifier.discordBot.SendMessage("", msg); err != nil { log.Printf("warning: failed to send notification: %v", err) }
 	} else if tgBot != nil {
 		// would need chat id — in production, stored on position or user
@@ -683,7 +722,7 @@ func routeLiveEvent(event livetrading.Event, tgBot *telegram.Bot, notifier *scan
 		return
 	}
 
-	if event.Position.Platform == "discord" {
+	if event.Position.Platform == "discord" && notifier.discordBot != nil {
 		if err := notifier.discordBot.SendMessage("", msg); err != nil { log.Printf("warning: failed to send notification: %v", err) }
 	} else if tgBot != nil {
 		log.Printf("live event [%s]: %s", event.Type, msg)

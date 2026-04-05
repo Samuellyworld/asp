@@ -142,6 +142,11 @@ func (r *PositionRepository) LoadOpenLiveSpot(ctx context.Context) ([]*Persisted
 	return r.loadOpen(ctx, "SPOT", false)
 }
 
+// LoadOpenLiveFutures loads all open non-paper FUTURES positions for startup recovery.
+func (r *PositionRepository) LoadOpenLiveFutures(ctx context.Context) ([]*PersistedPosition, error) {
+	return r.loadOpen(ctx, "FUTURES", false)
+}
+
 func (r *PositionRepository) loadOpen(ctx context.Context, posType string, isPaper bool) ([]*PersistedPosition, error) {
 	query := `
 		SELECT id, internal_id, user_id, symbol, side, action, position_type, status,

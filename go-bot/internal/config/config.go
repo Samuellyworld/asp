@@ -322,5 +322,47 @@ func Validate(cfg *Config) error {
 	if len(cfg.Security.MasterKey) < 32 {
 		return fmt.Errorf("security.master_key must be at least 32 characters")
 	}
+
+	// leverage safety bounds
+	if cfg.Leverage.HardMaxLeverage <= 0 || cfg.Leverage.HardMaxLeverage > 125 {
+		return fmt.Errorf("leverage.hard_max_leverage must be between 1 and 125, got %d", cfg.Leverage.HardMaxLeverage)
+	}
+	if cfg.Leverage.MaxMarginPerTrade <= 0 {
+		return fmt.Errorf("leverage.max_margin_per_trade must be positive, got %.2f", cfg.Leverage.MaxMarginPerTrade)
+	}
+	if cfg.Leverage.LiquidationWarningPct <= 0 || cfg.Leverage.LiquidationWarningPct > 50 {
+		return fmt.Errorf("leverage.liquidation_warning_pct must be between 0 and 50, got %.2f", cfg.Leverage.LiquidationWarningPct)
+	}
+	if cfg.Leverage.LiquidationCriticalPct <= 0 || cfg.Leverage.LiquidationCriticalPct >= cfg.Leverage.LiquidationWarningPct {
+		return fmt.Errorf("leverage.liquidation_critical_pct must be between 0 and liquidation_warning_pct (%.2f), got %.2f",
+			cfg.Leverage.LiquidationWarningPct, cfg.Leverage.LiquidationCriticalPct)
+	}
+	if cfg.Leverage.LiquidationAutoClosePct <= 0 || cfg.Leverage.LiquidationAutoClosePct >= cfg.Leverage.LiquidationCriticalPct {
+		return fmt.Errorf("leverage.liquidation_auto_close_pct must be between 0 and liquidation_critical_pct (%.2f), got %.2f",
+			cfg.Leverage.LiquidationCriticalPct, cfg.Leverage.LiquidationAutoClosePct)
+	}
+
+	// trading config bounds
+	if cfg.Trading.DefaultConfidenceThreshold < 0 || cfg.Trading.DefaultConfidenceThreshold > 100 {
+		return fmt.Errorf("trading.default_confidence_threshold must be 0-100, got %d", cfg.Trading.DefaultConfidenceThreshold)
+	}
+	if len(cfg.Trading.Timeframes) == 0 {
+		return fmt.Errorf("trading.timeframes must have at least one entry")
+	}
+	validTF := map[string]bool{"1m": true, "3m": true, "5m": true, "15m": true, "30m": true, "1h": true, "2h": true, "4h": true, "6h": true, "8h": true, "12h": true, "1d": true, "3d": true, "1w": true, "1M": true}
+	for _, tf := range cfg.Trading.Timeframes {
+		if !validTF[tf] {
+			return fmt.Errorf("trading.timeframes contains invalid timeframe %q", tf)
+		}
+	}
+
+	// database connection
+	if cfg.Database.Host == "" {
+		return fmt.Errorf("database.host is required")
+	}
+	if cfg.Database.Port <= 0 || cfg.Database.Port > 65535 {
+		return fmt.Errorf("database.port must be 1-65535, got %d", cfg.Database.Port)
+	}
+
 	return nil
 }

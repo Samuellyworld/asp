@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # postgresql with timescaledb extension for time-series data
   postgres:
@@ -54,37 +52,62 @@ services:
       redis:
         condition: service_healthy
     environment:
-      - DATABASE_URL=postgres://${POSTGRES_USER:-trading_bot}:${POSTGRES_PASSWORD:-trading_bot_secret}@postgres:5432/${POSTGRES_DB:-trading_bot}?sslmode=disable
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379/0
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USER=${POSTGRES_USER:-trading_bot}
+      - DATABASE_PASSWORD=${POSTGRES_PASSWORD:-trading_bot_secret}
+      - DATABASE_NAME=${POSTGRES_DB:-trading_bot}
+      - DATABASE_SSLMODE=disable
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-redis_secret}
+      - SECURITY_MASTER_KEY=${SECURITY_MASTER_KEY}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DISCORD_APPLICATION_ID=${DISCORD_APPLICATION_ID}
+      - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
+      - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN}
       - CLAUDE_API_KEY=${CLAUDE_API_KEY}
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-20250514}
+      - CLAUDE_MAX_TOKENS=${CLAUDE_MAX_TOKENS:-4096}
       - BINANCE_TESTNET=${BINANCE_TESTNET:-true}
-      - MASTER_ENCRYPTION_KEY=${MASTER_ENCRYPTION_KEY}
+      - BINANCE_TESTNET_API_URL=https://testnet.binance.vision
+      - BINANCE_TESTNET_WS_URL=wss://testnet.binance.vision/ws
+      - BINANCE_MAINNET_API_URL=https://api.binance.com
+      - BINANCE_MAINNET_WS_URL=wss://stream.binance.com:9443/ws
+      - BINANCE_FUTURES_TESTNET_API_URL=https://testnet.binancefuture.com
+      - BINANCE_FUTURES_MAINNET_API_URL=https://fapi.binance.com
+      - RUST_ENGINE_ADDRESS=rust-engine:50051
+      - ML_SERVICE_BASE_URL=http://ml-service:8000
+      - DATASOURCES_CRYPTOPANIC_TOKEN=${DATASOURCES_CRYPTOPANIC_TOKEN}
+      - DATASOURCES_COINGLASS_API_KEY=${DATASOURCES_COINGLASS_API_KEY}
+      - DATASOURCES_COINGECKO_API_KEY=${DATASOURCES_COINGECKO_API_KEY}
+      - API_ENABLED=${API_ENABLED:-true}
+      - API_KEY=${API_KEY}
+      - TRADING_DEFAULT_CONFIDENCE_THRESHOLD=${TRADING_DEFAULT_CONFIDENCE_THRESHOLD:-80}
+      - TRADING_TIMEFRAMES=${TRADING_TIMEFRAMES:-4h,1d}
+      - TRADING_DRIFT_CHECK_INTERVAL_MINUTES=${TRADING_DRIFT_CHECK_INTERVAL_MINUTES:-60}
+      - LEVERAGE_HARD_MAX_LEVERAGE=${LEVERAGE_HARD_MAX_LEVERAGE:-20}
+      - LEVERAGE_MAX_MARGIN_PER_TRADE=${LEVERAGE_MAX_MARGIN_PER_TRADE:-500}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     ports:
       - "${GO_BOT_PORT:-8080}:8080"
     networks:
       - trading-bot-network
-    profiles:
-      - full
 
-  # rust engine - technical indicators via grpc 
+  # rust engine - technical indicators via grpc
   rust-engine:
     build:
-      context: ./rust-engine
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: rust-engine/Dockerfile
     container_name: trading-bot-rust
     restart: unless-stopped
     environment:
       - RUST_LOG=${RUST_LOG:-info}
-      - GRPC_PORT=50051
     ports:
       - "${RUST_GRPC_PORT:-50051}:50051"
     networks:
       - trading-bot-network
-    profiles:
-      - full
 
   # python ml service - lstm predictions + sentiment
   ml-service:
@@ -96,15 +119,12 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - MODEL_PATH=/app/models
-      - API_PORT=8000
     ports:
       - "${ML_SERVICE_PORT:-8000}:8000"
     volumes:
       - ml_models:/app/models
     networks:
       - trading-bot-network
-    profiles:
-      - full
 
 volumes:
   postgres_data:

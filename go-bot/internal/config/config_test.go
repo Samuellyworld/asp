@@ -125,44 +125,111 @@ func TestTradingConfig_OpportunityExpiry(t *testing.T) {
 	}
 }
 
+func validConfig() *Config {
+	return &Config{
+		Security: SecurityConfig{MasterKey: "this-is-a-valid-master-key-that-is-long-enough"},
+		Leverage: LeverageConfig{
+			HardMaxLeverage:         20,
+			MaxMarginPerTrade:       100,
+			LiquidationWarningPct:   15,
+			LiquidationCriticalPct:  10,
+			LiquidationAutoClosePct: 5,
+		},
+		Trading: TradingConfig{
+			DefaultConfidenceThreshold: 80,
+			Timeframes:                 []string{"4h", "1d"},
+		},
+		Database: DatabaseConfig{Host: "localhost", Port: 5432},
+	}
+}
+
 func TestValidate(t *testing.T) {
 	tests := []struct {
 		name    string
-		cfg     *Config
+		modify  func(cfg *Config)
 		wantErr bool
 		errMsg  string
 	}{
 		{
+			name:    "valid config",
+			modify:  func(cfg *Config) {},
+			wantErr: false,
+		},
+		{
 			name:    "empty master key",
-			cfg:     &Config{Security: SecurityConfig{MasterKey: ""}},
+			modify:  func(cfg *Config) { cfg.Security.MasterKey = "" },
 			wantErr: true,
 			errMsg:  "security.master_key is required",
 		},
 		{
 			name:    "master key too short",
-			cfg:     &Config{Security: SecurityConfig{MasterKey: "short"}},
+			modify:  func(cfg *Config) { cfg.Security.MasterKey = "short" },
 			wantErr: true,
 			errMsg:  "security.master_key must be at least 32 characters",
 		},
 		{
-			name:    "valid master key",
-			cfg:     &Config{Security: SecurityConfig{MasterKey: "this-is-a-valid-master-key-that-is-long-enough"}},
+			name:    "exactly 32 characters",
+			modify:  func(cfg *Config) { cfg.Security.MasterKey = "12345678901234567890123456789012" },
 			wantErr: false,
 		},
 		{
-			name:    "exactly 32 characters",
-			cfg:     &Config{Security: SecurityConfig{MasterKey: "12345678901234567890123456789012"}},
-			wantErr: false,
+			name:    "leverage too high",
+			modify:  func(cfg *Config) { cfg.Leverage.HardMaxLeverage = 200 },
+			wantErr: true,
+			errMsg:  "leverage.hard_max_leverage must be between 1 and 125, got 200",
+		},
+		{
+			name:    "leverage zero",
+			modify:  func(cfg *Config) { cfg.Leverage.HardMaxLeverage = 0 },
+			wantErr: true,
+			errMsg:  "leverage.hard_max_leverage must be between 1 and 125, got 0",
+		},
+		{
+			name:    "max margin negative",
+			modify:  func(cfg *Config) { cfg.Leverage.MaxMarginPerTrade = -1 },
+			wantErr: true,
+			errMsg:  "leverage.max_margin_per_trade must be positive, got -1.00",
+		},
+		{
+			name:   "liquidation pct order violation",
+			modify: func(cfg *Config) { cfg.Leverage.LiquidationCriticalPct = 20 },
+			wantErr: true,
+		},
+		{
+			name:    "empty timeframes",
+			modify:  func(cfg *Config) { cfg.Trading.Timeframes = nil },
+			wantErr: true,
+			errMsg:  "trading.timeframes must have at least one entry",
+		},
+		{
+			name:    "invalid timeframe",
+			modify:  func(cfg *Config) { cfg.Trading.Timeframes = []string{"4h", "2d"} },
+			wantErr: true,
+			errMsg:  "trading.timeframes contains invalid timeframe \"2d\"",
+		},
+		{
+			name:    "empty database host",
+			modify:  func(cfg *Config) { cfg.Database.Host = "" },
+			wantErr: true,
+			errMsg:  "database.host is required",
+		},
+		{
+			name:    "invalid database port",
+			modify:  func(cfg *Config) { cfg.Database.Port = 0 },
+			wantErr: true,
+			errMsg:  "database.port must be 1-65535, got 0",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := Validate(tt.cfg)
+			cfg := validConfig()
+			tt.modify(cfg)
+			err := Validate(cfg)
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("Validate() expected error, got nil")
-				} else if err.Error() != tt.errMsg {
+				} else if tt.errMsg != "" && err.Error() != tt.errMsg {
 					t.Errorf("Validate() error = %q, want %q", err.Error(), tt.errMsg)
 				}
 			} else {

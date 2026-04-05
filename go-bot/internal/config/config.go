@@ -22,7 +22,15 @@ type Config struct {
 	MLService  MLServiceConfig
 	Leverage   LeverageConfig
 	API        APIConfig
+	DataSources DataSourcesConfig
 	LogLevel   string
+}
+
+// holds external data source API keys
+type DataSourcesConfig struct {
+	CryptoPanicToken string
+	CoinGlassAPIKey  string
+	CoinGeckoAPIKey  string // optional — empty for free tier
 }
 
 //holds postgres connection settings
@@ -141,6 +149,8 @@ type TradingConfig struct {
 	MaxDailyNotifications      int
 	ScannerIntervalMinutes     int
 	OpportunityExpiryMinutes   int
+	Timeframes                 []string // primary + confirmation timeframes, e.g. ["4h", "1d"]
+	DriftCheckIntervalMinutes  int      // how often to run ML drift detection (minutes)
 }
 
 // returns the scanner interval as a duration
@@ -221,6 +231,8 @@ func Load() (*Config, error) {
 			MaxDailyNotifications:      viper.GetInt("trading.max_daily_notifications"),
 			ScannerIntervalMinutes:     viper.GetInt("trading.scanner_interval_minutes"),
 			OpportunityExpiryMinutes:   viper.GetInt("trading.opportunity_expiry_minutes"),
+			Timeframes:                 viper.GetStringSlice("trading.timeframes"),
+			DriftCheckIntervalMinutes:  viper.GetInt("trading.drift_check_interval_minutes"),
 		},
 		Leverage: LeverageConfig{
 			HardMaxLeverage:         viper.GetInt("leverage.hard_max_leverage"),
@@ -234,6 +246,11 @@ func Load() (*Config, error) {
 			Enabled: viper.GetBool("api.enabled"),
 			Key:     viper.GetString("api.key"),
 			Port:    viper.GetInt("api.port"),
+		},
+		DataSources: DataSourcesConfig{
+			CryptoPanicToken: viper.GetString("datasources.cryptopanic_token"),
+			CoinGlassAPIKey:  viper.GetString("datasources.coinglass_api_key"),
+			CoinGeckoAPIKey:  viper.GetString("datasources.coingecko_api_key"),
 		},
 		LogLevel: viper.GetString("log_level"),
 	}
@@ -282,6 +299,8 @@ func setDefaults() {
 	viper.SetDefault("trading.max_daily_notifications", 10)
 	viper.SetDefault("trading.scanner_interval_minutes", 5)
 	viper.SetDefault("trading.opportunity_expiry_minutes", 15)
+	viper.SetDefault("trading.timeframes", []string{"4h", "1d"})
+	viper.SetDefault("trading.drift_check_interval_minutes", 60)
 
 	// leverage
 	viper.SetDefault("leverage.hard_max_leverage", 20)

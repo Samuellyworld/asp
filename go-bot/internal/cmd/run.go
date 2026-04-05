@@ -131,8 +131,10 @@ func runBot(cmd *cobra.Command, args []string) error {
 
 	// http client for python ml service (optional)
 	var mlProvider pipeline.MLProvider
+	var mlClient *mlclient.Client
 	if cfg.MLService.BaseURL != "" {
-		mlProvider = mlclient.NewClient(cfg.MLService.BaseURL)
+		mlClient = mlclient.NewClient(cfg.MLService.BaseURL)
+		mlProvider = mlClient
 		log.Printf("ml service configured at %s", cfg.MLService.BaseURL)
 	}
 
@@ -159,7 +161,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 	// funding rate provider (binance futures)
 	fundingProvider := datasources.NewBinanceFundingRate(cfg.Binance.FuturesAPIURL())
 
-	// sentiment aggregator (fear/greed + optional ML blending)
+	// sentiment aggregator — chain: CryptoPanic -> Reddit -> RSS with fear/greed + ML
 	var mlAnalyze func(context.Context, string) (float64, string, float64, error)
 	if mlProvider != nil {
 		mlAnalyze = func(ctx context.Context, text string) (float64, string, float64, error) {
@@ -170,19 +172,49 @@ func runBot(cmd *cobra.Command, args []string) error {
 			return resp.Score, resp.Label, resp.Confidence, nil
 		}
 	}
-	sentimentAgg := datasources.NewHTTPSentimentAggregator(mlAnalyze)
+
+	// build news provider chain
+	var newsProviders []datasources.NewsProvider
+	if cfg.DataSources.CryptoPanicToken != "" {
+		newsProviders = append(newsProviders, datasources.NewCryptoPanicProvider(cfg.DataSources.CryptoPanicToken))
+	}
+	newsProviders = append(newsProviders, datasources.NewRedditProvider())
+	newsProviders = append(newsProviders, datasources.NewRSSProvider())
+
+	// fear/greed index fetcher (shared with sentiment chain)
+	httpSentAgg := datasources.NewHTTPSentimentAggregator(nil)
+	fearGreedFn := func(ctx context.Context) (int, error) {
+		s, err := httpSentAgg.GetSentiment(ctx, "")
+		if err != nil {
+			return 0, err
+		}
+		return s.FearGreedIndex, nil
+	}
+
+	sentimentChain := datasources.NewSentimentChain(newsProviders, mlAnalyze, fearGreedFn)
+
+	// on-chain / derivatives providers
+	var onChainProvider datasources.OnChainProvider
+	if cfg.DataSources.CoinGlassAPIKey != "" {
+		onChainProvider = datasources.NewCoinGlassProvider(cfg.DataSources.CoinGlassAPIKey)
+		log.Println("coinglass derivatives data enabled")
+	} else {
+		onChainProvider = datasources.NewCoinGeckoProvider(cfg.DataSources.CoinGeckoAPIKey)
+		log.Println("coingecko market data enabled (fallback)")
+	}
 
 	// wire alt data aggregator into the pipeline
 	altAgg := datasources.NewAggregator(
 		datasources.WithOrderFlow(orderFlowProvider),
 		datasources.WithFundingRate(fundingProvider),
-		datasources.WithSentiment(sentimentAgg),
+		datasources.WithSentiment(sentimentChain),
+		datasources.WithOnChain(onChainProvider),
 	)
 	pipe.SetAltData(&altDataAdapter{agg: altAgg})
 
 	// multi-timeframe analysis (primary + higher timeframes)
-	pipe.SetTimeframes([]string{"4h", "1d"})
-	log.Println("pipeline configured with alt data + multi-timeframe (4h, 1d)")
+	pipe.SetTimeframes(cfg.Trading.Timeframes)
+	log.Printf("pipeline configured with alt data + multi-timeframe %v", cfg.Trading.Timeframes)
 
 	// slippage model (adaptive, learns from trade fills)
 	slippageStore := exchange.NewSlippageStore(pg.Pool())
@@ -248,6 +280,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 	liveExecutor := livetrading.NewExecutor(orderClient, keyDecryptor, safetyChecker, lossTracker)
 	liveExecutor.SetStore(&livePositionStoreAdapter{repo: posRepo})
 	liveExecutor.SetTradeLogger(&liveTradeLoggerAdapter{trades: tradeRepo, daily: dailyStatsRepo})
+	liveExecutor.SetSlippageTracker(slippageTracker)
 	emergencyStop := livetrading.NewEmergencyStop(liveExecutor)
 
 	// wire safety checker's position counter to the live executor
@@ -454,6 +487,9 @@ func runBot(cmd *cobra.Command, args []string) error {
 	decisionRepo := database.NewAIDecisionRepository(pg.Pool())
 	bgScanner.SetLogger(&decisionLoggerAdapter{decisions: decisionRepo, daily: dailyStatsRepo})
 
+	// self-learning: feed recent trade outcomes to Claude
+	pipe.SetTradeHistory(&tradeHistoryAdapter{repo: decisionRepo})
+
 	// candle repository (shared by analytics API and data ingestion)
 	candleRepo := database.NewCandleRepository(pg.Pool())
 
@@ -470,10 +506,63 @@ func runBot(cmd *cobra.Command, args []string) error {
 
 	// --- data ingestion (background candle fetching) ---
 	symbolProvider := &watchlistSymbolProvider{userSvc: userSvc, watchSvc: watchSvc}
-	dataIngest := pipeline.NewDataIngestion(binanceClient, &candleStoreAdapter{repo: candleRepo}, symbolProvider, pipeline.DefaultIngestionConfig())
+	ingestCfg := pipeline.DefaultIngestionConfig()
+	ingestCfg.Intervals = cfg.Trading.Timeframes
+	dataIngest := pipeline.NewDataIngestion(binanceClient, &candleStoreAdapter{repo: candleRepo}, symbolProvider, ingestCfg)
 	dataIngest.Start(ctx)
 	defer dataIngest.Stop()
-	log.Println("data ingestion started (5m poll interval)")
+	log.Printf("data ingestion started (%s poll interval, timeframes %v)", ingestCfg.PollInterval, ingestCfg.Intervals)
+
+	// --- drift detection + auto-retrain loop (if ML service available) ---
+	// drift check is lightweight (statistical tests on recent candles) — runs every hour.
+	// retrain is expensive — only triggers when drift is actually detected.
+	if mlClient != nil {
+		driftInterval := time.Duration(cfg.Trading.DriftCheckIntervalMinutes) * time.Minute
+		primaryTF := cfg.Trading.Timeframes[0]
+		go func() {
+			ticker := time.NewTicker(driftInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					driftCtx, driftCancel := context.WithTimeout(ctx, 2*time.Minute)
+					candles, err := binanceClient.GetCandles(driftCtx, "BTC/USDT", primaryTF, 100)
+					if err != nil {
+						slog.Warn("drift check: failed to fetch candles", "error", err)
+						driftCancel()
+						continue
+					}
+					mlCandles := make([]mlclient.Candle, len(candles))
+					for i, c := range candles {
+						mlCandles[i] = mlclient.Candle{
+							Open: c.Open, High: c.High, Low: c.Low,
+							Close: c.Close, Volume: c.Volume, Timestamp: c.OpenTime.Unix(),
+						}
+					}
+					driftResp, err := mlClient.CheckDrift(driftCtx, &mlclient.DriftCheckRequest{Candles: mlCandles})
+					if err != nil {
+						slog.Warn("drift check failed", "error", err)
+						driftCancel()
+						continue
+					}
+					slog.Info("drift check complete", "detected", driftResp.DriftDetected, "reason", driftResp.Reason)
+					if driftResp.DriftDetected {
+						slog.Warn("concept drift detected, triggering retrain", "recommendation", driftResp.Recommendation)
+						retrainResp, err := mlClient.Retrain(driftCtx, &mlclient.RetrainRequest{Candles: mlCandles, Epochs: 50})
+						if err != nil {
+							slog.Error("auto-retrain failed", "error", err)
+						} else {
+							slog.Info("auto-retrain complete", "success", retrainResp.Success, "promoted", retrainResp.Promoted)
+						}
+					}
+					driftCancel()
+				}
+			}
+		}()
+		log.Printf("drift detection loop started (%dm interval, %s candles, retrain on drift only)", cfg.Trading.DriftCheckIntervalMinutes, primaryTF)
+	}
 
 	// --- monitor event routing ---
 	// wire these BEFORE starting monitors to avoid dropping events from the first scan cycle

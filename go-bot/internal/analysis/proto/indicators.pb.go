@@ -802,6 +802,558 @@ func (x *VolumeResponse) GetSignal() string {
 	return ""
 }
 
+type ATRRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Candles       []*Candle              `protobuf:"bytes,1,rep,name=candles,proto3" json:"candles,omitempty"`
+	Period        int32                  `protobuf:"varint,2,opt,name=period,proto3" json:"period,omitempty"` // default 14
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ATRRequest) Reset() {
+	*x = ATRRequest{}
+	mi := &file_indicators_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ATRRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ATRRequest) ProtoMessage() {}
+
+func (x *ATRRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_indicators_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ATRRequest.ProtoReflect.Descriptor instead.
+func (*ATRRequest) Descriptor() ([]byte, []int) {
+	return file_indicators_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ATRRequest) GetCandles() []*Candle {
+	if x != nil {
+		return x.Candles
+	}
+	return nil
+}
+
+func (x *ATRRequest) GetPeriod() int32 {
+	if x != nil {
+		return x.Period
+	}
+	return 0
+}
+
+type ATRResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Value         float64                `protobuf:"fixed64,1,opt,name=value,proto3" json:"value,omitempty"`
+	Percent       float64                `protobuf:"fixed64,2,opt,name=percent,proto3" json:"percent,omitempty"` // atr as % of close
+	Signal        string                 `protobuf:"bytes,3,opt,name=signal,proto3" json:"signal,omitempty"`     // HIGH, NORMAL, LOW
+	Series        []float64              `protobuf:"fixed64,4,rep,packed,name=series,proto3" json:"series,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ATRResponse) Reset() {
+	*x = ATRResponse{}
+	mi := &file_indicators_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ATRResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ATRResponse) ProtoMessage() {}
+
+func (x *ATRResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_indicators_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ATRResponse.ProtoReflect.Descriptor instead.
+func (*ATRResponse) Descriptor() ([]byte, []int) {
+	return file_indicators_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *ATRResponse) GetValue() float64 {
+	if x != nil {
+		return x.Value
+	}
+	return 0
+}
+
+func (x *ATRResponse) GetPercent() float64 {
+	if x != nil {
+		return x.Percent
+	}
+	return 0
+}
+
+func (x *ATRResponse) GetSignal() string {
+	if x != nil {
+		return x.Signal
+	}
+	return ""
+}
+
+func (x *ATRResponse) GetSeries() []float64 {
+	if x != nil {
+		return x.Series
+	}
+	return nil
+}
+
+type ADXRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Candles       []*Candle              `protobuf:"bytes,1,rep,name=candles,proto3" json:"candles,omitempty"`
+	Period        int32                  `protobuf:"varint,2,opt,name=period,proto3" json:"period,omitempty"` // default 14
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ADXRequest) Reset() {
+	*x = ADXRequest{}
+	mi := &file_indicators_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ADXRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ADXRequest) ProtoMessage() {}
+
+func (x *ADXRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_indicators_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ADXRequest.ProtoReflect.Descriptor instead.
+func (*ADXRequest) Descriptor() ([]byte, []int) {
+	return file_indicators_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *ADXRequest) GetCandles() []*Candle {
+	if x != nil {
+		return x.Candles
+	}
+	return nil
+}
+
+func (x *ADXRequest) GetPeriod() int32 {
+	if x != nil {
+		return x.Period
+	}
+	return 0
+}
+
+type ADXResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Value         float64                `protobuf:"fixed64,1,opt,name=value,proto3" json:"value,omitempty"`                     // adx 0-100
+	PlusDi        float64                `protobuf:"fixed64,2,opt,name=plus_di,json=plusDi,proto3" json:"plus_di,omitempty"`     // +DI
+	MinusDi       float64                `protobuf:"fixed64,3,opt,name=minus_di,json=minusDi,proto3" json:"minus_di,omitempty"`  // -DI
+	Signal        string                 `protobuf:"bytes,4,opt,name=signal,proto3" json:"signal,omitempty"`                     // STRONG_TREND, TRENDING, WEAK, NO_TREND
+	TrendDir      string                 `protobuf:"bytes,5,opt,name=trend_dir,json=trendDir,proto3" json:"trend_dir,omitempty"` // UP, DOWN, NEUTRAL
+	Series        []float64              `protobuf:"fixed64,6,rep,packed,name=series,proto3" json:"series,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ADXResponse) Reset() {
+	*x = ADXResponse{}
+	mi := &file_indicators_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ADXResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ADXResponse) ProtoMessage() {}
+
+func (x *ADXResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_indicators_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ADXResponse.ProtoReflect.Descriptor instead.
+func (*ADXResponse) Descriptor() ([]byte, []int) {
+	return file_indicators_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *ADXResponse) GetValue() float64 {
+	if x != nil {
+		return x.Value
+	}
+	return 0
+}
+
+func (x *ADXResponse) GetPlusDi() float64 {
+	if x != nil {
+		return x.PlusDi
+	}
+	return 0
+}
+
+func (x *ADXResponse) GetMinusDi() float64 {
+	if x != nil {
+		return x.MinusDi
+	}
+	return 0
+}
+
+func (x *ADXResponse) GetSignal() string {
+	if x != nil {
+		return x.Signal
+	}
+	return ""
+}
+
+func (x *ADXResponse) GetTrendDir() string {
+	if x != nil {
+		return x.TrendDir
+	}
+	return ""
+}
+
+func (x *ADXResponse) GetSeries() []float64 {
+	if x != nil {
+		return x.Series
+	}
+	return nil
+}
+
+type StochasticRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Candles       []*Candle              `protobuf:"bytes,1,rep,name=candles,proto3" json:"candles,omitempty"`
+	KPeriod       int32                  `protobuf:"varint,2,opt,name=k_period,json=kPeriod,proto3" json:"k_period,omitempty"` // default 14
+	DPeriod       int32                  `protobuf:"varint,3,opt,name=d_period,json=dPeriod,proto3" json:"d_period,omitempty"` // default 3
+	Smooth        int32                  `protobuf:"varint,4,opt,name=smooth,proto3" json:"smooth,omitempty"`                  // default 3
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StochasticRequest) Reset() {
+	*x = StochasticRequest{}
+	mi := &file_indicators_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StochasticRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StochasticRequest) ProtoMessage() {}
+
+func (x *StochasticRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_indicators_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StochasticRequest.ProtoReflect.Descriptor instead.
+func (*StochasticRequest) Descriptor() ([]byte, []int) {
+	return file_indicators_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *StochasticRequest) GetCandles() []*Candle {
+	if x != nil {
+		return x.Candles
+	}
+	return nil
+}
+
+func (x *StochasticRequest) GetKPeriod() int32 {
+	if x != nil {
+		return x.KPeriod
+	}
+	return 0
+}
+
+func (x *StochasticRequest) GetDPeriod() int32 {
+	if x != nil {
+		return x.DPeriod
+	}
+	return 0
+}
+
+func (x *StochasticRequest) GetSmooth() int32 {
+	if x != nil {
+		return x.Smooth
+	}
+	return 0
+}
+
+type StochasticResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	K             float64                `protobuf:"fixed64,1,opt,name=k,proto3" json:"k,omitempty"`         // %K 0-100
+	D             float64                `protobuf:"fixed64,2,opt,name=d,proto3" json:"d,omitempty"`         // %D 0-100
+	Signal        string                 `protobuf:"bytes,3,opt,name=signal,proto3" json:"signal,omitempty"` // OVERSOLD, NEUTRAL, OVERBOUGHT, BULLISH_CROSS, BEARISH_CROSS
+	KSeries       []float64              `protobuf:"fixed64,4,rep,packed,name=k_series,json=kSeries,proto3" json:"k_series,omitempty"`
+	DSeries       []float64              `protobuf:"fixed64,5,rep,packed,name=d_series,json=dSeries,proto3" json:"d_series,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StochasticResponse) Reset() {
+	*x = StochasticResponse{}
+	mi := &file_indicators_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StochasticResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StochasticResponse) ProtoMessage() {}
+
+func (x *StochasticResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_indicators_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StochasticResponse.ProtoReflect.Descriptor instead.
+func (*StochasticResponse) Descriptor() ([]byte, []int) {
+	return file_indicators_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *StochasticResponse) GetK() float64 {
+	if x != nil {
+		return x.K
+	}
+	return 0
+}
+
+func (x *StochasticResponse) GetD() float64 {
+	if x != nil {
+		return x.D
+	}
+	return 0
+}
+
+func (x *StochasticResponse) GetSignal() string {
+	if x != nil {
+		return x.Signal
+	}
+	return ""
+}
+
+func (x *StochasticResponse) GetKSeries() []float64 {
+	if x != nil {
+		return x.KSeries
+	}
+	return nil
+}
+
+func (x *StochasticResponse) GetDSeries() []float64 {
+	if x != nil {
+		return x.DSeries
+	}
+	return nil
+}
+
+type RegimeRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Candles       []*Candle              `protobuf:"bytes,1,rep,name=candles,proto3" json:"candles,omitempty"`
+	Period        int32                  `protobuf:"varint,2,opt,name=period,proto3" json:"period,omitempty"` // default 14
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegimeRequest) Reset() {
+	*x = RegimeRequest{}
+	mi := &file_indicators_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegimeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegimeRequest) ProtoMessage() {}
+
+func (x *RegimeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_indicators_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegimeRequest.ProtoReflect.Descriptor instead.
+func (*RegimeRequest) Descriptor() ([]byte, []int) {
+	return file_indicators_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *RegimeRequest) GetCandles() []*Candle {
+	if x != nil {
+		return x.Candles
+	}
+	return nil
+}
+
+func (x *RegimeRequest) GetPeriod() int32 {
+	if x != nil {
+		return x.Period
+	}
+	return 0
+}
+
+type RegimeResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Regime        string                 `protobuf:"bytes,1,opt,name=regime,proto3" json:"regime,omitempty"` // trending, ranging, volatile, quiet
+	Adx           float64                `protobuf:"fixed64,2,opt,name=adx,proto3" json:"adx,omitempty"`
+	AtrPercent    float64                `protobuf:"fixed64,3,opt,name=atr_percent,json=atrPercent,proto3" json:"atr_percent,omitempty"`
+	PlusDi        float64                `protobuf:"fixed64,4,opt,name=plus_di,json=plusDi,proto3" json:"plus_di,omitempty"`
+	MinusDi       float64                `protobuf:"fixed64,5,opt,name=minus_di,json=minusDi,proto3" json:"minus_di,omitempty"`
+	TrendDir      string                 `protobuf:"bytes,6,opt,name=trend_dir,json=trendDir,proto3" json:"trend_dir,omitempty"` // UP, DOWN, NEUTRAL
+	Confidence    float64                `protobuf:"fixed64,7,opt,name=confidence,proto3" json:"confidence,omitempty"`           // 0-100
+	Description   string                 `protobuf:"bytes,8,opt,name=description,proto3" json:"description,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegimeResponse) Reset() {
+	*x = RegimeResponse{}
+	mi := &file_indicators_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegimeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegimeResponse) ProtoMessage() {}
+
+func (x *RegimeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_indicators_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegimeResponse.ProtoReflect.Descriptor instead.
+func (*RegimeResponse) Descriptor() ([]byte, []int) {
+	return file_indicators_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *RegimeResponse) GetRegime() string {
+	if x != nil {
+		return x.Regime
+	}
+	return ""
+}
+
+func (x *RegimeResponse) GetAdx() float64 {
+	if x != nil {
+		return x.Adx
+	}
+	return 0
+}
+
+func (x *RegimeResponse) GetAtrPercent() float64 {
+	if x != nil {
+		return x.AtrPercent
+	}
+	return 0
+}
+
+func (x *RegimeResponse) GetPlusDi() float64 {
+	if x != nil {
+		return x.PlusDi
+	}
+	return 0
+}
+
+func (x *RegimeResponse) GetMinusDi() float64 {
+	if x != nil {
+		return x.MinusDi
+	}
+	return 0
+}
+
+func (x *RegimeResponse) GetTrendDir() string {
+	if x != nil {
+		return x.TrendDir
+	}
+	return ""
+}
+
+func (x *RegimeResponse) GetConfidence() float64 {
+	if x != nil {
+		return x.Confidence
+	}
+	return 0
+}
+
+func (x *RegimeResponse) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
 type AnalyzeAllRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Candles         []*Candle              `protobuf:"bytes,1,rep,name=candles,proto3" json:"candles,omitempty"`
@@ -820,7 +1372,7 @@ type AnalyzeAllRequest struct {
 
 func (x *AnalyzeAllRequest) Reset() {
 	*x = AnalyzeAllRequest{}
-	mi := &file_indicators_proto_msgTypes[11]
+	mi := &file_indicators_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -832,7 +1384,7 @@ func (x *AnalyzeAllRequest) String() string {
 func (*AnalyzeAllRequest) ProtoMessage() {}
 
 func (x *AnalyzeAllRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_indicators_proto_msgTypes[11]
+	mi := &file_indicators_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -845,7 +1397,7 @@ func (x *AnalyzeAllRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AnalyzeAllRequest.ProtoReflect.Descriptor instead.
 func (*AnalyzeAllRequest) Descriptor() ([]byte, []int) {
-	return file_indicators_proto_rawDescGZIP(), []int{11}
+	return file_indicators_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *AnalyzeAllRequest) GetCandles() []*Candle {
@@ -928,13 +1480,17 @@ type AnalyzeAllResponse struct {
 	OverallSignal string                 `protobuf:"bytes,6,opt,name=overall_signal,json=overallSignal,proto3" json:"overall_signal,omitempty"` // STRONG_BUY, BUY, NEUTRAL, SELL, STRONG_SELL
 	BullishCount  int32                  `protobuf:"varint,7,opt,name=bullish_count,json=bullishCount,proto3" json:"bullish_count,omitempty"`
 	BearishCount  int32                  `protobuf:"varint,8,opt,name=bearish_count,json=bearishCount,proto3" json:"bearish_count,omitempty"`
+	Atr           *ATRResponse           `protobuf:"bytes,9,opt,name=atr,proto3" json:"atr,omitempty"`
+	Adx           *ADXResponse           `protobuf:"bytes,10,opt,name=adx,proto3" json:"adx,omitempty"`
+	Stochastic    *StochasticResponse    `protobuf:"bytes,11,opt,name=stochastic,proto3" json:"stochastic,omitempty"`
+	Regime        *RegimeResponse        `protobuf:"bytes,12,opt,name=regime,proto3" json:"regime,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AnalyzeAllResponse) Reset() {
 	*x = AnalyzeAllResponse{}
-	mi := &file_indicators_proto_msgTypes[12]
+	mi := &file_indicators_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -946,7 +1502,7 @@ func (x *AnalyzeAllResponse) String() string {
 func (*AnalyzeAllResponse) ProtoMessage() {}
 
 func (x *AnalyzeAllResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_indicators_proto_msgTypes[12]
+	mi := &file_indicators_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -959,7 +1515,7 @@ func (x *AnalyzeAllResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AnalyzeAllResponse.ProtoReflect.Descriptor instead.
 func (*AnalyzeAllResponse) Descriptor() ([]byte, []int) {
-	return file_indicators_proto_rawDescGZIP(), []int{12}
+	return file_indicators_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *AnalyzeAllResponse) GetRsi() *RSIResponse {
@@ -1016,6 +1572,34 @@ func (x *AnalyzeAllResponse) GetBearishCount() int32 {
 		return x.BearishCount
 	}
 	return 0
+}
+
+func (x *AnalyzeAllResponse) GetAtr() *ATRResponse {
+	if x != nil {
+		return x.Atr
+	}
+	return nil
+}
+
+func (x *AnalyzeAllResponse) GetAdx() *ADXResponse {
+	if x != nil {
+		return x.Adx
+	}
+	return nil
+}
+
+func (x *AnalyzeAllResponse) GetStochastic() *StochasticResponse {
+	if x != nil {
+		return x.Stochastic
+	}
+	return nil
+}
+
+func (x *AnalyzeAllResponse) GetRegime() *RegimeResponse {
+	if x != nil {
+		return x.Regime
+	}
+	return nil
 }
 
 var File_indicators_proto protoreflect.FileDescriptor
@@ -1088,7 +1672,53 @@ const file_indicators_proto_rawDesc = "" +
 	"\x0ecurrent_volume\x18\x02 \x01(\x01R\rcurrentVolume\x12%\n" +
 	"\x0eaverage_volume\x18\x03 \x01(\x01R\raverageVolume\x12\x14\n" +
 	"\x05ratio\x18\x04 \x01(\x01R\x05ratio\x12\x16\n" +
-	"\x06signal\x18\x05 \x01(\tR\x06signal\"\xe9\x02\n" +
+	"\x06signal\x18\x05 \x01(\tR\x06signal\"R\n" +
+	"\n" +
+	"ATRRequest\x12,\n" +
+	"\acandles\x18\x01 \x03(\v2\x12.indicators.CandleR\acandles\x12\x16\n" +
+	"\x06period\x18\x02 \x01(\x05R\x06period\"m\n" +
+	"\vATRResponse\x12\x14\n" +
+	"\x05value\x18\x01 \x01(\x01R\x05value\x12\x18\n" +
+	"\apercent\x18\x02 \x01(\x01R\apercent\x12\x16\n" +
+	"\x06signal\x18\x03 \x01(\tR\x06signal\x12\x16\n" +
+	"\x06series\x18\x04 \x03(\x01R\x06series\"R\n" +
+	"\n" +
+	"ADXRequest\x12,\n" +
+	"\acandles\x18\x01 \x03(\v2\x12.indicators.CandleR\acandles\x12\x16\n" +
+	"\x06period\x18\x02 \x01(\x05R\x06period\"\xa4\x01\n" +
+	"\vADXResponse\x12\x14\n" +
+	"\x05value\x18\x01 \x01(\x01R\x05value\x12\x17\n" +
+	"\aplus_di\x18\x02 \x01(\x01R\x06plusDi\x12\x19\n" +
+	"\bminus_di\x18\x03 \x01(\x01R\aminusDi\x12\x16\n" +
+	"\x06signal\x18\x04 \x01(\tR\x06signal\x12\x1b\n" +
+	"\ttrend_dir\x18\x05 \x01(\tR\btrendDir\x12\x16\n" +
+	"\x06series\x18\x06 \x03(\x01R\x06series\"\x8f\x01\n" +
+	"\x11StochasticRequest\x12,\n" +
+	"\acandles\x18\x01 \x03(\v2\x12.indicators.CandleR\acandles\x12\x19\n" +
+	"\bk_period\x18\x02 \x01(\x05R\akPeriod\x12\x19\n" +
+	"\bd_period\x18\x03 \x01(\x05R\adPeriod\x12\x16\n" +
+	"\x06smooth\x18\x04 \x01(\x05R\x06smooth\"~\n" +
+	"\x12StochasticResponse\x12\f\n" +
+	"\x01k\x18\x01 \x01(\x01R\x01k\x12\f\n" +
+	"\x01d\x18\x02 \x01(\x01R\x01d\x12\x16\n" +
+	"\x06signal\x18\x03 \x01(\tR\x06signal\x12\x19\n" +
+	"\bk_series\x18\x04 \x03(\x01R\akSeries\x12\x19\n" +
+	"\bd_series\x18\x05 \x03(\x01R\adSeries\"U\n" +
+	"\rRegimeRequest\x12,\n" +
+	"\acandles\x18\x01 \x03(\v2\x12.indicators.CandleR\acandles\x12\x16\n" +
+	"\x06period\x18\x02 \x01(\x05R\x06period\"\xee\x01\n" +
+	"\x0eRegimeResponse\x12\x16\n" +
+	"\x06regime\x18\x01 \x01(\tR\x06regime\x12\x10\n" +
+	"\x03adx\x18\x02 \x01(\x01R\x03adx\x12\x1f\n" +
+	"\vatr_percent\x18\x03 \x01(\x01R\n" +
+	"atrPercent\x12\x17\n" +
+	"\aplus_di\x18\x04 \x01(\x01R\x06plusDi\x12\x19\n" +
+	"\bminus_di\x18\x05 \x01(\x01R\aminusDi\x12\x1b\n" +
+	"\ttrend_dir\x18\x06 \x01(\tR\btrendDir\x12\x1e\n" +
+	"\n" +
+	"confidence\x18\a \x01(\x01R\n" +
+	"confidence\x12 \n" +
+	"\vdescription\x18\b \x01(\tR\vdescription\"\xe9\x02\n" +
 	"\x11AnalyzeAllRequest\x12,\n" +
 	"\acandles\x18\x01 \x03(\v2\x12.indicators.CandleR\acandles\x12\x1d\n" +
 	"\n" +
@@ -1104,7 +1734,7 @@ const file_indicators_proto_rawDesc = "" +
 	"ema_period\x18\b \x01(\x05R\temaPeriod\x12'\n" +
 	"\x0fvolume_lookback\x18\t \x01(\x05R\x0evolumeLookback\x12)\n" +
 	"\x10volume_threshold\x18\n" +
-	" \x01(\x01R\x0fvolumeThreshold\"\xfa\x02\n" +
+	" \x01(\x01R\x0fvolumeThreshold\"\xc4\x04\n" +
 	"\x12AnalyzeAllResponse\x12)\n" +
 	"\x03rsi\x18\x01 \x01(\v2\x17.indicators.RSIResponseR\x03rsi\x12,\n" +
 	"\x04macd\x18\x02 \x01(\v2\x18.indicators.MACDResponseR\x04macd\x12;\n" +
@@ -1113,13 +1743,24 @@ const file_indicators_proto_rawDesc = "" +
 	"\x06volume\x18\x05 \x01(\v2\x1a.indicators.VolumeResponseR\x06volume\x12%\n" +
 	"\x0eoverall_signal\x18\x06 \x01(\tR\roverallSignal\x12#\n" +
 	"\rbullish_count\x18\a \x01(\x05R\fbullishCount\x12#\n" +
-	"\rbearish_count\x18\b \x01(\x05R\fbearishCount2\xcc\x03\n" +
+	"\rbearish_count\x18\b \x01(\x05R\fbearishCount\x12)\n" +
+	"\x03atr\x18\t \x01(\v2\x17.indicators.ATRResponseR\x03atr\x12)\n" +
+	"\x03adx\x18\n" +
+	" \x01(\v2\x17.indicators.ADXResponseR\x03adx\x12>\n" +
+	"\n" +
+	"stochastic\x18\v \x01(\v2\x1e.indicators.StochasticResponseR\n" +
+	"stochastic\x122\n" +
+	"\x06regime\x18\f \x01(\v2\x1a.indicators.RegimeResponseR\x06regime2\xed\x05\n" +
 	"\x13TechnicalIndicators\x12?\n" +
 	"\fCalculateRSI\x12\x16.indicators.RSIRequest\x1a\x17.indicators.RSIResponse\x12B\n" +
 	"\rCalculateMACD\x12\x17.indicators.MACDRequest\x1a\x18.indicators.MACDResponse\x12V\n" +
 	"\x17CalculateBollingerBands\x12\x1c.indicators.BollingerRequest\x1a\x1d.indicators.BollingerResponse\x12?\n" +
 	"\fCalculateEMA\x12\x16.indicators.EMARequest\x1a\x17.indicators.EMAResponse\x12J\n" +
-	"\x11DetectVolumeSpike\x12\x19.indicators.VolumeRequest\x1a\x1a.indicators.VolumeResponse\x12K\n" +
+	"\x11DetectVolumeSpike\x12\x19.indicators.VolumeRequest\x1a\x1a.indicators.VolumeResponse\x12?\n" +
+	"\fCalculateATR\x12\x16.indicators.ATRRequest\x1a\x17.indicators.ATRResponse\x12?\n" +
+	"\fCalculateADX\x12\x16.indicators.ADXRequest\x1a\x17.indicators.ADXResponse\x12T\n" +
+	"\x13CalculateStochastic\x12\x1d.indicators.StochasticRequest\x1a\x1e.indicators.StochasticResponse\x12G\n" +
+	"\x0eClassifyRegime\x12\x19.indicators.RegimeRequest\x1a\x1a.indicators.RegimeResponse\x12K\n" +
 	"\n" +
 	"AnalyzeAll\x12\x1d.indicators.AnalyzeAllRequest\x1a\x1e.indicators.AnalyzeAllResponseB7Z5github.com/trading-bot/go-bot/internal/analysis/protob\x06proto3"
 
@@ -1135,7 +1776,7 @@ func file_indicators_proto_rawDescGZIP() []byte {
 	return file_indicators_proto_rawDescData
 }
 
-var file_indicators_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_indicators_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_indicators_proto_goTypes = []any{
 	(*Candle)(nil),             // 0: indicators.Candle
 	(*RSIRequest)(nil),         // 1: indicators.RSIRequest
@@ -1148,8 +1789,16 @@ var file_indicators_proto_goTypes = []any{
 	(*EMAResponse)(nil),        // 8: indicators.EMAResponse
 	(*VolumeRequest)(nil),      // 9: indicators.VolumeRequest
 	(*VolumeResponse)(nil),     // 10: indicators.VolumeResponse
-	(*AnalyzeAllRequest)(nil),  // 11: indicators.AnalyzeAllRequest
-	(*AnalyzeAllResponse)(nil), // 12: indicators.AnalyzeAllResponse
+	(*ATRRequest)(nil),         // 11: indicators.ATRRequest
+	(*ATRResponse)(nil),        // 12: indicators.ATRResponse
+	(*ADXRequest)(nil),         // 13: indicators.ADXRequest
+	(*ADXResponse)(nil),        // 14: indicators.ADXResponse
+	(*StochasticRequest)(nil),  // 15: indicators.StochasticRequest
+	(*StochasticResponse)(nil), // 16: indicators.StochasticResponse
+	(*RegimeRequest)(nil),      // 17: indicators.RegimeRequest
+	(*RegimeResponse)(nil),     // 18: indicators.RegimeResponse
+	(*AnalyzeAllRequest)(nil),  // 19: indicators.AnalyzeAllRequest
+	(*AnalyzeAllResponse)(nil), // 20: indicators.AnalyzeAllResponse
 }
 var file_indicators_proto_depIdxs = []int32{
 	0,  // 0: indicators.RSIRequest.candles:type_name -> indicators.Candle
@@ -1157,29 +1806,45 @@ var file_indicators_proto_depIdxs = []int32{
 	0,  // 2: indicators.BollingerRequest.candles:type_name -> indicators.Candle
 	0,  // 3: indicators.EMARequest.candles:type_name -> indicators.Candle
 	0,  // 4: indicators.VolumeRequest.candles:type_name -> indicators.Candle
-	0,  // 5: indicators.AnalyzeAllRequest.candles:type_name -> indicators.Candle
-	2,  // 6: indicators.AnalyzeAllResponse.rsi:type_name -> indicators.RSIResponse
-	4,  // 7: indicators.AnalyzeAllResponse.macd:type_name -> indicators.MACDResponse
-	6,  // 8: indicators.AnalyzeAllResponse.bollinger:type_name -> indicators.BollingerResponse
-	8,  // 9: indicators.AnalyzeAllResponse.ema:type_name -> indicators.EMAResponse
-	10, // 10: indicators.AnalyzeAllResponse.volume:type_name -> indicators.VolumeResponse
-	1,  // 11: indicators.TechnicalIndicators.CalculateRSI:input_type -> indicators.RSIRequest
-	3,  // 12: indicators.TechnicalIndicators.CalculateMACD:input_type -> indicators.MACDRequest
-	5,  // 13: indicators.TechnicalIndicators.CalculateBollingerBands:input_type -> indicators.BollingerRequest
-	7,  // 14: indicators.TechnicalIndicators.CalculateEMA:input_type -> indicators.EMARequest
-	9,  // 15: indicators.TechnicalIndicators.DetectVolumeSpike:input_type -> indicators.VolumeRequest
-	11, // 16: indicators.TechnicalIndicators.AnalyzeAll:input_type -> indicators.AnalyzeAllRequest
-	2,  // 17: indicators.TechnicalIndicators.CalculateRSI:output_type -> indicators.RSIResponse
-	4,  // 18: indicators.TechnicalIndicators.CalculateMACD:output_type -> indicators.MACDResponse
-	6,  // 19: indicators.TechnicalIndicators.CalculateBollingerBands:output_type -> indicators.BollingerResponse
-	8,  // 20: indicators.TechnicalIndicators.CalculateEMA:output_type -> indicators.EMAResponse
-	10, // 21: indicators.TechnicalIndicators.DetectVolumeSpike:output_type -> indicators.VolumeResponse
-	12, // 22: indicators.TechnicalIndicators.AnalyzeAll:output_type -> indicators.AnalyzeAllResponse
-	17, // [17:23] is the sub-list for method output_type
-	11, // [11:17] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	0,  // 5: indicators.ATRRequest.candles:type_name -> indicators.Candle
+	0,  // 6: indicators.ADXRequest.candles:type_name -> indicators.Candle
+	0,  // 7: indicators.StochasticRequest.candles:type_name -> indicators.Candle
+	0,  // 8: indicators.RegimeRequest.candles:type_name -> indicators.Candle
+	0,  // 9: indicators.AnalyzeAllRequest.candles:type_name -> indicators.Candle
+	2,  // 10: indicators.AnalyzeAllResponse.rsi:type_name -> indicators.RSIResponse
+	4,  // 11: indicators.AnalyzeAllResponse.macd:type_name -> indicators.MACDResponse
+	6,  // 12: indicators.AnalyzeAllResponse.bollinger:type_name -> indicators.BollingerResponse
+	8,  // 13: indicators.AnalyzeAllResponse.ema:type_name -> indicators.EMAResponse
+	10, // 14: indicators.AnalyzeAllResponse.volume:type_name -> indicators.VolumeResponse
+	12, // 15: indicators.AnalyzeAllResponse.atr:type_name -> indicators.ATRResponse
+	14, // 16: indicators.AnalyzeAllResponse.adx:type_name -> indicators.ADXResponse
+	16, // 17: indicators.AnalyzeAllResponse.stochastic:type_name -> indicators.StochasticResponse
+	18, // 18: indicators.AnalyzeAllResponse.regime:type_name -> indicators.RegimeResponse
+	1,  // 19: indicators.TechnicalIndicators.CalculateRSI:input_type -> indicators.RSIRequest
+	3,  // 20: indicators.TechnicalIndicators.CalculateMACD:input_type -> indicators.MACDRequest
+	5,  // 21: indicators.TechnicalIndicators.CalculateBollingerBands:input_type -> indicators.BollingerRequest
+	7,  // 22: indicators.TechnicalIndicators.CalculateEMA:input_type -> indicators.EMARequest
+	9,  // 23: indicators.TechnicalIndicators.DetectVolumeSpike:input_type -> indicators.VolumeRequest
+	11, // 24: indicators.TechnicalIndicators.CalculateATR:input_type -> indicators.ATRRequest
+	13, // 25: indicators.TechnicalIndicators.CalculateADX:input_type -> indicators.ADXRequest
+	15, // 26: indicators.TechnicalIndicators.CalculateStochastic:input_type -> indicators.StochasticRequest
+	17, // 27: indicators.TechnicalIndicators.ClassifyRegime:input_type -> indicators.RegimeRequest
+	19, // 28: indicators.TechnicalIndicators.AnalyzeAll:input_type -> indicators.AnalyzeAllRequest
+	2,  // 29: indicators.TechnicalIndicators.CalculateRSI:output_type -> indicators.RSIResponse
+	4,  // 30: indicators.TechnicalIndicators.CalculateMACD:output_type -> indicators.MACDResponse
+	6,  // 31: indicators.TechnicalIndicators.CalculateBollingerBands:output_type -> indicators.BollingerResponse
+	8,  // 32: indicators.TechnicalIndicators.CalculateEMA:output_type -> indicators.EMAResponse
+	10, // 33: indicators.TechnicalIndicators.DetectVolumeSpike:output_type -> indicators.VolumeResponse
+	12, // 34: indicators.TechnicalIndicators.CalculateATR:output_type -> indicators.ATRResponse
+	14, // 35: indicators.TechnicalIndicators.CalculateADX:output_type -> indicators.ADXResponse
+	16, // 36: indicators.TechnicalIndicators.CalculateStochastic:output_type -> indicators.StochasticResponse
+	18, // 37: indicators.TechnicalIndicators.ClassifyRegime:output_type -> indicators.RegimeResponse
+	20, // 38: indicators.TechnicalIndicators.AnalyzeAll:output_type -> indicators.AnalyzeAllResponse
+	29, // [29:39] is the sub-list for method output_type
+	19, // [19:29] is the sub-list for method input_type
+	19, // [19:19] is the sub-list for extension type_name
+	19, // [19:19] is the sub-list for extension extendee
+	0,  // [0:19] is the sub-list for field type_name
 }
 
 func init() { file_indicators_proto_init() }
@@ -1193,7 +1858,7 @@ func file_indicators_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_indicators_proto_rawDesc), len(file_indicators_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

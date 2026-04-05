@@ -46,7 +46,18 @@ Rules:
   Typical spot fees are 0.10% maker / 0.10% taker (round-trip ~0.20%).
   Futures fees are 0.02% maker / 0.04% taker plus 8h funding rate.
   Only recommend trades where expected profit clearly exceeds total costs.
-  Avoid small scalps that fees would eat up.`
+  Avoid small scalps that fees would eat up.
+- When ATR/ADX/Stochastic data is available, incorporate it:
+  * High ATR (>3%) = volatile market — reduce size or widen stops
+  * ADX > 25 = trending — favor trend-following strategies
+  * ADX < 15 = no trend — favor mean-reversion or wait
+  * Stochastic oversold + bullish cross = potential long entry
+  * Stochastic overbought + bearish cross = potential short entry
+- SELF-LEARNING: When trade history is provided, analyze your past decisions:
+  * Identify patterns in winning vs losing trades
+  * Adjust confidence based on recent accuracy (lower if losing streak)
+  * Avoid market conditions that led to consecutive losses
+  * If win rate < 40%, increase HOLD bias until conditions improve`
 }
 
 // builds the user prompt with all available analysis data
@@ -110,6 +121,13 @@ func buildUserPrompt(input *AnalysisInput) string {
 		b.WriteString("\n")
 	}
 
+	// trade history for self-learning
+	if len(input.TradeHistory) > 0 {
+		b.WriteString("## Recent Trade History (Your Past Decisions)\n")
+		b.WriteString(formatTradeHistory(input.TradeHistory))
+		b.WriteString("\n")
+	}
+
 	b.WriteString("Provide your trading decision in the required JSON format.")
 	return b.String()
 }
@@ -153,6 +171,21 @@ func formatIndicators(ind *Indicators) string {
 		b.WriteString("- Volume: SPIKE detected (unusual activity)\n")
 	} else {
 		b.WriteString("- Volume: normal\n")
+	}
+
+	// atr
+	if ind.ATR > 0 {
+		b.WriteString(fmt.Sprintf("- ATR(14): %.4f (%.2f%% of price, %s)\n", ind.ATR, ind.ATRPercent, ind.ATRSignal))
+	}
+
+	// adx
+	if ind.ADX > 0 {
+		b.WriteString(fmt.Sprintf("- ADX(14): %.1f (%s, trend direction: %s)\n", ind.ADX, ind.ADXSignal, ind.ADXTrendDir))
+	}
+
+	// stochastic
+	if ind.StochK > 0 || ind.StochD > 0 {
+		b.WriteString(fmt.Sprintf("- Stochastic: %%K=%.1f, %%D=%.1f (%s)\n", ind.StochK, ind.StochD, ind.StochSignal))
 	}
 
 	return b.String()
@@ -291,6 +324,36 @@ func formatHTFContext(htf []HTFSnapshot) string {
 			}
 			b.WriteString(fmt.Sprintf("- EMA Slope: %.2f%% (%s)\n", snap.EMASlope, dir))
 		}
+	}
+	return b.String()
+}
+
+// formats recent trade outcomes for self-learning feedback
+func formatTradeHistory(trades []TradeOutcome) string {
+	var b strings.Builder
+
+	var wins, losses int
+	var totalPnL float64
+	for _, t := range trades {
+		if t.PnLPct > 0 {
+			wins++
+		} else if t.PnLPct < 0 {
+			losses++
+		}
+		totalPnL += t.PnLPct
+	}
+
+	b.WriteString(fmt.Sprintf("Summary: %d trades, %d wins, %d losses, avg P&L: %.2f%%\n",
+		len(trades), wins, losses, totalPnL/float64(len(trades))))
+	b.WriteString("Learn from these outcomes — avoid repeating losing patterns.\n\n")
+
+	for _, t := range trades {
+		result := "LOSS"
+		if t.Correct {
+			result = "WIN"
+		}
+		b.WriteString(fmt.Sprintf("- %s %s @ $%.2f → $%.2f (%.2f%%, %s, confidence was %.0f%%)\n",
+			t.Action, t.Symbol, t.EntryPrice, t.ExitPrice, t.PnLPct, result, t.Confidence))
 	}
 	return b.String()
 }

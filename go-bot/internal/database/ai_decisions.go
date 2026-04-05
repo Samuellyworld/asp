@@ -188,3 +188,54 @@ func (r *AIDecisionRepository) WinRateBySymbol(ctx context.Context, userID int, 
 	err = r.pool.QueryRow(ctx, query, userID, symbol).Scan(&wins, &losses)
 	return
 }
+
+// TradeOutcomeRow holds a completed trade outcome for self-learning feedback.
+type TradeOutcomeRow struct {
+	Symbol     string
+	Decision   string
+	Confidence int
+	EntryPrice float64
+	ExitPrice  float64
+	PnLPct     float64
+	Timeframe  string
+	CreatedAt  time.Time
+}
+
+// RecentOutcomes fetches the most recent completed trade outcomes (decisions that
+// were executed and have a matching closed position with P&L).
+func (r *AIDecisionRepository) RecentOutcomes(ctx context.Context, limit int) ([]*TradeOutcomeRow, error) {
+	query := `
+		SELECT d.symbol, d.decision, d.confidence,
+		       COALESCE(d.entry_price, 0), COALESCE(p.exit_price, 0),
+		       COALESCE(p.realized_pnl / NULLIF(p.position_size, 0) * 100, 0) as pnl_pct,
+		       COALESCE(d.timeframe, '4h'),
+		       d.created_at
+		FROM ai_decisions d
+		JOIN positions p ON p.user_id = d.user_id AND p.symbol = d.symbol
+			AND p.status = 'CLOSED'
+			AND p.opened_at >= d.created_at - interval '1 minute'
+			AND p.opened_at <= d.created_at + interval '5 minutes'
+		WHERE d.was_executed = TRUE AND d.decision IN ('BUY', 'SELL')
+		ORDER BY d.created_at DESC
+		LIMIT $1`
+
+	rows, err := r.pool.Query(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query recent outcomes: %w", err)
+	}
+	defer rows.Close()
+
+	var results []*TradeOutcomeRow
+	for rows.Next() {
+		o := &TradeOutcomeRow{}
+		if err := rows.Scan(
+			&o.Symbol, &o.Decision, &o.Confidence,
+			&o.EntryPrice, &o.ExitPrice, &o.PnLPct,
+			&o.Timeframe, &o.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan outcome row: %w", err)
+		}
+		results = append(results, o)
+	}
+	return results, rows.Err()
+}

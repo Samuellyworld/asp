@@ -9,7 +9,7 @@ pub mod proto {
 use proto::technical_indicators_server::TechnicalIndicators;
 use proto::*;
 
-use crate::indicators::{bollinger, ema, macd, rsi, volume};
+use crate::indicators::{adx, atr, bollinger, ema, macd, regime, rsi, stochastic, volume};
 
 pub struct IndicatorService;
 
@@ -21,6 +21,16 @@ fn extract_closes(candles: &[Candle]) -> Vec<f64> {
 // extracts volumes from candle data
 fn extract_volumes(candles: &[Candle]) -> Vec<f64> {
     candles.iter().map(|c| c.volume).collect()
+}
+
+// extracts high prices from candle data
+fn extract_highs(candles: &[Candle]) -> Vec<f64> {
+    candles.iter().map(|c| c.high).collect()
+}
+
+// extracts low prices from candle data
+fn extract_lows(candles: &[Candle]) -> Vec<f64> {
+    candles.iter().map(|c| c.low).collect()
 }
 
 #[tonic::async_trait]
@@ -147,6 +157,107 @@ impl TechnicalIndicators for IndicatorService {
         }
     }
 
+    async fn calculate_atr(
+        &self,
+        request: Request<AtrRequest>,
+    ) -> Result<Response<AtrResponse>, Status> {
+        let req = request.into_inner();
+        let highs = extract_highs(&req.candles);
+        let lows = extract_lows(&req.candles);
+        let closes = extract_closes(&req.candles);
+        let period = if req.period > 0 { req.period as usize } else { 14 };
+
+        match atr::calculate(&highs, &lows, &closes, period) {
+            Some(result) => Ok(Response::new(AtrResponse {
+                value: result.value,
+                percent: result.percent,
+                signal: result.signal,
+                series: result.series,
+            })),
+            None => Err(Status::invalid_argument(
+                "insufficient data for atr calculation",
+            )),
+        }
+    }
+
+    async fn calculate_adx(
+        &self,
+        request: Request<AdxRequest>,
+    ) -> Result<Response<AdxResponse>, Status> {
+        let req = request.into_inner();
+        let highs = extract_highs(&req.candles);
+        let lows = extract_lows(&req.candles);
+        let closes = extract_closes(&req.candles);
+        let period = if req.period > 0 { req.period as usize } else { 14 };
+
+        match adx::calculate(&highs, &lows, &closes, period) {
+            Some(result) => Ok(Response::new(AdxResponse {
+                value: result.value,
+                plus_di: result.plus_di,
+                minus_di: result.minus_di,
+                signal: result.signal,
+                trend_dir: result.trend_dir,
+                series: result.series,
+            })),
+            None => Err(Status::invalid_argument(
+                "insufficient data for adx calculation",
+            )),
+        }
+    }
+
+    async fn calculate_stochastic(
+        &self,
+        request: Request<StochasticRequest>,
+    ) -> Result<Response<StochasticResponse>, Status> {
+        let req = request.into_inner();
+        let highs = extract_highs(&req.candles);
+        let lows = extract_lows(&req.candles);
+        let closes = extract_closes(&req.candles);
+        let k_period = if req.k_period > 0 { req.k_period as usize } else { 14 };
+        let d_period = if req.d_period > 0 { req.d_period as usize } else { 3 };
+        let smooth = if req.smooth > 0 { req.smooth as usize } else { 3 };
+
+        match stochastic::calculate(&highs, &lows, &closes, k_period, d_period, smooth) {
+            Some(result) => Ok(Response::new(StochasticResponse {
+                k: result.k,
+                d: result.d,
+                signal: result.signal,
+                k_series: result.k_series,
+                d_series: result.d_series,
+            })),
+            None => Err(Status::invalid_argument(
+                "insufficient data for stochastic calculation",
+            )),
+        }
+    }
+
+    async fn classify_regime(
+        &self,
+        request: Request<RegimeRequest>,
+    ) -> Result<Response<RegimeResponse>, Status> {
+        let req = request.into_inner();
+        let highs = extract_highs(&req.candles);
+        let lows = extract_lows(&req.candles);
+        let closes = extract_closes(&req.candles);
+        let period = if req.period > 0 { req.period as usize } else { 14 };
+
+        match regime::classify(&highs, &lows, &closes, period) {
+            Some(result) => Ok(Response::new(RegimeResponse {
+                regime: result.regime,
+                adx: result.adx,
+                atr_percent: result.atr_percent,
+                plus_di: result.plus_di,
+                minus_di: result.minus_di,
+                trend_dir: result.trend_dir,
+                confidence: result.confidence,
+                description: result.description,
+            })),
+            None => Err(Status::invalid_argument(
+                "insufficient data for regime classification",
+            )),
+        }
+    }
+
     async fn analyze_all(
         &self,
         request: Request<AnalyzeAllRequest>,
@@ -154,6 +265,8 @@ impl TechnicalIndicators for IndicatorService {
         let req = request.into_inner();
         let closes = extract_closes(&req.candles);
         let volumes = extract_volumes(&req.candles);
+        let highs = extract_highs(&req.candles);
+        let lows = extract_lows(&req.candles);
 
         // defaults
         let rsi_period = if req.rsi_period > 0 { req.rsi_period as usize } else { 14 };
@@ -171,6 +284,12 @@ impl TechnicalIndicators for IndicatorService {
         let macd_result = macd::calculate(&closes, macd_fast, macd_slow, macd_signal);
         let bb_result = bollinger::calculate(&closes, bb_period, bb_std_dev);
         let vol_result = volume::detect(&volumes, vol_lookback, vol_threshold);
+
+        // new indicators: atr, adx, stochastic, regime
+        let atr_result = atr::calculate(&highs, &lows, &closes, rsi_period);
+        let adx_result = adx::calculate(&highs, &lows, &closes, rsi_period);
+        let stochastic_result = stochastic::calculate(&highs, &lows, &closes, rsi_period, 3, 3);
+        let regime_result = regime::classify(&highs, &lows, &closes, rsi_period);
 
         let ema_series = if closes.len() >= ema_period {
             Some(ema::calculate(&closes, ema_period))
@@ -259,6 +378,55 @@ impl TechnicalIndicators for IndicatorService {
             }
         });
 
+        // stochastic adds to signal scoring
+        let stoch_resp = stochastic_result.map(|r| {
+            match r.signal.as_str() {
+                "OVERSOLD" | "BULLISH_CROSS" => bullish += 1,
+                "OVERBOUGHT" | "BEARISH_CROSS" => bearish += 1,
+                _ => {}
+            }
+            StochasticResponse {
+                k: r.k,
+                d: r.d,
+                signal: r.signal,
+                k_series: r.k_series,
+                d_series: r.d_series,
+            }
+        });
+
+        let atr_resp = atr_result.map(|r| {
+            AtrResponse {
+                value: r.value,
+                percent: r.percent,
+                signal: r.signal,
+                series: r.series,
+            }
+        });
+
+        let adx_resp = adx_result.map(|r| {
+            AdxResponse {
+                value: r.value,
+                plus_di: r.plus_di,
+                minus_di: r.minus_di,
+                signal: r.signal,
+                trend_dir: r.trend_dir,
+                series: r.series,
+            }
+        });
+
+        let regime_resp = regime_result.map(|r| {
+            RegimeResponse {
+                regime: r.regime,
+                adx: r.adx,
+                atr_percent: r.atr_percent,
+                plus_di: r.plus_di,
+                minus_di: r.minus_di,
+                trend_dir: r.trend_dir,
+                confidence: r.confidence,
+                description: r.description,
+            }
+        });
+
         let overall_signal = determine_overall_signal(bullish, bearish);
 
         Ok(Response::new(AnalyzeAllResponse {
@@ -270,6 +438,10 @@ impl TechnicalIndicators for IndicatorService {
             overall_signal,
             bullish_count: bullish,
             bearish_count: bearish,
+            atr: atr_resp,
+            adx: adx_resp,
+            stochastic: stoch_resp,
+            regime: regime_resp,
         }))
     }
 }

@@ -34,6 +34,10 @@ type AnalysisResult struct {
 	Bollinger     *BollingerResult
 	EMA           *EMAResult
 	Volume        *VolumeResult
+	ATR           *ATRResult
+	ADX           *ADXResult
+	Stochastic    *StochasticResult
+	Regime        *RegimeResult
 	OverallSignal string
 	BullishCount  int32
 	BearishCount  int32
@@ -85,6 +89,45 @@ type VolumeResult struct {
 	AverageVolume float64
 	Ratio         float64
 	Signal        string
+}
+
+// ATRResult holds average true range output
+type ATRResult struct {
+	Value   float64
+	Percent float64
+	Signal  string
+	Series  []float64
+}
+
+// ADXResult holds average directional index output
+type ADXResult struct {
+	Value    float64
+	PlusDI   float64
+	MinusDI  float64
+	Signal   string
+	TrendDir string
+	Series   []float64
+}
+
+// StochasticResult holds stochastic oscillator output
+type StochasticResult struct {
+	K       float64
+	D       float64
+	Signal  string
+	KSeries []float64
+	DSeries []float64
+}
+
+// RegimeResult holds market regime classification output
+type RegimeResult struct {
+	Regime      string
+	ADX         float64
+	ATRPercent  float64
+	PlusDI      float64
+	MinusDI     float64
+	TrendDir    string
+	Confidence  float64
+	Description string
 }
 
 // NewClient creates a new analysis client connected to the rust engine
@@ -227,6 +270,83 @@ func (c *Client) DetectVolumeSpike(ctx context.Context, candles []Candle, lookba
 	}, nil
 }
 
+// CalculateATR computes the average true range
+func (c *Client) CalculateATR(ctx context.Context, candles []Candle, period int32) (*ATRResult, error) {
+	resp, err := c.client.CalculateATR(ctx, &pb.ATRRequest{
+		Candles: toProtoCandles(candles),
+		Period:  period,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("atr calculation failed: %w", err)
+	}
+	return &ATRResult{
+		Value:   resp.Value,
+		Percent: resp.Percent,
+		Signal:  resp.Signal,
+		Series:  resp.Series,
+	}, nil
+}
+
+// CalculateADX computes the average directional index
+func (c *Client) CalculateADX(ctx context.Context, candles []Candle, period int32) (*ADXResult, error) {
+	resp, err := c.client.CalculateADX(ctx, &pb.ADXRequest{
+		Candles: toProtoCandles(candles),
+		Period:  period,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("adx calculation failed: %w", err)
+	}
+	return &ADXResult{
+		Value:    resp.Value,
+		PlusDI:   resp.PlusDi,
+		MinusDI:  resp.MinusDi,
+		Signal:   resp.Signal,
+		TrendDir: resp.TrendDir,
+		Series:   resp.Series,
+	}, nil
+}
+
+// CalculateStochastic computes the stochastic oscillator
+func (c *Client) CalculateStochastic(ctx context.Context, candles []Candle, kPeriod, dPeriod, smooth int32) (*StochasticResult, error) {
+	resp, err := c.client.CalculateStochastic(ctx, &pb.StochasticRequest{
+		Candles: toProtoCandles(candles),
+		KPeriod: kPeriod,
+		DPeriod: dPeriod,
+		Smooth:  smooth,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("stochastic calculation failed: %w", err)
+	}
+	return &StochasticResult{
+		K:       resp.K,
+		D:       resp.D,
+		Signal:  resp.Signal,
+		KSeries: resp.KSeries,
+		DSeries: resp.DSeries,
+	}, nil
+}
+
+// ClassifyRegime classifies the market regime
+func (c *Client) ClassifyRegime(ctx context.Context, candles []Candle, period int32) (*RegimeResult, error) {
+	resp, err := c.client.ClassifyRegime(ctx, &pb.RegimeRequest{
+		Candles: toProtoCandles(candles),
+		Period:  period,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("regime classification failed: %w", err)
+	}
+	return &RegimeResult{
+		Regime:      resp.Regime,
+		ADX:         resp.Adx,
+		ATRPercent:  resp.AtrPercent,
+		PlusDI:      resp.PlusDi,
+		MinusDI:     resp.MinusDi,
+		TrendDir:    resp.TrendDir,
+		Confidence:  resp.Confidence,
+		Description: resp.Description,
+	}, nil
+}
+
 // AnalyzeAll runs all indicators and returns a combined analysis
 func (c *Client) AnalyzeAll(ctx context.Context, candles []Candle, opts *AnalyzeOptions) (*AnalysisResult, error) {
 	if opts == nil {
@@ -301,6 +421,45 @@ func (c *Client) AnalyzeAll(ctx context.Context, candles []Candle, opts *Analyze
 			AverageVolume: resp.Volume.AverageVolume,
 			Ratio:         resp.Volume.Ratio,
 			Signal:        resp.Volume.Signal,
+		}
+	}
+	if resp.Atr != nil {
+		result.ATR = &ATRResult{
+			Value:   resp.Atr.Value,
+			Percent: resp.Atr.Percent,
+			Signal:  resp.Atr.Signal,
+			Series:  resp.Atr.Series,
+		}
+	}
+	if resp.Adx != nil {
+		result.ADX = &ADXResult{
+			Value:    resp.Adx.Value,
+			PlusDI:   resp.Adx.PlusDi,
+			MinusDI:  resp.Adx.MinusDi,
+			Signal:   resp.Adx.Signal,
+			TrendDir: resp.Adx.TrendDir,
+			Series:   resp.Adx.Series,
+		}
+	}
+	if resp.Stochastic != nil {
+		result.Stochastic = &StochasticResult{
+			K:       resp.Stochastic.K,
+			D:       resp.Stochastic.D,
+			Signal:  resp.Stochastic.Signal,
+			KSeries: resp.Stochastic.KSeries,
+			DSeries: resp.Stochastic.DSeries,
+		}
+	}
+	if resp.Regime != nil {
+		result.Regime = &RegimeResult{
+			Regime:      resp.Regime.Regime,
+			ADX:         resp.Regime.Adx,
+			ATRPercent:  resp.Regime.AtrPercent,
+			PlusDI:      resp.Regime.PlusDi,
+			MinusDI:     resp.Regime.MinusDi,
+			TrendDir:    resp.Regime.TrendDir,
+			Confidence:  resp.Regime.Confidence,
+			Description: resp.Regime.Description,
 		}
 	}
 

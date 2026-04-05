@@ -43,6 +43,11 @@ type AltDataProvider interface {
 	Fetch(ctx context.Context, symbol string) *claude.AltData
 }
 
+// provides recent trade outcomes for self-learning feedback
+type TradeHistoryProvider interface {
+	RecentOutcomes(ctx context.Context, limit int) ([]claude.TradeOutcome, error)
+}
+
 // holds the full analysis output from all services
 type Result struct {
 	Symbol     string
@@ -58,13 +63,14 @@ type Result struct {
 
 // orchestrates the analysis pipeline
 type Pipeline struct {
-	exchange   ExchangeProvider
-	indicators IndicatorProvider
-	ml         MLProvider
-	ai         AIProvider
-	altData    AltDataProvider
-	timeframe  string
-	timeframes []string // for multi-timeframe analysis
+	exchange     ExchangeProvider
+	indicators   IndicatorProvider
+	ml           MLProvider
+	ai           AIProvider
+	altData      AltDataProvider
+	tradeHistory TradeHistoryProvider
+	timeframe    string
+	timeframes   []string // for multi-timeframe analysis
 }
 
 // creates a new pipeline with all service clients
@@ -82,6 +88,11 @@ func New(ex ExchangeProvider, ind IndicatorProvider, ml MLProvider, ai AIProvide
 // SetAltData configures the alternative data provider.
 func (p *Pipeline) SetAltData(provider AltDataProvider) {
 	p.altData = provider
+}
+
+// SetTradeHistory configures the trade history provider for self-learning.
+func (p *Pipeline) SetTradeHistory(provider TradeHistoryProvider) {
+	p.tradeHistory = provider
 }
 
 // SetTimeframes configures multi-timeframe analysis.
@@ -193,6 +204,17 @@ func (p *Pipeline) Analyze(ctx context.Context, symbol string) (*Result, error) 
 	// step 4: feed everything to claude
 	aiInput := buildAIInput(symbol, ticker, candles, indicators, prediction, sentiment, altData)
 	aiInput.HTFContext = htfCtx
+
+	// self-learning: feed recent trade outcomes
+	if p.tradeHistory != nil {
+		outcomes, histErr := p.tradeHistory.RecentOutcomes(ctx, 10)
+		if histErr != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("trade_history: %v", histErr))
+		} else if len(outcomes) > 0 {
+			aiInput.TradeHistory = outcomes
+		}
+	}
+
 	decision, err := p.ai.Analyze(ctx, aiInput)
 	if err != nil {
 		return nil, fmt.Errorf("ai analysis failed: %w", err)
@@ -351,6 +373,21 @@ func buildAIInput(
 		if indicators.Volume != nil {
 			ind.VolumeSpike = indicators.Volume.IsSpike
 		}
+		if indicators.ATR != nil {
+			ind.ATR = indicators.ATR.Value
+			ind.ATRPercent = indicators.ATR.Percent
+			ind.ATRSignal = indicators.ATR.Signal
+		}
+		if indicators.ADX != nil {
+			ind.ADX = indicators.ADX.Value
+			ind.ADXSignal = indicators.ADX.Signal
+			ind.ADXTrendDir = indicators.ADX.TrendDir
+		}
+		if indicators.Stochastic != nil {
+			ind.StochK = indicators.Stochastic.K
+			ind.StochD = indicators.Stochastic.D
+			ind.StochSignal = indicators.Stochastic.Signal
+		}
 		input.Indicators = ind
 	}
 
@@ -373,8 +410,17 @@ func buildAIInput(
 
 	input.Costs = claude.DefaultTradingCosts()
 
-	// run regime detection on candle data
-	if len(candles) >= 28 {
+	// use rust engine regime data when available, fall back to go-side detection
+	if indicators != nil && indicators.Regime != nil {
+		input.Regime = &claude.RegimeInfo{
+			Regime:      indicators.Regime.Regime,
+			ADX:         indicators.Regime.ADX,
+			ATRPercent:  indicators.Regime.ATRPercent,
+			TrendDir:    indicators.Regime.TrendDir,
+			Confidence:  indicators.Regime.Confidence,
+			Description: indicators.Regime.Description,
+		}
+	} else if len(candles) >= 28 {
 		regimeCandles := exchangeToRegimeCandles(candles)
 		det := regime.Detect(regimeCandles, ticker.Price)
 		input.Regime = &claude.RegimeInfo{

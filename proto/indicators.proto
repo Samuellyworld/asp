@@ -96,6 +96,71 @@ message VolumeResponse {
   string signal = 5; // SPIKE, NORMAL, LOW
 }
 
+// atr
+
+message ATRRequest {
+  repeated Candle candles = 1;
+  int32 period = 2; // default 14
+}
+
+message ATRResponse {
+  double value = 1;
+  double percent = 2;        // atr as % of close
+  string signal = 3;         // HIGH, NORMAL, LOW
+  repeated double series = 4;
+}
+
+// adx
+
+message ADXRequest {
+  repeated Candle candles = 1;
+  int32 period = 2; // default 14
+}
+
+message ADXResponse {
+  double value = 1;           // adx 0-100
+  double plus_di = 2;         // +DI
+  double minus_di = 3;        // -DI
+  string signal = 4;          // STRONG_TREND, TRENDING, WEAK, NO_TREND
+  string trend_dir = 5;       // UP, DOWN, NEUTRAL
+  repeated double series = 6;
+}
+
+// stochastic
+
+message StochasticRequest {
+  repeated Candle candles = 1;
+  int32 k_period = 2;  // default 14
+  int32 d_period = 3;  // default 3
+  int32 smooth = 4;    // default 3
+}
+
+message StochasticResponse {
+  double k = 1;               // %K 0-100
+  double d = 2;               // %D 0-100
+  string signal = 3;          // OVERSOLD, NEUTRAL, OVERBOUGHT, BULLISH_CROSS, BEARISH_CROSS
+  repeated double k_series = 4;
+  repeated double d_series = 5;
+}
+
+// regime classification
+
+message RegimeRequest {
+  repeated Candle candles = 1;
+  int32 period = 2; // default 14
+}
+
+message RegimeResponse {
+  string regime = 1;          // trending, ranging, volatile, quiet
+  double adx = 2;
+  double atr_percent = 3;
+  double plus_di = 4;
+  double minus_di = 5;
+  string trend_dir = 6;       // UP, DOWN, NEUTRAL
+  double confidence = 7;      // 0-100
+  string description = 8;
+}
+
 // combined analysis
 
 message AnalyzeAllRequest {
@@ -120,6 +185,10 @@ message AnalyzeAllResponse {
   string overall_signal = 6;  // STRONG_BUY, BUY, NEUTRAL, SELL, STRONG_SELL
   int32 bullish_count = 7;
   int32 bearish_count = 8;
+  ATRResponse atr = 9;
+  ADXResponse adx = 10;
+  StochasticResponse stochastic = 11;
+  RegimeResponse regime = 12;
 }
 
 // grpc service
@@ -129,5 +198,9 @@ service TechnicalIndicators {
   rpc CalculateBollingerBands(BollingerRequest) returns (BollingerResponse);
   rpc CalculateEMA(EMARequest) returns (EMAResponse);
   rpc DetectVolumeSpike(VolumeRequest) returns (VolumeResponse);
+  rpc CalculateATR(ATRRequest) returns (ATRResponse);
+  rpc CalculateADX(ADXRequest) returns (ADXResponse);
+  rpc CalculateStochastic(StochasticRequest) returns (StochasticResponse);
+  rpc ClassifyRegime(RegimeRequest) returns (RegimeResponse);
   rpc AnalyzeAll(AnalyzeAllRequest) returns (AnalyzeAllResponse);
 }

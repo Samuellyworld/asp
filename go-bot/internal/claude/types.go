@@ -22,16 +22,25 @@ type MarketData struct {
 
 // technical indicators from the rust engine
 type Indicators struct {
-	RSI        float64 `json:"rsi"`
-	MACDValue  float64 `json:"macd_value"`
-	MACDSignal float64 `json:"macd_signal"`
-	MACDHist   float64 `json:"macd_histogram"`
-	BBUpper    float64 `json:"bb_upper"`
-	BBMiddle   float64 `json:"bb_middle"`
-	BBLower    float64 `json:"bb_lower"`
-	EMA12      float64 `json:"ema_12"`
-	EMA26      float64 `json:"ema_26"`
-	VolumeSpike bool   `json:"volume_spike"`
+	RSI           float64 `json:"rsi"`
+	MACDValue     float64 `json:"macd_value"`
+	MACDSignal    float64 `json:"macd_signal"`
+	MACDHist      float64 `json:"macd_histogram"`
+	BBUpper       float64 `json:"bb_upper"`
+	BBMiddle      float64 `json:"bb_middle"`
+	BBLower       float64 `json:"bb_lower"`
+	EMA12         float64 `json:"ema_12"`
+	EMA26         float64 `json:"ema_26"`
+	VolumeSpike   bool    `json:"volume_spike"`
+	ATR           float64 `json:"atr"`
+	ATRPercent    float64 `json:"atr_percent"`
+	ATRSignal     string  `json:"atr_signal"`
+	ADX           float64 `json:"adx"`
+	ADXSignal     string  `json:"adx_signal"`
+	ADXTrendDir   string  `json:"adx_trend_dir"`
+	StochK        float64 `json:"stoch_k"`
+	StochD        float64 `json:"stoch_d"`
+	StochSignal   string  `json:"stoch_signal"`
 }
 
 // ml predictions from the python service
@@ -82,14 +91,28 @@ type RegimeInfo struct {
 
 // bundles all context for claude to analyze
 type AnalysisInput struct {
-	Market     MarketData    `json:"market"`
-	Indicators *Indicators   `json:"indicators,omitempty"`
-	Prediction *MLPrediction `json:"prediction,omitempty"`
-	Sentiment  *Sentiment    `json:"sentiment,omitempty"`
-	Costs      *TradingCosts `json:"costs,omitempty"`
-	Regime     *RegimeInfo   `json:"regime,omitempty"`
-	AltData    *AltData      `json:"alt_data,omitempty"`       // alternative data sources
-	HTFContext []HTFSnapshot `json:"htf_context,omitempty"`    // higher-timeframe context
+	Market       MarketData    `json:"market"`
+	Indicators   *Indicators   `json:"indicators,omitempty"`
+	Prediction   *MLPrediction `json:"prediction,omitempty"`
+	Sentiment    *Sentiment    `json:"sentiment,omitempty"`
+	Costs        *TradingCosts `json:"costs,omitempty"`
+	Regime       *RegimeInfo   `json:"regime,omitempty"`
+	AltData      *AltData      `json:"alt_data,omitempty"`       // alternative data sources
+	HTFContext   []HTFSnapshot `json:"htf_context,omitempty"`    // higher-timeframe context
+	TradeHistory []TradeOutcome `json:"trade_history,omitempty"` // recent trade outcomes for learning
+}
+
+// TradeOutcome records the result of a past AI decision for self-learning
+type TradeOutcome struct {
+	Symbol     string  `json:"symbol"`
+	Action     string  `json:"action"`      // BUY, SELL, HOLD
+	EntryPrice float64 `json:"entry_price"`
+	ExitPrice  float64 `json:"exit_price"`
+	PnLPct     float64 `json:"pnl_pct"`     // realized P&L as %
+	Confidence float64 `json:"confidence"`   // original confidence 0-100
+	Correct    bool    `json:"correct"`      // whether the direction was right
+	Timeframe  string  `json:"timeframe"`
+	Timestamp  string  `json:"timestamp"`
 }
 
 // higher-timeframe snapshot for multi-timeframe confirmation

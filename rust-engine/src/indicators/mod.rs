@@ -1,5 +1,9 @@
+pub mod adx;
+pub mod atr;
 pub mod bollinger;
 pub mod ema;
 pub mod macd;
+pub mod regime;
 pub mod rsi;
+pub mod stochastic;
 pub mod volume;

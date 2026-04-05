@@ -278,3 +278,32 @@ func (a *altDataAdapter) Fetch(ctx context.Context, symbol string) *claude.AltDa
 
 	return result
 }
+
+// tradeHistoryAdapter bridges AIDecisionRepository to pipeline.TradeHistoryProvider.
+type tradeHistoryAdapter struct {
+	repo *database.AIDecisionRepository
+}
+
+func (a *tradeHistoryAdapter) RecentOutcomes(ctx context.Context, limit int) ([]claude.TradeOutcome, error) {
+	rows, err := a.repo.RecentOutcomes(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	outcomes := make([]claude.TradeOutcome, len(rows))
+	for i, r := range rows {
+		correct := (r.Decision == "BUY" && r.PnLPct > 0) || (r.Decision == "SELL" && r.PnLPct > 0)
+		outcomes[i] = claude.TradeOutcome{
+			Symbol:     r.Symbol,
+			Action:     r.Decision,
+			EntryPrice: r.EntryPrice,
+			ExitPrice:  r.ExitPrice,
+			PnLPct:     r.PnLPct,
+			Confidence: float64(r.Confidence),
+			Correct:    correct,
+			Timeframe:  r.Timeframe,
+			Timestamp:  r.CreatedAt.Format("2006-01-02 15:04"),
+		}
+	}
+	return outcomes, nil
+}

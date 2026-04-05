@@ -24,6 +24,10 @@ const (
 	TechnicalIndicators_CalculateBollingerBands_FullMethodName = "/indicators.TechnicalIndicators/CalculateBollingerBands"
 	TechnicalIndicators_CalculateEMA_FullMethodName            = "/indicators.TechnicalIndicators/CalculateEMA"
 	TechnicalIndicators_DetectVolumeSpike_FullMethodName       = "/indicators.TechnicalIndicators/DetectVolumeSpike"
+	TechnicalIndicators_CalculateATR_FullMethodName            = "/indicators.TechnicalIndicators/CalculateATR"
+	TechnicalIndicators_CalculateADX_FullMethodName            = "/indicators.TechnicalIndicators/CalculateADX"
+	TechnicalIndicators_CalculateStochastic_FullMethodName     = "/indicators.TechnicalIndicators/CalculateStochastic"
+	TechnicalIndicators_ClassifyRegime_FullMethodName          = "/indicators.TechnicalIndicators/ClassifyRegime"
 	TechnicalIndicators_AnalyzeAll_FullMethodName              = "/indicators.TechnicalIndicators/AnalyzeAll"
 )
 
@@ -38,6 +42,10 @@ type TechnicalIndicatorsClient interface {
 	CalculateBollingerBands(ctx context.Context, in *BollingerRequest, opts ...grpc.CallOption) (*BollingerResponse, error)
 	CalculateEMA(ctx context.Context, in *EMARequest, opts ...grpc.CallOption) (*EMAResponse, error)
 	DetectVolumeSpike(ctx context.Context, in *VolumeRequest, opts ...grpc.CallOption) (*VolumeResponse, error)
+	CalculateATR(ctx context.Context, in *ATRRequest, opts ...grpc.CallOption) (*ATRResponse, error)
+	CalculateADX(ctx context.Context, in *ADXRequest, opts ...grpc.CallOption) (*ADXResponse, error)
+	CalculateStochastic(ctx context.Context, in *StochasticRequest, opts ...grpc.CallOption) (*StochasticResponse, error)
+	ClassifyRegime(ctx context.Context, in *RegimeRequest, opts ...grpc.CallOption) (*RegimeResponse, error)
 	AnalyzeAll(ctx context.Context, in *AnalyzeAllRequest, opts ...grpc.CallOption) (*AnalyzeAllResponse, error)
 }
 
@@ -99,6 +107,46 @@ func (c *technicalIndicatorsClient) DetectVolumeSpike(ctx context.Context, in *V
 	return out, nil
 }
 
+func (c *technicalIndicatorsClient) CalculateATR(ctx context.Context, in *ATRRequest, opts ...grpc.CallOption) (*ATRResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ATRResponse)
+	err := c.cc.Invoke(ctx, TechnicalIndicators_CalculateATR_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *technicalIndicatorsClient) CalculateADX(ctx context.Context, in *ADXRequest, opts ...grpc.CallOption) (*ADXResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ADXResponse)
+	err := c.cc.Invoke(ctx, TechnicalIndicators_CalculateADX_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *technicalIndicatorsClient) CalculateStochastic(ctx context.Context, in *StochasticRequest, opts ...grpc.CallOption) (*StochasticResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StochasticResponse)
+	err := c.cc.Invoke(ctx, TechnicalIndicators_CalculateStochastic_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *technicalIndicatorsClient) ClassifyRegime(ctx context.Context, in *RegimeRequest, opts ...grpc.CallOption) (*RegimeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RegimeResponse)
+	err := c.cc.Invoke(ctx, TechnicalIndicators_ClassifyRegime_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *technicalIndicatorsClient) AnalyzeAll(ctx context.Context, in *AnalyzeAllRequest, opts ...grpc.CallOption) (*AnalyzeAllResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AnalyzeAllResponse)
@@ -120,6 +168,10 @@ type TechnicalIndicatorsServer interface {
 	CalculateBollingerBands(context.Context, *BollingerRequest) (*BollingerResponse, error)
 	CalculateEMA(context.Context, *EMARequest) (*EMAResponse, error)
 	DetectVolumeSpike(context.Context, *VolumeRequest) (*VolumeResponse, error)
+	CalculateATR(context.Context, *ATRRequest) (*ATRResponse, error)
+	CalculateADX(context.Context, *ADXRequest) (*ADXResponse, error)
+	CalculateStochastic(context.Context, *StochasticRequest) (*StochasticResponse, error)
+	ClassifyRegime(context.Context, *RegimeRequest) (*RegimeResponse, error)
 	AnalyzeAll(context.Context, *AnalyzeAllRequest) (*AnalyzeAllResponse, error)
 	mustEmbedUnimplementedTechnicalIndicatorsServer()
 }
@@ -145,6 +197,18 @@ func (UnimplementedTechnicalIndicatorsServer) CalculateEMA(context.Context, *EMA
 }
 func (UnimplementedTechnicalIndicatorsServer) DetectVolumeSpike(context.Context, *VolumeRequest) (*VolumeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DetectVolumeSpike not implemented")
+}
+func (UnimplementedTechnicalIndicatorsServer) CalculateATR(context.Context, *ATRRequest) (*ATRResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CalculateATR not implemented")
+}
+func (UnimplementedTechnicalIndicatorsServer) CalculateADX(context.Context, *ADXRequest) (*ADXResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CalculateADX not implemented")
+}
+func (UnimplementedTechnicalIndicatorsServer) CalculateStochastic(context.Context, *StochasticRequest) (*StochasticResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CalculateStochastic not implemented")
+}
+func (UnimplementedTechnicalIndicatorsServer) ClassifyRegime(context.Context, *RegimeRequest) (*RegimeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ClassifyRegime not implemented")
 }
 func (UnimplementedTechnicalIndicatorsServer) AnalyzeAll(context.Context, *AnalyzeAllRequest) (*AnalyzeAllResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AnalyzeAll not implemented")
@@ -260,6 +324,78 @@ func _TechnicalIndicators_DetectVolumeSpike_Handler(srv interface{}, ctx context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _TechnicalIndicators_CalculateATR_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ATRRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TechnicalIndicatorsServer).CalculateATR(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TechnicalIndicators_CalculateATR_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TechnicalIndicatorsServer).CalculateATR(ctx, req.(*ATRRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TechnicalIndicators_CalculateADX_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ADXRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TechnicalIndicatorsServer).CalculateADX(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TechnicalIndicators_CalculateADX_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TechnicalIndicatorsServer).CalculateADX(ctx, req.(*ADXRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TechnicalIndicators_CalculateStochastic_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StochasticRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TechnicalIndicatorsServer).CalculateStochastic(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TechnicalIndicators_CalculateStochastic_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TechnicalIndicatorsServer).CalculateStochastic(ctx, req.(*StochasticRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _TechnicalIndicators_ClassifyRegime_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RegimeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TechnicalIndicatorsServer).ClassifyRegime(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TechnicalIndicators_ClassifyRegime_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TechnicalIndicatorsServer).ClassifyRegime(ctx, req.(*RegimeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _TechnicalIndicators_AnalyzeAll_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AnalyzeAllRequest)
 	if err := dec(in); err != nil {
@@ -304,6 +440,22 @@ var TechnicalIndicators_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DetectVolumeSpike",
 			Handler:    _TechnicalIndicators_DetectVolumeSpike_Handler,
+		},
+		{
+			MethodName: "CalculateATR",
+			Handler:    _TechnicalIndicators_CalculateATR_Handler,
+		},
+		{
+			MethodName: "CalculateADX",
+			Handler:    _TechnicalIndicators_CalculateADX_Handler,
+		},
+		{
+			MethodName: "CalculateStochastic",
+			Handler:    _TechnicalIndicators_CalculateStochastic_Handler,
+		},
+		{
+			MethodName: "ClassifyRegime",
+			Handler:    _TechnicalIndicators_ClassifyRegime_Handler,
 		},
 		{
 			MethodName: "AnalyzeAll",

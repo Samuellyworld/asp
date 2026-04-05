@@ -66,6 +66,11 @@ type ExecutorConfig struct {
 	Safety SafetyConfig
 }
 
+// records slippage observations for execution quality tracking
+type SlippageRecorder interface {
+	Record(symbol, side string, expectedPrice, actualPrice, quantity float64, isPaper bool) exchange.SlippageRecord
+}
+
 // executes real trades on the exchange with full safety validation
 type Executor struct {
 	mu        sync.RWMutex
@@ -78,6 +83,7 @@ type Executor struct {
 	breaker   *circuitbreaker.Breaker // nil if no circuit breaker configured
 	store     PositionStore           // nil if no persistence configured
 	trades    TradeLogger             // nil if no logging configured
+	slippage  SlippageRecorder        // nil if no slippage tracking configured
 	nextID    int
 }
 
@@ -104,6 +110,11 @@ func (e *Executor) SetStore(store PositionStore) {
 // SetTradeLogger configures trade record logging. Call before Start.
 func (e *Executor) SetTradeLogger(logger TradeLogger) {
 	e.trades = logger
+}
+
+// SetSlippageTracker configures slippage recording. Call before Start.
+func (e *Executor) SetSlippageTracker(tracker SlippageRecorder) {
+	e.slippage = tracker
 }
 
 // SetNextID sets the starting ID for new positions (used for recovery).
@@ -246,6 +257,12 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*LivePosition, error) 
 
 	e.positions[id] = pos
 	e.mu.Unlock()
+
+	// record slippage (expected from AI decision vs actual fill)
+	if e.slippage != nil && plan.Entry > 0 {
+		rec := e.slippage.Record(opp.Symbol, string(side), plan.Entry, mainOrder.AvgPrice, quantity, false)
+		slog.Debug("slippage recorded", "symbol", opp.Symbol, "bps", rec.SlippageBps)
+	}
 
 	// persist to database (best-effort — position is already on exchange)
 	if e.store != nil {

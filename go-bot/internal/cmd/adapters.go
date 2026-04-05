@@ -5,6 +5,7 @@ package cmd
 import (
 	"context"
 	"log"
+	"log/slog"
 	"time"
 
 	"github.com/trading-bot/go-bot/internal/binance"
@@ -306,4 +307,28 @@ func (a *tradeHistoryAdapter) RecentOutcomes(ctx context.Context, limit int) ([]
 		}
 	}
 	return outcomes, nil
+}
+
+// failedOrderAdapter implements livetrading.FailedOrderRecorder using FailedOrderRepository.
+type failedOrderAdapter struct {
+	repo *database.FailedOrderRepository
+}
+
+func (a *failedOrderAdapter) RecordFailedOrder(ctx context.Context, userID int, positionID, symbol, side, orderType string, quantity, price, stopPrice float64, tradeType, errorMsg string) error {
+	_, err := a.repo.Insert(ctx, &database.FailedOrder{
+		UserID:       userID,
+		PositionID:   positionID,
+		Symbol:       symbol,
+		Side:         side,
+		OrderType:    orderType,
+		Quantity:     quantity,
+		Price:        price,
+		StopPrice:    stopPrice,
+		TradeType:    tradeType,
+		ErrorMessage: errorMsg,
+	})
+	if err != nil {
+		slog.Error("failed to record failed order to dead-letter queue", "symbol", symbol, "error", err)
+	}
+	return err
 }

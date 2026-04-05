@@ -1,0 +1,79 @@
+# trading bot configuration
+# env vars override these values (e.g. DATABASE_HOST overrides database.host)
+
+database:
+  host: localhost
+  port: 5432
+  user: trading_bot
+  password: trading_bot_secret
+  name: trading_bot
+  sslmode: disable
+
+redis:
+  host: localhost
+  port: 6379
+  password: redis_secret
+  db: 0
+
+security:
+  # generate with: openssl rand -base64 32
+  master_key: ""
+
+telegram:
+  bot_token: ""
+
+discord:
+  bot_token: ""
+  application_id: ""
+
+whatsapp:
+  phone_number_id: ""
+  access_token: ""
+
+binance:
+  testnet: true
+  testnet_api_url: "https://testnet.binance.vision"
+  testnet_ws_url: "wss://testnet.binance.vision/ws"
+  mainnet_api_url: "https://api.binance.com"
+  mainnet_ws_url: "wss://stream.binance.com:9443/ws"
+  futures_testnet_api_url: "https://testnet.binancefuture.com"
+  futures_mainnet_api_url: "https://fapi.binance.com"
+
+claude:
+  api_key: ""
+  model: "claude-sonnet-4-20250514"
+  max_tokens: 4096
+
+rust_engine:
+  address: "localhost:50051"
+
+ml_service:
+  base_url: "http://localhost:8000"
+
+trading:
+  default_confidence_threshold: 80
+  max_daily_notifications: 10
+  scanner_interval_minutes: 5
+  opportunity_expiry_minutes: 15
+  timeframes: ["4h", "1d"]
+  drift_check_interval_minutes: 60
+
+leverage:
+  hard_max_leverage: 20
+  max_margin_per_trade: 500
+  liquidation_warning_pct: 10
+  liquidation_critical_pct: 5
+  liquidation_auto_close_pct: 2
+  monitor_interval_seconds: 30
+
+api:
+  enabled: true
+  key: ""
+  port: 0
+
+datasources:
+  cryptopanic_token: ""
+  coinglass_api_key: ""
+  coingecko_api_key: ""
+
+log_level: info

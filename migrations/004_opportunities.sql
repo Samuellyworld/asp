@@ -27,10 +27,10 @@ CREATE TABLE IF NOT EXISTS opportunities (
     resolved_at     TIMESTAMPTZ
 );
 
-CREATE INDEX idx_opportunities_user_id ON opportunities(user_id);
-CREATE INDEX idx_opportunities_status ON opportunities(status) WHERE status = 'pending';
-CREATE INDEX idx_opportunities_user_pending ON opportunities(user_id, status) WHERE status = 'pending';
-CREATE INDEX idx_opportunities_created_at ON opportunities(created_at);
+CREATE INDEX IF NOT EXISTS idx_opportunities_user_id ON opportunities(user_id);
+CREATE INDEX IF NOT EXISTS idx_opportunities_status ON opportunities(status) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_opportunities_user_pending ON opportunities(user_id, status) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_opportunities_created_at ON opportunities(created_at);
 
 -- slippage records for adaptive slippage model
 
@@ -46,5 +46,5 @@ CREATE TABLE IF NOT EXISTS slippage_records (
     recorded_at     TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_slippage_records_symbol ON slippage_records(symbol);
-CREATE INDEX idx_slippage_records_symbol_recent ON slippage_records(symbol, recorded_at DESC) WHERE is_paper = FALSE;
+CREATE INDEX IF NOT EXISTS idx_slippage_records_symbol ON slippage_records(symbol);
+CREATE INDEX IF NOT EXISTS idx_slippage_records_symbol_recent ON slippage_records(symbol, recorded_at DESC) WHERE is_paper = FALSE;

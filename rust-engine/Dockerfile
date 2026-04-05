@@ -1,6 +1,6 @@
 # rust engine dockerfile - technical indicators via grpc
 
-FROM rust:1.75-alpine AS builder
+FROM rust:1.85-alpine AS builder
 
 WORKDIR /app
 
@@ -8,15 +8,19 @@ WORKDIR /app
 RUN apk add --no-cache musl-dev protobuf-dev
 
 # Copy cargo files first for better caching
-COPY Cargo.toml Cargo.lock* ./
+COPY rust-engine/Cargo.toml rust-engine/Cargo.lock* ./
 
 # Create dummy main.rs for dependency caching
 RUN mkdir src && echo "fn main() {}" > src/main.rs
 RUN cargo build --release || true
 RUN rm -rf src
 
+# Copy proto file (needed by build.rs)
+COPY proto /proto
+
 # Copy actual source code
-COPY . .
+COPY rust-engine/src ./src
+COPY rust-engine/build.rs ./build.rs
 
 # Build the binary
 RUN cargo build --release

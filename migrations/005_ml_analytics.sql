@@ -17,8 +17,8 @@ CREATE TABLE IF NOT EXISTS ensemble_predictions (
     created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_ensemble_predictions_symbol ON ensemble_predictions(symbol, created_at DESC);
-CREATE INDEX idx_ensemble_predictions_created_at ON ensemble_predictions(created_at);
+CREATE INDEX IF NOT EXISTS idx_ensemble_predictions_symbol ON ensemble_predictions(symbol, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ensemble_predictions_created_at ON ensemble_predictions(created_at);
 
 -- pattern_detections — detected chart patterns
 CREATE TABLE IF NOT EXISTS pattern_detections (
@@ -35,8 +35,8 @@ CREATE TABLE IF NOT EXISTS pattern_detections (
     created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_pattern_detections_symbol ON pattern_detections(symbol, created_at DESC);
-CREATE INDEX idx_pattern_detections_pattern ON pattern_detections(pattern_name);
+CREATE INDEX IF NOT EXISTS idx_pattern_detections_symbol ON pattern_detections(symbol, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pattern_detections_pattern ON pattern_detections(pattern_name);
 
 -- drift_checks — concept drift monitoring log
 CREATE TABLE IF NOT EXISTS drift_checks (
@@ -48,8 +48,8 @@ CREATE TABLE IF NOT EXISTS drift_checks (
     checked_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_drift_checks_detected ON drift_checks(drift_detected, checked_at DESC);
-CREATE INDEX idx_drift_checks_at ON drift_checks(checked_at);
+CREATE INDEX IF NOT EXISTS idx_drift_checks_detected ON drift_checks(drift_detected, checked_at DESC);
+CREATE INDEX IF NOT EXISTS idx_drift_checks_at ON drift_checks(checked_at);
 
 -- retrain_runs — model retraining history
 CREATE TABLE IF NOT EXISTS retrain_runs (
@@ -67,8 +67,8 @@ CREATE TABLE IF NOT EXISTS retrain_runs (
     completed_at            TIMESTAMPTZ
 );
 
-CREATE INDEX idx_retrain_runs_promoted ON retrain_runs(promoted) WHERE promoted = TRUE;
-CREATE INDEX idx_retrain_runs_at ON retrain_runs(started_at);
+CREATE INDEX IF NOT EXISTS idx_retrain_runs_promoted ON retrain_runs(promoted) WHERE promoted = TRUE;
+CREATE INDEX IF NOT EXISTS idx_retrain_runs_at ON retrain_runs(started_at);
 
 -- autotuner_snapshots — per-regime parameter tuning state
 CREATE TABLE IF NOT EXISTS autotuner_snapshots (
@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS autotuner_snapshots (
     created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_autotuner_regime ON autotuner_snapshots(regime, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_autotuner_regime ON autotuner_snapshots(regime, created_at DESC);
 
 -- rl_training_episodes — RL agent training history
 CREATE TABLE IF NOT EXISTS rl_training_episodes (
@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS rl_training_episodes (
     completed_at        TIMESTAMPTZ
 );
 
-CREATE INDEX idx_rl_episodes_at ON rl_training_episodes(started_at);
+CREATE INDEX IF NOT EXISTS idx_rl_episodes_at ON rl_training_episodes(started_at);
 
 -- walk_forward_runs — walk-forward validation results
 CREATE TABLE IF NOT EXISTS walk_forward_runs (
@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS walk_forward_runs (
     created_at              TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_walk_forward_at ON walk_forward_runs(created_at);
+CREATE INDEX IF NOT EXISTS idx_walk_forward_at ON walk_forward_runs(created_at);
 
 -- slippage_records — execution quality tracking (expected vs actual fill)
 CREATE TABLE IF NOT EXISTS slippage_records (
@@ -131,5 +131,5 @@ CREATE TABLE IF NOT EXISTS slippage_records (
     recorded_at         TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_slippage_symbol ON slippage_records(symbol, recorded_at DESC);
-CREATE INDEX idx_slippage_user ON slippage_records(user_id) WHERE user_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_slippage_symbol ON slippage_records(symbol, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_slippage_user ON slippage_records(user_id) WHERE user_id IS NOT NULL;

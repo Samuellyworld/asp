@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"github.com/trading-bot/go-bot/internal/database"
 )
 
 type healthStatus struct {
@@ -21,6 +22,7 @@ type healthStatus struct {
 type healthServer struct {
 	pg         *pgxpool.Pool
 	redis      *redis.Client
+	dbBreaker  *database.DBCircuitBreaker
 	startAt    time.Time
 	binanceURL string // optional: Binance API base URL for health check
 	mlURL      string // optional: ML service base URL for health check
@@ -36,6 +38,7 @@ func newHealthServer(pg *pgxpool.Pool, redis *redis.Client) *healthServer {
 
 func (h *healthServer) SetBinanceURL(url string) { h.binanceURL = url }
 func (h *healthServer) SetMLURL(url string)      { h.mlURL = url }
+func (h *healthServer) SetDBBreaker(b *database.DBCircuitBreaker) { h.dbBreaker = b }
 
 func (h *healthServer) start(addr string) (*http.ServeMux, *http.Server) {
 	mux := http.NewServeMux()
@@ -89,8 +92,14 @@ func (h *healthServer) handleReady(w http.ResponseWriter, r *http.Request) {
 		if err := h.pg.Ping(ctx); err != nil {
 			status.Services["postgres"] = "down"
 			allHealthy = false
+			if h.dbBreaker != nil {
+				h.dbBreaker.RecordFailure()
+			}
 		} else {
 			status.Services["postgres"] = "up"
+			if h.dbBreaker != nil {
+				h.dbBreaker.RecordSuccess()
+			}
 		}
 	}
 

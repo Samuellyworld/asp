@@ -83,6 +83,7 @@ type Handler struct {
 	exchange  exchangeClient
 	trading   *TradingDeps // optional, set via SetTradingDeps
 	limiter   *rateLimiter
+	testnet   bool
 }
 
 func NewHandler(
@@ -102,6 +103,11 @@ func NewHandler(
 		exchange: exch,
 		limiter:  newRateLimiter(5, 1*time.Minute), // 5 expensive commands per minute per user
 	}
+}
+
+// SetTestnet configures whether the bot shows testnet URLs and instructions.
+func (h *Handler) SetTestnet(testnet bool) {
+	h.testnet = testnet
 }
 
 //  routes an incoming update to the appropriate handler
@@ -249,6 +255,16 @@ func (h *Handler) handleSetup(ctx context.Context, msg *Message, telegramID int6
 	// start the wizard
 	h.wizard.Start(telegramID, result.User.ID)
 
+	var setupURL, modeNote string
+	if h.testnet {
+		setupURL = "https://testnet.binance.vision"
+		modeNote = "\n🧪 *testnet mode* — using binance testnet (fake money).\n" +
+			"go to the url above → log in with github → generate HMAC_SHA256 key.\n\n"
+	} else {
+		setupURL = "https://www.binance.com/en/my/settings/api-management"
+		modeNote = "\n"
+	}
+
 	h.send(chatID,
 		"🔐 *binance api key setup*\n\n"+
 			"i'll walk you through connecting your binance account.\n\n"+
@@ -256,7 +272,8 @@ func (h *Handler) handleSetup(ctx context.Context, msg *Message, telegramID int6
 			"• create keys with *only spot and/or futures* trading enabled\n"+
 			"• *do NOT enable withdrawal* permission\n"+
 			"• keys with withdrawal permission will be rejected\n\n"+
-			"create your api keys at:\nhttps://www.binance.com/en/my/settings/api-management\n\n"+
+			"create your api keys at:\n"+setupURL+"\n"+
+			modeNote+
 			"*step 1/2*: please send your *api key*\n\n"+
 			"type /cancel to abort setup.",
 	)

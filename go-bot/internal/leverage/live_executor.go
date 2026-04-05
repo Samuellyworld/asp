@@ -40,7 +40,9 @@ type LiveExecutor struct {
 	safety    *SafetyChecker
 	funding   *FundingTracker
 	prices    MarkPriceProvider
-	breaker   *circuitbreaker.Breaker // nil if no circuit breaker configured
+	breaker   *circuitbreaker.Breaker       // nil if no circuit breaker configured
+	store     LeveragePositionStore          // nil if no persistence configured
+	trades    LeverageTradeLogger            // nil if no logging configured
 	nextID    int
 }
 
@@ -65,6 +67,30 @@ func NewLiveExecutor(
 // SetCircuitBreaker configures portfolio circuit breaker.
 func (e *LiveExecutor) SetCircuitBreaker(b *circuitbreaker.Breaker) {
 	e.breaker = b
+}
+
+// SetStore configures position persistence. Call before Start.
+func (e *LiveExecutor) SetStore(store LeveragePositionStore) {
+	e.store = store
+}
+
+// SetTradeLogger configures trade record logging. Call before Start.
+func (e *LiveExecutor) SetTradeLogger(logger LeverageTradeLogger) {
+	e.trades = logger
+}
+
+// SetNextID sets the starting ID for new positions (used for recovery).
+func (e *LiveExecutor) SetNextID(id int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.nextID = id
+}
+
+// RestorePosition adds a recovered position back into the in-memory map (startup only).
+func (e *LiveExecutor) RestorePosition(pos *LeveragePosition) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.positions[pos.ID] = pos
 }
 
 // opens a live leveraged position on binance futures.
@@ -240,6 +266,24 @@ func (e *LiveExecutor) OpenPosition(
 	e.positions[id] = pos
 	e.mu.Unlock()
 
+	// persist to database (best-effort — position is already on exchange)
+	if e.store != nil {
+		dbCtx, dbCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := e.store.SavePosition(dbCtx, pos); err != nil {
+			slog.Error("failed to persist live leverage position", "id", id, "error", err)
+		}
+		dbCancel()
+	}
+
+	// log trade open record (best-effort)
+	if e.trades != nil {
+		dbCtx, dbCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := e.trades.LogOpen(dbCtx, pos); err != nil {
+			slog.Error("failed to log live leverage trade open", "id", id, "error", err)
+		}
+		dbCancel()
+	}
+
 	return pos, nil
 }
 
@@ -334,6 +378,24 @@ func (e *LiveExecutor) Close(posID string, reason string) (*LeveragePosition, er
 	}
 	delete(e.positions, posID)
 	e.mu.Unlock()
+
+	// persist to database (best-effort)
+	if e.store != nil {
+		dbCtx, dbCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := e.store.ClosePosition(dbCtx, pos); err != nil {
+			slog.Error("failed to persist live leverage position close", "id", posID, "error", err)
+		}
+		dbCancel()
+	}
+
+	// log trade close record (best-effort)
+	if e.trades != nil {
+		dbCtx, dbCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := e.trades.LogClose(dbCtx, pos); err != nil {
+			slog.Error("failed to log live leverage trade close", "id", posID, "error", err)
+		}
+		dbCancel()
+	}
 
 	return pos, nil
 }

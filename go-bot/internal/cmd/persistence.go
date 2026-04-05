@@ -505,6 +505,50 @@ func (a *liveTradeLoggerAdapter) LogClose(ctx context.Context, pos *livetrading.
 	return nil
 }
 
+// implements leverage.LeveragePositionStore for live leverage positions
+type liveLeveragePositionStoreAdapter struct {
+	repo *database.PositionRepository
+}
+
+func (a *liveLeveragePositionStoreAdapter) SavePosition(ctx context.Context, pos *leverage.LeveragePosition) error {
+	p := &database.PersistedPosition{
+		InternalID:       pos.ID,
+		UserID:           pos.UserID,
+		Symbol:           pos.Symbol,
+		Side:             string(pos.Side),
+		PositionType:     "FUTURES",
+		Status:           "OPEN",
+		EntryPrice:       pos.EntryPrice,
+		MarkPrice:        pos.MarkPrice,
+		Quantity:         pos.Quantity,
+		Margin:           pos.Margin,
+		NotionalValue:    pos.NotionalValue,
+		Leverage:         pos.Leverage,
+		StopLoss:         pos.StopLoss,
+		TakeProfit:       pos.TakeProfit,
+		LiquidationPrice: pos.LiquidationPrice,
+		FundingPaid:      pos.FundingPaid,
+		MarginType:       pos.MarginType,
+		IsPaper:          false,
+		Platform:         pos.Platform,
+		OpenedAt:         pos.OpenedAt,
+	}
+	return a.repo.Insert(ctx, p)
+}
+
+func (a *liveLeveragePositionStoreAdapter) ClosePosition(ctx context.Context, pos *leverage.LeveragePosition) error {
+	closedAt := time.Now()
+	if pos.ClosedAt != nil {
+		closedAt = *pos.ClosedAt
+	}
+	return a.repo.UpdateClose(ctx, pos.ID, "CLOSED", pos.CloseReason,
+		pos.ClosePrice, pos.PnL, pos.FundingPaid, closedAt)
+}
+
+func (a *liveLeveragePositionStoreAdapter) AdjustPosition(ctx context.Context, posID string, sl, tp float64) error {
+	return a.repo.UpdateSLTP(ctx, posID, sl, tp)
+}
+
 // recoverLivePositions loads open non-paper SPOT positions from the database
 // and restores them into the live executor's in-memory map.
 func recoverLivePositions(ctx context.Context, repo *database.PositionRepository, executor *livetrading.Executor) error {
@@ -545,6 +589,53 @@ func recoverLivePositions(ctx context.Context, repo *database.PositionRepository
 
 	if len(rows) > 0 {
 		slog.Info("live position recovery complete", "count", len(rows))
+	}
+	return nil
+}
+
+// recoverLiveLeveragePositions loads open non-paper FUTURES positions from the database
+// and restores them into the live leverage executor's in-memory map.
+func recoverLiveLeveragePositions(ctx context.Context, repo *database.PositionRepository, executor *leverage.LiveExecutor) error {
+	rows, err := repo.LoadOpenLiveFutures(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load open live leverage positions: %w", err)
+	}
+
+	for _, r := range rows {
+		pos := &leverage.LeveragePosition{
+			ID:               r.InternalID,
+			UserID:           r.UserID,
+			Symbol:           r.Symbol,
+			Side:             leverage.PositionSide(r.Side),
+			Leverage:         r.Leverage,
+			EntryPrice:       r.EntryPrice,
+			MarkPrice:        r.MarkPrice,
+			Quantity:         r.Quantity,
+			Margin:           r.Margin,
+			NotionalValue:    r.NotionalValue,
+			LiquidationPrice: r.LiquidationPrice,
+			StopLoss:         r.StopLoss,
+			TakeProfit:       r.TakeProfit,
+			FundingPaid:      r.FundingPaid,
+			MarginType:       r.MarginType,
+			IsPaper:          false,
+			Status:           "open",
+			OpenedAt:         r.OpenedAt,
+			Platform:         r.Platform,
+		}
+		executor.RestorePosition(pos)
+		slog.Info("recovered live leverage position", "id", r.InternalID, "symbol", r.Symbol)
+	}
+
+	// resume ID generation
+	maxID, err := repo.MaxInternalID(ctx, "lev_")
+	if err != nil {
+		return fmt.Errorf("failed to get max live leverage position ID: %w", err)
+	}
+	executor.SetNextID(maxID + 1)
+
+	if len(rows) > 0 {
+		slog.Info("live leverage position recovery complete", "count", len(rows))
 	}
 	return nil
 }

@@ -1,6 +1,6 @@
 # go bot dockerfile - main orchestrator
 
-FROM golang:1.22-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
 
@@ -36,4 +36,4 @@ USER appuser
 EXPOSE 8080
 
 ENTRYPOINT ["/app/bot"]
-CMD ["serve"]
+CMD ["run"]

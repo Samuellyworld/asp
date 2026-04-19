@@ -248,6 +248,12 @@ func (h *Handler) handleLiveMode(ctx context.Context, args string, telegramID in
 	}
 	userID := result.User.ID
 
+	exchangeName, err := h.userSvc.GetPrimaryCredentialExchange(ctx, userID)
+	if err == nil && exchangeName != "binance" {
+		h.send(chatID, livetrading.FormatUnsupportedSpotExchange(exchangeName))
+		return
+	}
+
 	input := strings.TrimSpace(args)
 	if input == "" {
 		// show prompt or status

@@ -13,35 +13,35 @@ import (
 
 // user represents a row in the users table
 type User struct {
-	ID               int
-	UUID             string
-	TelegramID       *int64
-	DiscordID        *int64
-	WhatsAppID       *string
-	Username         *string
-	IsActivated      bool
-	IsBanned         bool
-	TradingMode      string
-	LeverageEnabled  bool
+	ID                int
+	UUID              string
+	TelegramID        *int64
+	DiscordID         *int64
+	WhatsAppID        *string
+	Username          *string
+	IsActivated       bool
+	IsBanned          bool
+	TradingMode       string
+	LeverageEnabled   bool
 	LastActiveChannel *string
-	LastActiveAt     *time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	LastActiveAt      *time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 // credentials represents a row in user_api_credentials
 type Credentials struct {
-	ID                int
-	UserID            int
-	Exchange          string
-	APIKeyEncrypted   []byte
+	ID                 int
+	UserID             int
+	Exchange           string
+	APIKeyEncrypted    []byte
 	APISecretEncrypted []byte
-	Salt              []byte
-	Permissions       map[string]bool
-	IsTestnet         bool
-	IsValid           bool
-	LastValidatedAt   *time.Time
-	CreatedAt         time.Time
+	Salt               []byte
+	Permissions        map[string]bool
+	IsTestnet          bool
+	IsValid            bool
+	LastValidatedAt    *time.Time
+	CreatedAt          time.Time
 }
 
 // repository handles user database operations
@@ -182,6 +182,37 @@ func (r *Repository) GetCredentials(ctx context.Context, userID int, exchange st
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get credentials: %w", err)
+	}
+
+	if err := json.Unmarshal(permsJSON, &c.Permissions); err != nil {
+		return nil, fmt.Errorf("failed to parse permissions: %w", err)
+	}
+
+	return c, nil
+}
+
+// getPrimaryCredentials retrieves the most recently validated valid credentials for a user.
+func (r *Repository) GetPrimaryCredentials(ctx context.Context, userID int) (*Credentials, error) {
+	query := `
+		SELECT id, user_id, exchange, api_key_encrypted, api_secret_encrypted,
+			   salt, permissions, is_testnet, is_valid, last_validated_at, created_at
+		FROM user_api_credentials
+		WHERE user_id = $1 AND is_valid = TRUE
+		ORDER BY last_validated_at DESC NULLS LAST, created_at DESC
+		LIMIT 1
+	`
+
+	c := &Credentials{}
+	var permsJSON []byte
+	err := r.pool.QueryRow(ctx, query, userID).Scan(
+		&c.ID, &c.UserID, &c.Exchange, &c.APIKeyEncrypted, &c.APISecretEncrypted,
+		&c.Salt, &permsJSON, &c.IsTestnet, &c.IsValid, &c.LastValidatedAt, &c.CreatedAt,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get primary credentials: %w", err)
 	}
 
 	if err := json.Unmarshal(permsJSON, &c.Permissions); err != nil {

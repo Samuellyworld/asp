@@ -233,6 +233,12 @@ func (h *Handler) handleLiveMode(ctx context.Context, interaction *Interaction) 
 		return
 	}
 
+	exchangeName, err := h.userSvc.GetPrimaryCredentialExchange(ctx, userID)
+	if err == nil && exchangeName != "binance" {
+		h.respondEphemeral(interaction, livetrading.FormatUnsupportedSpotExchange(exchangeName))
+		return
+	}
+
 	input := getOption(interaction, "confirmation")
 	if input == "" {
 		if h.trading.Confirm.IsConfirmed(userID) {

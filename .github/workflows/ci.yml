@@ -8,7 +8,7 @@ on:
 
 jobs:
   go-test:
-    name: Go Tests
+    name: Go Bot Tests
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -63,7 +63,7 @@ jobs:
         run: go build -o /dev/null ./cmd/bot
 
   rust-test:
-    name: Rust Tests
+    name: Rust Indicator Engine Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -89,7 +89,7 @@ jobs:
         run: cargo build --release
 
   python-test:
-    name: Python Tests
+    name: Python ML Service Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -165,10 +165,12 @@ jobs:
           cache-to: type=gha,mode=max
 
   lint:
-    name: Lint
+    name: Go Bot Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -178,6 +180,6 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v1.64.8
           working-directory: go-bot
-          args: --timeout=5m
+          args: --timeout=5m --new-from-rev=HEAD~1

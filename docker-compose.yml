@@ -82,6 +82,9 @@ services:
       - BINANCE_MAINNET_WS_URL=wss://stream.binance.com:9443/ws
       - BINANCE_FUTURES_TESTNET_API_URL=https://testnet.binancefuture.com
       - BINANCE_FUTURES_MAINNET_API_URL=https://fapi.binance.com
+      - BYBIT_TESTNET=${BYBIT_TESTNET:-true}
+      - BYBIT_TESTNET_API_URL=https://api-testnet.bybit.com
+      - BYBIT_MAINNET_API_URL=https://api.bybit.com
       - RUST_ENGINE_ADDRESS=rust-engine:50051
       - ML_SERVICE_BASE_URL=http://ml-service:8000
       - DATASOURCES_CRYPTOPANIC_TOKEN=${DATASOURCES_CRYPTOPANIC_TOKEN}

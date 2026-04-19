@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+const supportedLiveSpotExchange = "binance"
+
 // formats a live trade execution notification with order ids
 func FormatTradeExecuted(pos *LivePosition) string {
 	var b strings.Builder
@@ -133,6 +135,21 @@ func FormatConfirmPrompt(config SafetyConfig) string {
 func FormatConfirmSuccess(config SafetyConfig) string {
 	return fmt.Sprintf("✅ Live mode ON | Max pos: $%.0f | Daily loss limit: $%.0f",
 		config.MaxPositionSize, config.DailyLossLimit)
+}
+
+// formats the refusal shown when live spot trading is requested for an
+// exchange the runtime does not route explicitly yet.
+func FormatUnsupportedSpotExchange(exchangeName string) string {
+	exchangeName = strings.TrimSpace(strings.ToLower(exchangeName))
+	if exchangeName == "" {
+		exchangeName = "this exchange"
+	}
+	return fmt.Sprintf(
+		"real %s live spot trading is disabled right now. the live runtime still assumes %s routing and quantity sizing. use paper trading or connect %s spot credentials before enabling live mode.",
+		exchangeName,
+		supportedLiveSpotExchange,
+		supportedLiveSpotExchange,
+	)
 }
 
 // formats a safety check failure message

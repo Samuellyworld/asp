@@ -11,10 +11,10 @@ import (
 
 // mock user repository
 type mockUserRepo struct {
-	users          map[int64]*User
-	discordUsers   map[int64]*User
-	credentials    map[int]*Credentials
-	nextID         int
+	users        map[int64]*User
+	discordUsers map[int64]*User
+	credentials  map[int]*Credentials
+	nextID       int
 
 	findErr        error
 	findDiscordErr error
@@ -141,6 +141,13 @@ func (m *mockUserRepo) HasValidCredentials(_ context.Context, userID int) (bool,
 }
 
 func (m *mockUserRepo) GetCredentials(_ context.Context, userID int, _ string) (*Credentials, error) {
+	if m.getCredErr != nil {
+		return nil, m.getCredErr
+	}
+	return m.credentials[userID], nil
+}
+
+func (m *mockUserRepo) GetPrimaryCredentials(_ context.Context, userID int) (*Credentials, error) {
 	if m.getCredErr != nil {
 		return nil, m.getCredErr
 	}
@@ -480,6 +487,44 @@ func TestSetupAPIKeys_CredentialsStoredCorrectly(t *testing.T) {
 	}
 	if len(cred.Salt) == 0 {
 		t.Error("expected salt to be non-empty")
+	}
+}
+
+func TestSetupExchangeAPIKeys_BybitCredentialsStored(t *testing.T) {
+	repo := newMockUserRepo()
+	binanceValidator := &mockValidator{
+		perms: &binance.APIPermissions{Spot: true, Futures: false, Withdraw: false},
+	}
+	bybitValidator := &mockValidator{
+		perms: &binance.APIPermissions{Spot: true, Futures: true, Withdraw: false},
+	}
+	svc := newTestService(repo, binanceValidator, &mockEncryptor{})
+	svc.RegisterKeyValidator("bybit", bybitValidator)
+
+	result, err := svc.SetupExchangeAPIKeys(context.Background(), 1, "bybit", "api-key", "api-secret")
+	if err != nil {
+		t.Fatalf("SetupExchangeAPIKeys() error: %v", err)
+	}
+	if result.Exchange != "bybit" {
+		t.Errorf("result exchange = %q, want bybit", result.Exchange)
+	}
+
+	cred, ok := repo.credentials[1]
+	if !ok {
+		t.Fatal("expected credentials to be stored for user 1")
+	}
+	if cred.Exchange != "bybit" {
+		t.Errorf("stored exchange = %q, want bybit", cred.Exchange)
+	}
+}
+
+func TestSetupExchangeAPIKeys_UnsupportedExchange(t *testing.T) {
+	repo := newMockUserRepo()
+	svc := newTestService(repo, &mockValidator{}, &mockEncryptor{})
+
+	_, err := svc.SetupExchangeAPIKeys(context.Background(), 1, "okx", "api-key", "api-secret")
+	if err == nil {
+		t.Fatal("expected unsupported exchange error")
 	}
 }
 

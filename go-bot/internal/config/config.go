@@ -10,21 +10,22 @@ import (
 
 // holds all application configuration
 type Config struct {
-	Database   DatabaseConfig
-	Redis      RedisConfig
-	Security   SecurityConfig
-	Telegram   TelegramConfig
-	Discord    DiscordConfig
-	WhatsApp   WhatsAppConfig
-	Binance    BinanceConfig
-	Claude     ClaudeConfig
-	Trading    TradingConfig
-	RustEngine RustEngineConfig
-	MLService  MLServiceConfig
-	Leverage   LeverageConfig
-	API        APIConfig
+	Database    DatabaseConfig
+	Redis       RedisConfig
+	Security    SecurityConfig
+	Telegram    TelegramConfig
+	Discord     DiscordConfig
+	WhatsApp    WhatsAppConfig
+	Binance     BinanceConfig
+	Bybit       BybitConfig
+	Claude      ClaudeConfig
+	Trading     TradingConfig
+	RustEngine  RustEngineConfig
+	MLService   MLServiceConfig
+	Leverage    LeverageConfig
+	API         APIConfig
 	DataSources DataSourcesConfig
-	LogLevel   string
+	LogLevel    string
 }
 
 // holds external data source API keys
@@ -34,7 +35,7 @@ type DataSourcesConfig struct {
 	CoinGeckoAPIKey  string // optional — empty for free tier
 }
 
-//holds postgres connection settings
+// holds postgres connection settings
 type DatabaseConfig struct {
 	Host     string
 	Port     int
@@ -50,7 +51,7 @@ func (d DatabaseConfig) DSN() string {
 		d.User, d.Password, d.Host, d.Port, d.Name, d.SSLMode)
 }
 
-//  holds redis connection settings
+// holds redis connection settings
 type RedisConfig struct {
 	Host     string
 	Port     int
@@ -75,13 +76,13 @@ type APIConfig struct {
 	Port    int    // port for the API server (0 = same as health on :8080)
 }
 
-//  holds telegram bot settings
+// holds telegram bot settings
 type TelegramConfig struct {
 	BotToken    string
 	AdminChatID int64 // admin telegram chat ID for infra alerts (0 = skip)
 }
 
-//  holds discord bot settings
+// holds discord bot settings
 type DiscordConfig struct {
 	BotToken      string
 	ApplicationID string
@@ -93,7 +94,7 @@ type WhatsAppConfig struct {
 	AccessToken   string
 }
 
-//  holds binance api settings
+// holds binance api settings
 type BinanceConfig struct {
 	Testnet              bool
 	TestnetAPIURL        string
@@ -102,6 +103,21 @@ type BinanceConfig struct {
 	MainnetWSURL         string
 	FuturesTestnetAPIURL string
 	FuturesMainnetAPIURL string
+}
+
+// holds bybit api settings
+type BybitConfig struct {
+	Testnet       bool
+	TestnetAPIURL string
+	MainnetAPIURL string
+}
+
+// returns the appropriate bybit api url based on testnet setting
+func (b BybitConfig) APIURL() string {
+	if b.Testnet {
+		return b.TestnetAPIURL
+	}
+	return b.MainnetAPIURL
 }
 
 // returns the appropriate binance api url based on testnet setting
@@ -120,7 +136,7 @@ func (b BinanceConfig) FuturesAPIURL() string {
 	return b.FuturesMainnetAPIURL
 }
 
-//  returns the appropriate binance websocket url based on testnet setting
+// returns the appropriate binance websocket url based on testnet setting
 func (b BinanceConfig) WSURL() string {
 	if b.Testnet {
 		return b.TestnetWSURL
@@ -128,7 +144,7 @@ func (b BinanceConfig) WSURL() string {
 	return b.MainnetWSURL
 }
 
-//  holds claude ai settings
+// holds claude ai settings
 type ClaudeConfig struct {
 	APIKey    string
 	Model     string
@@ -145,7 +161,7 @@ type MLServiceConfig struct {
 	BaseURL string
 }
 
-//  holds trading behavior settings
+// holds trading behavior settings
 type TradingConfig struct {
 	DefaultConfidenceThreshold int
 	MaxDailyNotifications      int
@@ -217,6 +233,11 @@ func Load() (*Config, error) {
 			MainnetWSURL:         viper.GetString("binance.mainnet_ws_url"),
 			FuturesTestnetAPIURL: viper.GetString("binance.futures_testnet_api_url"),
 			FuturesMainnetAPIURL: viper.GetString("binance.futures_mainnet_api_url"),
+		},
+		Bybit: BybitConfig{
+			Testnet:       viper.GetBool("bybit.testnet"),
+			TestnetAPIURL: viper.GetString("bybit.testnet_api_url"),
+			MainnetAPIURL: viper.GetString("bybit.mainnet_api_url"),
 		},
 		Claude: ClaudeConfig{
 			APIKey:    viper.GetString("claude.api_key"),
@@ -304,6 +325,11 @@ func setDefaults() {
 	viper.SetDefault("binance.futures_testnet_api_url", "https://testnet.binancefuture.com")
 	viper.SetDefault("binance.futures_mainnet_api_url", "https://fapi.binance.com")
 
+	// bybit
+	viper.SetDefault("bybit.testnet", true)
+	viper.SetDefault("bybit.testnet_api_url", "https://api-testnet.bybit.com")
+	viper.SetDefault("bybit.mainnet_api_url", "https://api.bybit.com")
+
 	// claude
 	viper.SetDefault("claude.model", "claude-sonnet-4-20250514")
 	viper.SetDefault("claude.max_tokens", 4096)
@@ -334,7 +360,7 @@ func setDefaults() {
 	viper.SetDefault("log_level", "info")
 }
 
-//  checks that all required config values are present and valid
+// checks that all required config values are present and valid
 func Validate(cfg *Config) error {
 	if cfg.Security.MasterKey == "" {
 		return fmt.Errorf("security.master_key is required")

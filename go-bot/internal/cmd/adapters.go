@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"log/slog"
 	"time"
@@ -53,6 +54,57 @@ func (a *priceAdapter) GetPrice(symbol string) (float64, error) {
 	return ticker.Price, nil
 }
 
+// binanceFullExchange combines Binance market/account and order clients so the
+// exchange registry can treat Binance like any other FullExchange.
+type binanceFullExchange struct {
+	market *binance.Client
+	orders exchange.OrderExecutor
+}
+
+func (b *binanceFullExchange) Name() exchange.ExchangeName {
+	return exchange.ExchangeBinance
+}
+
+func (b *binanceFullExchange) GetPrice(ctx context.Context, symbol string) (*exchange.Ticker, error) {
+	return b.market.GetPrice(ctx, symbol)
+}
+
+func (b *binanceFullExchange) GetOrderBook(ctx context.Context, symbol string, depth int) (*exchange.OrderBook, error) {
+	return b.market.GetOrderBook(ctx, symbol, depth)
+}
+
+func (b *binanceFullExchange) GetCandles(ctx context.Context, symbol string, interval string, limit int) ([]exchange.Candle, error) {
+	return b.market.GetCandles(ctx, symbol, interval, limit)
+}
+
+func (b *binanceFullExchange) GetBalance(ctx context.Context, apiKey, apiSecret string) ([]exchange.Balance, error) {
+	return b.market.GetBalance(ctx, apiKey, apiSecret)
+}
+
+func (b *binanceFullExchange) PlaceOrder(symbol string, side exchange.OrderSide, orderType exchange.OrderType, quantity, price float64, apiKey, apiSecret string) (*exchange.Order, error) {
+	return b.orders.PlaceOrder(symbol, side, orderType, quantity, price, apiKey, apiSecret)
+}
+
+func (b *binanceFullExchange) PlaceStopLoss(symbol string, side exchange.OrderSide, quantity, stopPrice, price float64, apiKey, apiSecret string) (*exchange.Order, error) {
+	return b.orders.PlaceStopLoss(symbol, side, quantity, stopPrice, price, apiKey, apiSecret)
+}
+
+func (b *binanceFullExchange) PlaceTakeProfit(symbol string, side exchange.OrderSide, quantity, stopPrice, price float64, apiKey, apiSecret string) (*exchange.Order, error) {
+	return b.orders.PlaceTakeProfit(symbol, side, quantity, stopPrice, price, apiKey, apiSecret)
+}
+
+func (b *binanceFullExchange) CancelOrder(symbol string, orderID int64, apiKey, apiSecret string) error {
+	return b.orders.CancelOrder(symbol, orderID, apiKey, apiSecret)
+}
+
+func (b *binanceFullExchange) GetOrder(symbol string, orderID int64, apiKey, apiSecret string) (*exchange.Order, error) {
+	return b.orders.GetOrder(symbol, orderID, apiKey, apiSecret)
+}
+
+func (b *binanceFullExchange) GetOpenOrders(symbol string, apiKey, apiSecret string) ([]exchange.Order, error) {
+	return b.orders.GetOpenOrders(symbol, apiKey, apiSecret)
+}
+
 // bridges user.Repository to livetrading's credentialRepository interface
 // by converting user.Credentials to livetrading.credentials
 type credRepoAdapter struct {
@@ -74,6 +126,21 @@ func (a *credRepoAdapter) GetCredentials(ctx context.Context, userID int, exchan
 		APISecretEncrypted: cred.APISecretEncrypted,
 		Salt:               cred.Salt,
 	}, nil
+}
+
+type liveSpotExchangeResolver struct {
+	repo *user.Repository
+}
+
+func (a *liveSpotExchangeResolver) PrimaryExchange(userID int) (string, error) {
+	cred, err := a.repo.GetPrimaryCredentials(context.Background(), userID)
+	if err != nil {
+		return "", err
+	}
+	if cred == nil {
+		return "", fmt.Errorf("no credentials found for user %d", userID)
+	}
+	return cred.Exchange, nil
 }
 
 // adapts binance.FuturesClient to the leverage.MarkPriceProvider interface

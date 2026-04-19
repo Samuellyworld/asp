@@ -5,8 +5,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
-	"github.com/trading-bot/go-bot/internal/binance"
+	"github.com/trading-bot/go-bot/internal/exchange"
 	"github.com/trading-bot/go-bot/internal/security"
 )
 
@@ -23,6 +24,7 @@ type userRepository interface {
 	SaveCredentials(ctx context.Context, cred *Credentials) (*Credentials, error)
 	HasValidCredentials(ctx context.Context, userID int) (bool, error)
 	GetCredentials(ctx context.Context, userID int, exchange string) (*Credentials, error)
+	GetPrimaryCredentials(ctx context.Context, userID int) (*Credentials, error)
 	ListActive(ctx context.Context) ([]*User, error)
 	SetLeverageEnabled(ctx context.Context, userID int, enabled bool) error
 	IsLeverageEnabled(ctx context.Context, userID int) (bool, error)
@@ -30,7 +32,7 @@ type userRepository interface {
 
 // keyValidator validates exchange api keys
 type keyValidator interface {
-	ValidateKeys(ctx context.Context, apiKey, apiSecret string) (*binance.APIPermissions, error)
+	ValidateKeys(ctx context.Context, apiKey, apiSecret string) (*exchange.APIPermissions, error)
 }
 
 // encryptor handles encryption and decryption of sensitive data with per-user salts
@@ -41,11 +43,11 @@ type encryptor interface {
 
 // service handles user registration, api key onboarding, and activation
 type Service struct {
-	repo      userRepository
-	encryptor encryptor
-	audit     *security.AuditLogger
-	binance   keyValidator
-	isTestnet bool
+	repo       userRepository
+	encryptor  encryptor
+	audit      *security.AuditLogger
+	validators map[string]keyValidator
+	isTestnet  bool
 }
 
 func NewService(
@@ -56,12 +58,21 @@ func NewService(
 	isTestnet bool,
 ) *Service {
 	return &Service{
-		repo:      repo,
-		encryptor: encryptor,
-		audit:     audit,
-		binance:   binanceClient,
-		isTestnet: isTestnet,
+		repo:       repo,
+		encryptor:  encryptor,
+		audit:      audit,
+		validators: map[string]keyValidator{"binance": binanceClient},
+		isTestnet:  isTestnet,
 	}
+}
+
+// RegisterKeyValidator adds or replaces the validator for an exchange.
+func (s *Service) RegisterKeyValidator(exchangeName string, validator keyValidator) {
+	exchangeName = normalizeExchangeName(exchangeName)
+	if exchangeName == "" || validator == nil {
+		return
+	}
+	s.validators[exchangeName] = validator
 }
 
 // registerResult contains the result of user registration
@@ -124,16 +135,31 @@ func (s *Service) RegisterDiscord(ctx context.Context, discordID int64, username
 
 // setupResult contains the result of api key setup
 type SetupResult struct {
-	Permissions *binance.APIPermissions
+	Exchange    string
+	Permissions *exchange.APIPermissions
 	Activated   bool
 }
 
 // setupAPIKeys validates, encrypts, and stores binance api keys for a user
 func (s *Service) SetupAPIKeys(ctx context.Context, userID int, apiKey, apiSecret string) (*SetupResult, error) {
-	// validate keys against binance
-	perms, err := s.binance.ValidateKeys(ctx, apiKey, apiSecret)
+	return s.SetupExchangeAPIKeys(ctx, userID, "binance", apiKey, apiSecret)
+}
+
+// SetupExchangeAPIKeys validates, encrypts, and stores api keys for a supported exchange.
+func (s *Service) SetupExchangeAPIKeys(ctx context.Context, userID int, exchangeName, apiKey, apiSecret string) (*SetupResult, error) {
+	exchangeName = normalizeExchangeName(exchangeName)
+	validator, ok := s.validators[exchangeName]
+	if !ok || validator == nil {
+		return nil, fmt.Errorf("exchange %q is not supported", exchangeName)
+	}
+
+	// validate keys against the selected exchange
+	perms, err := validator.ValidateKeys(ctx, apiKey, apiSecret)
 	if err != nil {
 		return nil, fmt.Errorf("key validation failed: %w", err)
+	}
+	if perms == nil {
+		return nil, fmt.Errorf("key validation returned no permissions")
 	}
 
 	// reject keys with withdrawal permission
@@ -167,7 +193,7 @@ func (s *Service) SetupAPIKeys(ctx context.Context, userID int, apiKey, apiSecre
 	// store credentials
 	cred := &Credentials{
 		UserID:             userID,
-		Exchange:           "binance",
+		Exchange:           exchangeName,
 		APIKeyEncrypted:    encryptedKey,
 		APISecretEncrypted: encryptedSecret,
 		Salt:               salt,
@@ -189,6 +215,7 @@ func (s *Service) SetupAPIKeys(ctx context.Context, userID int, apiKey, apiSecre
 	}
 
 	return &SetupResult{
+		Exchange:    exchangeName,
 		Permissions: perms,
 		Activated:   true,
 	}, nil
@@ -206,7 +233,14 @@ func (s *Service) GetStatus(ctx context.Context, userID int) (activated bool, ha
 
 // decrypts and returns the user's api credentials for the given exchange
 func (s *Service) GetDecryptedCredentials(ctx context.Context, userID int) (string, string, error) {
-	cred, err := s.repo.GetCredentials(ctx, userID, "binance")
+	return s.GetDecryptedCredentialsForExchange(ctx, userID, "binance")
+}
+
+// GetDecryptedCredentialsForExchange decrypts and returns a user's api credentials
+// for a specific exchange.
+func (s *Service) GetDecryptedCredentialsForExchange(ctx context.Context, userID int, exchangeName string) (string, string, error) {
+	exchangeName = normalizeExchangeName(exchangeName)
+	cred, err := s.repo.GetCredentials(ctx, userID, exchangeName)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to get credentials: %w", err)
 	}
@@ -228,6 +262,50 @@ func (s *Service) GetDecryptedCredentials(ctx context.Context, userID int) (stri
 
 	s.logAudit(ctx, userID, cred.ID, "decrypt", true, "")
 	return string(apiKey), string(apiSecret), nil
+}
+
+// GetDecryptedPrimaryCredentials decrypts the user's most recently validated
+// exchange credentials and returns the exchange name with the key pair.
+func (s *Service) GetDecryptedPrimaryCredentials(ctx context.Context, userID int) (string, string, string, error) {
+	cred, err := s.repo.GetPrimaryCredentials(ctx, userID)
+	if err != nil {
+		return "", "", "", fmt.Errorf("failed to get credentials: %w", err)
+	}
+	if cred == nil {
+		return "", "", "", fmt.Errorf("no credentials found for user %d", userID)
+	}
+
+	apiKey, err := s.encryptor.Decrypt(cred.APIKeyEncrypted, cred.Salt)
+	if err != nil {
+		s.logAudit(ctx, userID, cred.ID, "decrypt", false, err.Error())
+		return "", "", "", fmt.Errorf("failed to decrypt api key: %w", err)
+	}
+
+	apiSecret, err := s.encryptor.Decrypt(cred.APISecretEncrypted, cred.Salt)
+	if err != nil {
+		s.logAudit(ctx, userID, cred.ID, "decrypt", false, err.Error())
+		return "", "", "", fmt.Errorf("failed to decrypt api secret: %w", err)
+	}
+
+	s.logAudit(ctx, userID, cred.ID, "decrypt", true, "")
+	return cred.Exchange, string(apiKey), string(apiSecret), nil
+}
+
+// GetPrimaryCredentialExchange returns the user's most recently validated
+// exchange without decrypting the credential payload.
+func (s *Service) GetPrimaryCredentialExchange(ctx context.Context, userID int) (string, error) {
+	cred, err := s.repo.GetPrimaryCredentials(ctx, userID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get credentials: %w", err)
+	}
+	if cred == nil {
+		return "", fmt.Errorf("no credentials found for user %d", userID)
+	}
+	return normalizeExchangeName(cred.Exchange), nil
+}
+
+func normalizeExchangeName(exchangeName string) string {
+	return strings.ToLower(strings.TrimSpace(exchangeName))
 }
 
 // links a discord identity to an existing telegram user

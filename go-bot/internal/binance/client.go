@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/trading-bot/go-bot/internal/exchange"
 )
 
 type Client struct {
@@ -21,19 +23,15 @@ type Client struct {
 	rateLimiter *RateLimiter
 }
 
-// api permission flags returned by binance
-type APIPermissions struct {
-	Spot     bool
-	Futures  bool
-	Withdraw bool
-}
+// APIPermissions is kept as a package alias for existing callers.
+type APIPermissions = exchange.APIPermissions
 
 // account info response from binance /api/v3/account
 type accountResponse struct {
-	CanTrade    bool   `json:"canTrade"`
-	CanWithdraw bool   `json:"canWithdraw"`
-	CanDeposit  bool   `json:"canDeposit"`
-	AccountType string `json:"accountType"`
+	CanTrade    bool     `json:"canTrade"`
+	CanWithdraw bool     `json:"canWithdraw"`
+	CanDeposit  bool     `json:"canDeposit"`
+	AccountType string   `json:"accountType"`
 	Permissions []string `json:"permissions"`
 }
 
@@ -127,13 +125,4 @@ func (c *Client) ValidateKeys(ctx context.Context, apiKey, apiSecret string) (*A
 	}
 
 	return perms, nil
-}
-
-// PermissionsToJSON converts permissions to the jsonb format for the database
-func (p *APIPermissions) ToJSON() map[string]bool {
-	return map[string]bool{
-		"spot":     p.Spot,
-		"futures":  p.Futures,
-		"withdraw": p.Withdraw,
-	}
 }

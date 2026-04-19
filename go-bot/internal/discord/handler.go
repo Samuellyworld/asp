@@ -36,6 +36,7 @@ type Handler struct {
 	watchSvc *watchlist.Service
 	prefsSvc *preferences.Service
 	exchange exchangeClient
+	registry *exchange.Registry
 	trading  *TradingDeps // optional, set via SetTradingDeps
 }
 
@@ -55,13 +56,28 @@ func NewHandler(
 	}
 }
 
+func (h *Handler) SetExchangeRegistry(registry *exchange.Registry) {
+	h.registry = registry
+}
+
+func (h *Handler) exchangeFor(exchangeName string) exchangeClient {
+	if h.registry != nil {
+		ex, err := h.registry.Get(exchange.ExchangeName(exchangeName))
+		if err == nil {
+			return ex
+		}
+	}
+	return h.exchange
+}
+
 // slash command definitions for registration with the discord api
 func SlashCommands() []ApplicationCommand {
 	return []ApplicationCommand{
 		{Name: "start", Description: "register or check in", Type: 1},
-		{Name: "setup", Description: "connect binance api keys (ephemeral)", Type: 1, Options: []ApplicationCommandOptionDef{
-			{Name: "api_key", Description: "your binance api key", Type: OptionString, Required: true},
-			{Name: "api_secret", Description: "your binance api secret", Type: OptionString, Required: true},
+		{Name: "setup", Description: "connect exchange api keys (ephemeral)", Type: 1, Options: []ApplicationCommandOptionDef{
+			{Name: "exchange", Description: "exchange name: binance or bybit", Type: OptionString, Required: false},
+			{Name: "api_key", Description: "your exchange api key", Type: OptionString, Required: true},
+			{Name: "api_secret", Description: "your exchange api secret", Type: OptionString, Required: true},
 		}},
 		{Name: "status", Description: "check your account status", Type: 1},
 		{Name: "help", Description: "show available commands", Type: 1},
@@ -206,7 +222,7 @@ func (h *Handler) handleStart(ctx context.Context, interaction *Interaction) {
 		h.respond(interaction, fmt.Sprintf(
 			"welcome, %s! 🤖\n\n"+
 				"your account has been created.\n\n"+
-				"to start trading, connect your binance api keys.\n"+
+				"to start trading, connect your exchange api keys.\n"+
 				"use `/setup` to begin.\n\n"+
 				"type `/help` for all available commands.",
 			discordUser.Username,
@@ -218,7 +234,7 @@ func (h *Handler) handleStart(ctx context.Context, interaction *Interaction) {
 		} else {
 			h.respond(interaction, fmt.Sprintf(
 				"welcome back, %s!\n\nyour account exists but hasn't been set up yet.\n"+
-					"use `/setup` to connect your binance api keys.",
+					"use `/setup` to connect your exchange api keys.",
 				discordUser.Username,
 			), nil, nil)
 		}
@@ -238,6 +254,15 @@ func (h *Handler) handleSetup(ctx context.Context, interaction *Interaction) {
 		return
 	}
 
+	exchangeName := strings.ToLower(strings.TrimSpace(getOption(interaction, "exchange")))
+	if exchangeName == "" {
+		exchangeName = "binance"
+	}
+	if exchangeName != "binance" && exchangeName != "bybit" {
+		h.respondEphemeral(interaction, "supported exchanges are `binance` and `bybit`.")
+		return
+	}
+
 	apiKey := getOption(interaction, "api_key")
 	apiSecret := getOption(interaction, "api_secret")
 	if apiKey == "" || apiSecret == "" {
@@ -253,7 +278,7 @@ func (h *Handler) handleSetup(ctx context.Context, interaction *Interaction) {
 	}
 
 	// validate and store keys
-	setupResult, err := h.userSvc.SetupAPIKeys(ctx, result.User.ID, apiKey, apiSecret)
+	setupResult, err := h.userSvc.SetupExchangeAPIKeys(ctx, result.User.ID, exchangeName, apiKey, apiSecret)
 	if err != nil {
 		h.respondEphemeral(interaction, fmt.Sprintf("❌ setup failed: %s", err.Error()))
 		return
@@ -268,12 +293,12 @@ func (h *Handler) handleSetup(ctx context.Context, interaction *Interaction) {
 	}
 
 	h.respondEphemeral(interaction, fmt.Sprintf(
-		"✅ **setup complete!**\n\n"+
+		"✅ **setup complete!** (exchange: %s)\n\n"+
 			"%s\n"+
 			"your api keys have been encrypted and stored securely.\n"+
 			"your account is now active.\n\n"+
 			"type `/help` to see what you can do next.",
-		permsMsg,
+		setupResult.Exchange, permsMsg,
 	))
 }
 
@@ -303,7 +328,7 @@ func (h *Handler) handleStatus(ctx context.Context, interaction *Interaction) {
 			{Name: "Account", Value: "⏳ Pending Setup", Inline: true},
 			{Name: "API Keys", Value: "❌ Not Connected", Inline: true},
 		}
-		embed.Footer = &EmbedFooter{Text: "use /setup to connect your binance api keys"}
+		embed.Footer = &EmbedFooter{Text: "use /setup to connect your exchange api keys"}
 	}
 
 	h.respond(interaction, "", []Embed{embed}, nil)
@@ -314,7 +339,7 @@ func (h *Handler) handleHelp(interaction *Interaction) {
 		Title: "Available Commands",
 		Color: ColorBlue,
 		Fields: []EmbedField{
-			{Name: "Account", Value: "`/start` - register or check in\n`/setup` - connect binance api keys\n`/status` - check your account status"},
+			{Name: "Account", Value: "`/start` - register or check in\n`/setup` - connect binance or bybit api keys\n`/status` - check your account status"},
 			{Name: "Exchange", Value: "`/price` - get current price\n`/balance` - show your balances\n`/portfolio` - portfolio overview\n`/orderbook` - show order book"},
 			{Name: "Watchlist", Value: "`/watchlist` - view your watchlist\n`/watchadd` - add a symbol\n`/watchremove` - remove a symbol\n`/watchreset` - reset to default top-10"},
 			{Name: "Preferences", Value: "`/settings` - view all preferences\n`/set` - change a preference"},
@@ -357,13 +382,13 @@ func (h *Handler) handleBalance(ctx context.Context, interaction *Interaction) {
 		return
 	}
 
-	apiKey, apiSecret, err := h.userSvc.GetDecryptedCredentials(ctx, userID)
+	exchangeName, apiKey, apiSecret, err := h.userSvc.GetDecryptedPrimaryCredentials(ctx, userID)
 	if err != nil {
 		h.respondEphemeral(interaction, "❌ failed to retrieve your api keys. try /setup to reconfigure.")
 		return
 	}
 
-	balances, err := h.exchange.GetBalance(ctx, apiKey, apiSecret)
+	balances, err := h.exchangeFor(exchangeName).GetBalance(ctx, apiKey, apiSecret)
 	if err != nil {
 		h.respondEphemeral(interaction, fmt.Sprintf("❌ failed to get balance: %s", err.Error()))
 		return
@@ -391,13 +416,13 @@ func (h *Handler) handlePortfolio(ctx context.Context, interaction *Interaction)
 		return
 	}
 
-	apiKey, apiSecret, err := h.userSvc.GetDecryptedCredentials(ctx, userID)
+	exchangeName, apiKey, apiSecret, err := h.userSvc.GetDecryptedPrimaryCredentials(ctx, userID)
 	if err != nil {
 		h.respond(interaction, "❌ failed to retrieve your api keys. try /setup to reconfigure.", nil, nil)
 		return
 	}
 
-	balances, err := h.exchange.GetBalance(ctx, apiKey, apiSecret)
+	balances, err := h.exchangeFor(exchangeName).GetBalance(ctx, apiKey, apiSecret)
 	if err != nil {
 		h.respond(interaction, fmt.Sprintf("❌ failed to get balance: %s", err.Error()), nil, nil)
 		return
@@ -838,13 +863,13 @@ func (h *Handler) componentBalance(ctx context.Context, interaction *Interaction
 		return
 	}
 
-	apiKey, apiSecret, err := h.userSvc.GetDecryptedCredentials(ctx, userID)
+	exchangeName, apiKey, apiSecret, err := h.userSvc.GetDecryptedPrimaryCredentials(ctx, userID)
 	if err != nil {
 		h.updateMessage(interaction, "❌ failed to get credentials.", nil, nil)
 		return
 	}
 
-	balances, err := h.exchange.GetBalance(ctx, apiKey, apiSecret)
+	balances, err := h.exchangeFor(exchangeName).GetBalance(ctx, apiKey, apiSecret)
 	if err != nil {
 		h.updateMessage(interaction, "❌ failed to refresh balance.", nil, nil)
 		return
@@ -872,13 +897,13 @@ func (h *Handler) componentPortfolio(ctx context.Context, interaction *Interacti
 		return
 	}
 
-	apiKey, apiSecret, err := h.userSvc.GetDecryptedCredentials(ctx, userID)
+	exchangeName, apiKey, apiSecret, err := h.userSvc.GetDecryptedPrimaryCredentials(ctx, userID)
 	if err != nil {
 		h.updateMessage(interaction, "❌ failed to get credentials.", nil, nil)
 		return
 	}
 
-	balances, err := h.exchange.GetBalance(ctx, apiKey, apiSecret)
+	balances, err := h.exchangeFor(exchangeName).GetBalance(ctx, apiKey, apiSecret)
 	if err != nil {
 		h.updateMessage(interaction, "❌ failed to refresh portfolio.", nil, nil)
 		return
@@ -977,7 +1002,7 @@ func (h *Handler) resolveUser(ctx context.Context, interaction *Interaction) (in
 
 	activated, hasKeys, _ := h.userSvc.GetStatus(ctx, result.User.ID)
 	if !activated || !hasKeys {
-		h.respondEphemeral(interaction, "you need to complete setup first. use `/setup` to connect your binance api keys.")
+		h.respondEphemeral(interaction, "you need to complete setup first. use `/setup` to connect your exchange api keys.")
 		return 0, false
 	}
 

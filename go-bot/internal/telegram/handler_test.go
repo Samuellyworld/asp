@@ -9,6 +9,7 @@ import (
 
 	"github.com/trading-bot/go-bot/internal/binance"
 	"github.com/trading-bot/go-bot/internal/exchange"
+	"github.com/trading-bot/go-bot/internal/livetrading"
 	"github.com/trading-bot/go-bot/internal/preferences"
 	"github.com/trading-bot/go-bot/internal/user"
 	"github.com/trading-bot/go-bot/internal/watchlist"
@@ -122,7 +123,7 @@ func (m *mockBot) reset() {
 
 type mockUserRepo struct {
 	users       map[int64]*user.User
-	credentials map[int]bool
+	credentials map[int]*user.Credentials
 	nextID      int
 	findErr     error
 	createErr   error
@@ -133,7 +134,7 @@ type mockUserRepo struct {
 func newMockUserRepo() *mockUserRepo {
 	return &mockUserRepo{
 		users:       make(map[int64]*user.User),
-		credentials: make(map[int]bool),
+		credentials: make(map[int]*user.Credentials),
 		nextID:      1,
 	}
 }
@@ -163,11 +164,17 @@ func (m *mockUserRepo) Create(_ context.Context, telegramID int64, username stri
 	return u, nil
 }
 
-func (m *mockUserRepo) CreateDefaultPreferences(_ context.Context, _ int) error { return nil }
+func (m *mockUserRepo) CreateDefaultPreferences(_ context.Context, _ int) error   { return nil }
 func (m *mockUserRepo) UpdateLastActive(_ context.Context, _ int, _ string) error { return nil }
-func (m *mockUserRepo) FindByDiscordID(_ context.Context, _ int64) (*user.User, error) { return nil, nil }
-func (m *mockUserRepo) CreateFromDiscord(_ context.Context, _ int64, _ string) (*user.User, error) { return nil, nil }
-func (m *mockUserRepo) LinkDiscordToTelegram(_ context.Context, _ int64, _ int64) (*user.User, error) { return nil, nil }
+func (m *mockUserRepo) FindByDiscordID(_ context.Context, _ int64) (*user.User, error) {
+	return nil, nil
+}
+func (m *mockUserRepo) CreateFromDiscord(_ context.Context, _ int64, _ string) (*user.User, error) {
+	return nil, nil
+}
+func (m *mockUserRepo) LinkDiscordToTelegram(_ context.Context, _ int64, _ int64) (*user.User, error) {
+	return nil, nil
+}
 
 func (m *mockUserRepo) Activate(_ context.Context, userID int) error {
 	if m.activateErr != nil {
@@ -187,31 +194,28 @@ func (m *mockUserRepo) SaveCredentials(_ context.Context, cred *user.Credentials
 	}
 	cred.ID = m.nextID
 	m.nextID++
-	m.credentials[cred.UserID] = true
+	m.credentials[cred.UserID] = cred
 	return cred, nil
 }
 
 func (m *mockUserRepo) HasValidCredentials(_ context.Context, userID int) (bool, error) {
-	return m.credentials[userID], nil
+	cred, ok := m.credentials[userID]
+	return ok && cred != nil, nil
 }
 
-func (m *mockUserRepo) GetCredentials(_ context.Context, userID int, _ string) (*user.Credentials, error) {
-	for _, u := range m.users {
-		if u.ID == userID {
-			if m.credentials[userID] {
-				return &user.Credentials{
-					ID:                 1,
-					UserID:             userID,
-					Exchange:           "binance",
-					APIKeyEncrypted:    []byte("test-key"),
-					APISecretEncrypted: []byte("test-secret"),
-					Salt:               []byte("salt"),
-					IsValid:            true,
-				}, nil
-			}
-		}
+func (m *mockUserRepo) GetCredentials(_ context.Context, userID int, exchangeName string) (*user.Credentials, error) {
+	cred, ok := m.credentials[userID]
+	if !ok || cred == nil {
+		return nil, nil
 	}
-	return nil, nil
+	if exchangeName != "" && cred.Exchange != exchangeName {
+		return nil, nil
+	}
+	return cred, nil
+}
+
+func (m *mockUserRepo) GetPrimaryCredentials(ctx context.Context, userID int) (*user.Credentials, error) {
+	return m.GetCredentials(ctx, userID, "")
 }
 
 func (m *mockUserRepo) ListActive(_ context.Context) ([]*user.User, error) {
@@ -240,7 +244,15 @@ func (m *mockUserRepo) seed(telegramID int64, username string, activated bool) *
 	m.nextID++
 	m.users[telegramID] = u
 	if activated {
-		m.credentials[u.ID] = true
+		m.credentials[u.ID] = &user.Credentials{
+			ID:                 u.ID,
+			UserID:             u.ID,
+			Exchange:           "binance",
+			APIKeyEncrypted:    []byte("test-key"),
+			APISecretEncrypted: []byte("test-secret"),
+			Salt:               []byte("salt"),
+			IsValid:            true,
+		}
 	}
 	return u
 }
@@ -735,6 +747,22 @@ func TestHelp(t *testing.T) {
 		if !strings.Contains(msg, cmd) {
 			t.Errorf("expected %s in help message", cmd)
 		}
+	}
+}
+
+func TestLiveMode_RejectsBybitPrimaryExchange(t *testing.T) {
+	env := newTestEnv()
+	u := env.seedActivatedUser(12345)
+	env.userRepo.credentials[u.ID].Exchange = "bybit"
+	env.handler.SetTradingDeps(&TradingDeps{
+		Confirm:      livetrading.NewConfirmationManager(),
+		SafetyConfig: livetrading.DefaultSafetyConfig(),
+	})
+
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/live"))
+
+	if !strings.Contains(strings.ToLower(env.bot.lastMessage()), "bybit") {
+		t.Fatalf("expected bybit warning, got: %s", env.bot.lastMessage())
 	}
 }
 

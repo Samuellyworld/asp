@@ -9,6 +9,7 @@ import (
 
 	"github.com/trading-bot/go-bot/internal/binance"
 	"github.com/trading-bot/go-bot/internal/exchange"
+	"github.com/trading-bot/go-bot/internal/livetrading"
 	"github.com/trading-bot/go-bot/internal/preferences"
 	"github.com/trading-bot/go-bot/internal/user"
 	"github.com/trading-bot/go-bot/internal/watchlist"
@@ -224,6 +225,10 @@ func (m *mockUserRepo) GetCredentials(_ context.Context, userID int, _ string) (
 		return nil, m.getCredErr
 	}
 	return m.credentials[userID], nil
+}
+
+func (m *mockUserRepo) GetPrimaryCredentials(ctx context.Context, userID int) (*user.Credentials, error) {
+	return m.GetCredentials(ctx, userID, "binance")
 }
 
 func (m *mockUserRepo) ListActive(_ context.Context) ([]*user.User, error) {
@@ -736,6 +741,31 @@ func TestHandleHelp(t *testing.T) {
 	}
 	if len(bot.embeds[0].Fields) < 4 {
 		t.Errorf("expected at least 4 fields in help embed, got %d", len(bot.embeds[0].Fields))
+	}
+}
+
+func TestHandleLive_RejectsBybitPrimaryExchange(t *testing.T) {
+	repo := newMockUserRepo()
+	u := repo.seedDiscord(12345, "testuser")
+	repo.credentials[u.ID] = &user.Credentials{
+		ID:                 1,
+		UserID:             u.ID,
+		Exchange:           "bybit",
+		APIKeyEncrypted:    []byte("yek"),
+		APISecretEncrypted: []byte("terces"),
+		Salt:               []byte("salt"),
+		IsValid:            true,
+	}
+	handler, bot := newTestHandler(repo, &mockExchange{}, &mockWatchlistRepo{}, newMockPrefsRepo())
+	handler.SetTradingDeps(&TradingDeps{
+		Confirm:      livetrading.NewConfirmationManager(),
+		SafetyConfig: livetrading.DefaultSafetyConfig(),
+	})
+
+	handler.HandleInteraction(context.Background(), makeInteraction("12345", "live"))
+
+	if !strings.Contains(strings.ToLower(bot.lastMessage()), "bybit") {
+		t.Fatalf("expected bybit warning, got: %s", bot.lastMessage())
 	}
 }
 

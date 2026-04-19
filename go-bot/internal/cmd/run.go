@@ -16,6 +16,7 @@ import (
 	"github.com/trading-bot/go-bot/internal/api"
 	"github.com/trading-bot/go-bot/internal/autotuner"
 	"github.com/trading-bot/go-bot/internal/binance"
+	"github.com/trading-bot/go-bot/internal/bybit"
 	"github.com/trading-bot/go-bot/internal/circuitbreaker"
 	"github.com/trading-bot/go-bot/internal/claude"
 	"github.com/trading-bot/go-bot/internal/config"
@@ -113,12 +114,16 @@ func runBot(cmd *cobra.Command, args []string) error {
 	auditLogger := security.NewAuditLogger(pg.Pool())
 	userRepo := user.NewRepository(pg.Pool())
 	binanceClient := binance.NewClient(cfg.Binance.APIURL(), cfg.Binance.Testnet)
+	orderClient := binance.NewOrderClient(cfg.Binance.APIURL(), cfg.Binance.Testnet)
+	orderClient.SetRateLimiter(binanceClient.RateLimiter()) // share spot rate limiter
+	bybitClient := bybit.NewClient(cfg.Bybit.APIURL(), cfg.Bybit.Testnet)
 	userSvc := user.NewService(userRepo, encryptor, auditLogger, binanceClient, cfg.Binance.Testnet)
+	userSvc.RegisterKeyValidator("bybit", bybitClient)
 
-	// exchange registry — currently binance-only, extensible for multi-exchange
 	exchangeRegistry := exchange.NewRegistry()
-	_ = exchangeRegistry // available for multi-exchange routing
-	log.Printf("exchange registry initialized (primary: binance, testnet: %v)", cfg.Binance.Testnet)
+	exchangeRegistry.Register(&binanceFullExchange{market: binanceClient, orders: orderClient})
+	exchangeRegistry.Register(bybitClient)
+	log.Printf("exchange registry initialized (exchanges: %v, primary: binance)", exchangeRegistry.Names())
 
 	watchRepo := watchlist.NewRepository(pg.Pool())
 	watchSvc := watchlist.NewService(watchRepo)
@@ -275,8 +280,6 @@ func runBot(cmd *cobra.Command, args []string) error {
 	// live trading adapters
 	credRepo := &credRepoAdapter{repo: userRepo}
 	keyDecryptor := livetrading.NewKeyDecryptorAdapter(credRepo, encryptor, auditLogger)
-	orderClient := binance.NewOrderClient(cfg.Binance.APIURL(), cfg.Binance.Testnet)
-	orderClient.SetRateLimiter(binanceClient.RateLimiter()) // share spot rate limiter
 	balanceProvider := livetrading.NewBalanceProviderAdapter(keyDecryptor, binanceClient)
 
 	// live trading safety
@@ -289,6 +292,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 
 	// live trading executor and monitor
 	liveExecutor := livetrading.NewExecutor(orderClient, keyDecryptor, safetyChecker, lossTracker)
+	liveExecutor.SetPrimaryExchangeResolver(&liveSpotExchangeResolver{repo: userRepo})
 	liveExecutor.SetStore(&livePositionStoreAdapter{repo: posRepo})
 	liveExecutor.SetTradeLogger(&liveTradeLoggerAdapter{trades: tradeRepo, daily: dailyStatsRepo})
 	liveExecutor.SetSlippageTracker(slippageTracker)
@@ -401,6 +405,9 @@ func runBot(cmd *cobra.Command, args []string) error {
 		telegramBot = telegram.NewBot(cfg.Telegram.BotToken)
 		handler := telegram.NewHandler(telegramBot, userSvc, wizard, watchSvc, prefsSvc, binanceClient)
 		handler.SetTestnet(cfg.Binance.Testnet)
+		handler.SetExchangeTestnet("binance", cfg.Binance.Testnet)
+		handler.SetExchangeTestnet("bybit", cfg.Bybit.Testnet)
+		handler.SetExchangeRegistry(exchangeRegistry)
 
 		handler.SetTradingDeps(&telegram.TradingDeps{
 			OppManager:       oppManager,
@@ -449,6 +456,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 	if cfg.Discord.BotToken != "" {
 		discordBot := discord.NewBot(cfg.Discord.BotToken, cfg.Discord.ApplicationID)
 		discordHandler := discord.NewHandler(discordBot, userSvc, watchSvc, prefsSvc, binanceClient)
+		discordHandler.SetExchangeRegistry(exchangeRegistry)
 
 		discordHandler.SetTradingDeps(&discord.TradingDeps{
 			OppManager:       oppManager,
@@ -701,15 +709,21 @@ func runBot(cmd *cobra.Command, args []string) error {
 					continue
 				}
 				for _, u := range activeUsers {
-					apiKey, apiSecret, err := userSvc.GetDecryptedCredentials(ctx, u.ID)
+					exchangeName, apiKey, apiSecret, err := userSvc.GetDecryptedPrimaryCredentials(ctx, u.ID)
 					if err != nil || apiKey == "" {
 						continue
 					}
-					perms, err := binanceClient.ValidateKeys(ctx, apiKey, apiSecret)
+					var perms *exchange.APIPermissions
+					switch exchangeName {
+					case "bybit":
+						perms, err = bybitClient.ValidateKeys(ctx, apiKey, apiSecret)
+					default:
+						perms, err = binanceClient.ValidateKeys(ctx, apiKey, apiSecret)
+					}
 					if err != nil {
-						slog.Warn("key validation failed", "user_id", u.ID, "error", err)
+						slog.Warn("key validation failed", "user_id", u.ID, "exchange", exchangeName, "error", err)
 					} else {
-						slog.Info("key validation passed", "user_id", u.ID, "spot", perms.Spot, "futures", perms.Futures)
+						slog.Info("key validation passed", "user_id", u.ID, "exchange", exchangeName, "spot", perms.Spot, "futures", perms.Futures)
 					}
 				}
 				slog.Info("24h API key validation cycle complete")

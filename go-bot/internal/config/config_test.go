@@ -109,6 +109,23 @@ func TestBinanceConfig_WSURL(t *testing.T) {
 	}
 }
 
+func TestBybitConfig_APIURL(t *testing.T) {
+	cfg := BybitConfig{
+		Testnet:       true,
+		TestnetAPIURL: "https://api-testnet.bybit.com",
+		MainnetAPIURL: "https://api.bybit.com",
+	}
+
+	if got := cfg.APIURL(); got != "https://api-testnet.bybit.com" {
+		t.Errorf("APIURL() with testnet=true = %q, want testnet url", got)
+	}
+
+	cfg.Testnet = false
+	if got := cfg.APIURL(); got != "https://api.bybit.com" {
+		t.Errorf("APIURL() with testnet=false = %q, want mainnet url", got)
+	}
+}
+
 func TestTradingConfig_ScannerInterval(t *testing.T) {
 	cfg := TradingConfig{ScannerIntervalMinutes: 5}
 	want := 5 * time.Minute
@@ -191,8 +208,8 @@ func TestValidate(t *testing.T) {
 			errMsg:  "leverage.max_margin_per_trade must be positive, got -1.00",
 		},
 		{
-			name:   "liquidation pct order violation",
-			modify: func(cfg *Config) { cfg.Leverage.LiquidationCriticalPct = 20 },
+			name:    "liquidation pct order violation",
+			modify:  func(cfg *Config) { cfg.Leverage.LiquidationCriticalPct = 20 },
 			wantErr: true,
 		},
 		{
@@ -263,6 +280,9 @@ func TestLoad_Defaults(t *testing.T) {
 	// check binance defaults
 	if !cfg.Binance.Testnet {
 		t.Error("binance.testnet should default to true")
+	}
+	if !cfg.Bybit.Testnet {
+		t.Error("bybit.testnet should default to true")
 	}
 
 	// check trading defaults

@@ -51,6 +51,13 @@ func NewKeyDecryptorAdapter(repo CredentialRepository, dec decryptor, audit audi
 	}
 }
 
+// SetExchange changes which stored exchange credentials are decrypted.
+func (a *KeyDecryptorAdapter) SetExchange(exchange string) {
+	if exchange != "" {
+		a.exchange = exchange
+	}
+}
+
 // decrypts the api key and secret for a user.
 // logs every decrypt attempt to the audit trail.
 func (a *KeyDecryptorAdapter) DecryptKeys(userID int) (apiKey, apiSecret string, err error) {

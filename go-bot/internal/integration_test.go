@@ -122,6 +122,10 @@ func (m *mockUserRepo) GetCredentials(_ context.Context, userID int, _ string) (
 	return m.credentials[userID], nil
 }
 
+func (m *mockUserRepo) GetPrimaryCredentials(ctx context.Context, userID int) (*user.Credentials, error) {
+	return m.GetCredentials(ctx, userID, "binance")
+}
+
 func (m *mockUserRepo) ListActive(_ context.Context) ([]*user.User, error) {
 	return nil, nil
 }

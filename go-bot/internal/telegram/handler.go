@@ -75,15 +75,17 @@ func (r *rateLimiter) allow(userID int64) bool {
 
 // Handler processes incoming telegram messages
 type Handler struct {
-	bot      botClient
-	userSvc  *user.Service
-	wizard   *user.SetupWizard
-	watchSvc *watchlist.Service
-	prefsSvc *preferences.Service
-	exchange exchangeClient
-	trading  *TradingDeps // optional, set via SetTradingDeps
-	limiter  *rateLimiter
-	testnet  bool
+	bot             botClient
+	userSvc         *user.Service
+	wizard          *user.SetupWizard
+	watchSvc        *watchlist.Service
+	prefsSvc        *preferences.Service
+	exchange        exchangeClient
+	registry        *exchange.Registry
+	trading         *TradingDeps // optional, set via SetTradingDeps
+	limiter         *rateLimiter
+	testnet         bool
+	exchangeTestnet map[string]bool
 }
 
 func NewHandler(
@@ -108,6 +110,36 @@ func NewHandler(
 // SetTestnet configures whether the bot shows testnet URLs and instructions.
 func (h *Handler) SetTestnet(testnet bool) {
 	h.testnet = testnet
+}
+
+func (h *Handler) SetExchangeTestnet(exchangeName string, testnet bool) {
+	if h.exchangeTestnet == nil {
+		h.exchangeTestnet = make(map[string]bool)
+	}
+	h.exchangeTestnet[strings.ToLower(strings.TrimSpace(exchangeName))] = testnet
+}
+
+func (h *Handler) SetExchangeRegistry(registry *exchange.Registry) {
+	h.registry = registry
+}
+
+func (h *Handler) exchangeFor(exchangeName string) exchangeClient {
+	if h.registry != nil {
+		ex, err := h.registry.Get(exchange.ExchangeName(exchangeName))
+		if err == nil {
+			return ex
+		}
+	}
+	return h.exchange
+}
+
+func (h *Handler) testnetFor(exchangeName string) bool {
+	if h.exchangeTestnet != nil {
+		if testnet, ok := h.exchangeTestnet[strings.ToLower(strings.TrimSpace(exchangeName))]; ok {
+			return testnet
+		}
+	}
+	return h.testnet
 }
 
 // routes an incoming update to the appropriate handler
@@ -215,7 +247,7 @@ func (h *Handler) handleStart(ctx context.Context, msg *Message, telegramID int6
 		h.send(chatID, fmt.Sprintf(
 			"welcome, %s! 🤖\n\n"+
 				"your account has been created.\n\n"+
-				"to start trading, you need to connect your binance api keys.\n"+
+				"to start trading, you need to connect your exchange api keys.\n"+
 				"use /setup to begin the api key setup wizard.\n\n"+
 				"type /help for all available commands.",
 			username,
@@ -227,7 +259,7 @@ func (h *Handler) handleStart(ctx context.Context, msg *Message, telegramID int6
 		} else {
 			h.send(chatID, fmt.Sprintf(
 				"welcome back, %s!\n\nyour account exists but hasn't been set up yet.\n"+
-					"use /setup to connect your binance api keys.",
+					"use /setup to connect your exchange api keys.",
 				username,
 			))
 		}
@@ -256,11 +288,11 @@ func (h *Handler) handleSetup(ctx context.Context, msg *Message, telegramID int6
 	h.wizard.Start(telegramID, result.User.ID)
 
 	h.send(chatID,
-		"🔐 *binance api key setup*\n\n"+
-			"i'll walk you through connecting your binance account.\n\n"+
+		"🔐 *exchange api key setup*\n\n"+
+			"i'll walk you through connecting your exchange account.\n\n"+
 			"*step 1/3*: confirm the exchange.\n\n"+
-			"currently supported: *binance*\n"+
-			"send *binance* to continue.\n\n"+
+			"currently supported: *binance*, *bybit*\n"+
+			"send *binance* or *bybit* to continue.\n\n"+
 			"type /cancel to abort setup.",
 	)
 }
@@ -282,8 +314,8 @@ func (h *Handler) handleWizardInput(ctx context.Context, msg *Message, telegramI
 	switch session.Step {
 	case user.StepExchange:
 		exch := strings.ToLower(text)
-		if exch != "binance" {
-			h.send(chatID, "❌ currently only *binance* is supported. send *binance* to continue.")
+		if !isSupportedSetupExchange(exch) {
+			h.send(chatID, "❌ supported exchanges are *binance* and *bybit*. send one of those to continue.")
 			return
 		}
 
@@ -293,18 +325,7 @@ func (h *Handler) handleWizardInput(ctx context.Context, msg *Message, telegramI
 			return
 		}
 
-		// show exchange-specific setup URL
-		var setupURL, modeNote string
-		switch exch {
-		case "binance":
-			if h.testnet {
-				setupURL = "https://testnet.binance.vision"
-				modeNote = "\n🧪 *testnet mode* — using binance testnet (fake money).\ngo to the url above → log in with github → generate HMAC_SHA256 key.\n\n"
-			} else {
-				setupURL = "https://www.binance.com/en/my/settings/api-management"
-				modeNote = "\n"
-			}
-		}
+		setupURL, modeNote := setupExchangeURL(exch, h.testnetFor(exch))
 
 		h.send(chatID,
 			fmt.Sprintf("✅ exchange set to *%s*\n\n", exch)+
@@ -354,7 +375,7 @@ func (h *Handler) handleWizardInput(ctx context.Context, msg *Message, telegramI
 
 		h.send(chatID, fmt.Sprintf("🔄 validating your api keys with %s...", exchangeName))
 
-		setupResult, err := h.userSvc.SetupAPIKeys(ctx, userID, apiKey, apiSecret)
+		setupResult, err := h.userSvc.SetupExchangeAPIKeys(ctx, userID, exchangeName, apiKey, apiSecret)
 		if err != nil {
 			h.send(chatID, fmt.Sprintf("❌ setup failed: %s\n\nplease check your keys and try /setup again.", err.Error()))
 			return
@@ -398,7 +419,7 @@ func (h *Handler) handleStatus(ctx context.Context, telegramID int64, chatID int
 	} else {
 		status += "• account: ⏳ pending setup\n"
 		status += "• api keys: ❌ not connected\n"
-		status += "\nuse /setup to connect your binance api keys."
+		status += "\nuse /setup to connect your exchange api keys."
 	}
 
 	h.send(chatID, status)
@@ -418,7 +439,7 @@ func (h *Handler) handleHelp(chatID int64) {
 		"*available commands*\n\n"+
 			"*account*\n"+
 			"/start - register or check in\n"+
-			"/setup - connect binance api keys\n"+
+			"/setup - connect binance or bybit api keys\n"+
 			"/status - check your account status\n"+
 			"/cancel - cancel current setup\n\n"+
 			"*exchange*\n"+
@@ -456,10 +477,37 @@ func (h *Handler) getUserID(ctx context.Context, telegramID int64, chatID int64)
 	}
 	activated, hasKeys, _ := h.userSvc.GetStatus(ctx, result.User.ID)
 	if !activated || !hasKeys {
-		h.send(chatID, "you need to complete setup first. use /setup to connect your binance api keys.")
+		h.send(chatID, "you need to complete setup first. use /setup to connect your exchange api keys.")
 		return 0, false
 	}
 	return result.User.ID, true
+}
+
+func isSupportedSetupExchange(exchangeName string) bool {
+	switch strings.ToLower(strings.TrimSpace(exchangeName)) {
+	case "binance", "bybit":
+		return true
+	default:
+		return false
+	}
+}
+
+func setupExchangeURL(exchangeName string, testnet bool) (setupURL, modeNote string) {
+	switch strings.ToLower(strings.TrimSpace(exchangeName)) {
+	case "bybit":
+		if testnet {
+			return "https://testnet.bybit.com/app/user/api-management",
+				"\n🧪 *testnet mode* — using bybit testnet (fake money).\ncreate an HMAC API key with spot trading permission and no withdrawal permission.\n\n"
+		}
+		return "https://www.bybit.com/app/user/api-management",
+			"\ncreate an HMAC API key with spot trading permission and no withdrawal permission.\n\n"
+	default:
+		if testnet {
+			return "https://testnet.binance.vision",
+				"\n🧪 *testnet mode* — using binance testnet (fake money).\ngo to the url above → log in with github → generate HMAC_SHA256 key.\n\n"
+		}
+		return "https://www.binance.com/en/my/settings/api-management", "\n"
+	}
 }
 
 // watchlist handlers
@@ -804,13 +852,13 @@ func (h *Handler) handleBalance(ctx context.Context, telegramID int64, chatID in
 		return
 	}
 
-	apiKey, apiSecret, err := h.userSvc.GetDecryptedCredentials(ctx, userID)
+	exchangeName, apiKey, apiSecret, err := h.userSvc.GetDecryptedPrimaryCredentials(ctx, userID)
 	if err != nil {
 		h.send(chatID, "❌ failed to retrieve your api keys. try /setup to reconfigure.")
 		return
 	}
 
-	balances, err := h.exchange.GetBalance(ctx, apiKey, apiSecret)
+	balances, err := h.exchangeFor(exchangeName).GetBalance(ctx, apiKey, apiSecret)
 	if err != nil {
 		h.send(chatID, fmt.Sprintf("❌ failed to get balance: %s", err.Error()))
 		return
@@ -821,7 +869,7 @@ func (h *Handler) handleBalance(ctx context.Context, telegramID int64, chatID in
 		return
 	}
 
-	text := "💼 *your balances*\n\n"
+	text := fmt.Sprintf("💼 *your balances* (%s)\n\n", exchangeName)
 	for _, b := range balances {
 		line := fmt.Sprintf("• *%s*: `%s`", b.Asset, formatBalance(b.Free))
 		if b.Locked > 0 {
@@ -884,13 +932,13 @@ func (h *Handler) handlePortfolio(ctx context.Context, telegramID int64, chatID 
 		return
 	}
 
-	apiKey, apiSecret, err := h.userSvc.GetDecryptedCredentials(ctx, userID)
+	exchangeName, apiKey, apiSecret, err := h.userSvc.GetDecryptedPrimaryCredentials(ctx, userID)
 	if err != nil {
 		h.send(chatID, "❌ failed to retrieve your api keys. try /setup to reconfigure.")
 		return
 	}
 
-	balances, err := h.exchange.GetBalance(ctx, apiKey, apiSecret)
+	balances, err := h.exchangeFor(exchangeName).GetBalance(ctx, apiKey, apiSecret)
 	if err != nil {
 		h.send(chatID, fmt.Sprintf("❌ failed to get balance: %s", err.Error()))
 		return
@@ -1103,13 +1151,13 @@ func (h *Handler) callbackBalance(ctx context.Context, queryID string, telegramI
 	}
 	userID := result.User.ID
 
-	apiKey, apiSecret, err := h.userSvc.GetDecryptedCredentials(ctx, userID)
+	exchangeName, apiKey, apiSecret, err := h.userSvc.GetDecryptedPrimaryCredentials(ctx, userID)
 	if err != nil {
 		h.answerCallback(queryID, "failed to get credentials")
 		return
 	}
 
-	balances, err := h.exchange.GetBalance(ctx, apiKey, apiSecret)
+	balances, err := h.exchangeFor(exchangeName).GetBalance(ctx, apiKey, apiSecret)
 	if err != nil {
 		h.answerCallback(queryID, "failed to refresh balance")
 		return
@@ -1121,7 +1169,7 @@ func (h *Handler) callbackBalance(ctx context.Context, queryID string, telegramI
 		return
 	}
 
-	text := "💼 *your balances*\n\n"
+	text := fmt.Sprintf("💼 *your balances* (%s)\n\n", exchangeName)
 	for _, b := range balances {
 		line := fmt.Sprintf("• *%s*: `%s`", b.Asset, formatBalance(b.Free))
 		if b.Locked > 0 {
@@ -1152,13 +1200,13 @@ func (h *Handler) callbackPortfolio(ctx context.Context, queryID string, telegra
 	}
 	userID := result.User.ID
 
-	apiKey, apiSecret, err := h.userSvc.GetDecryptedCredentials(ctx, userID)
+	exchangeName, apiKey, apiSecret, err := h.userSvc.GetDecryptedPrimaryCredentials(ctx, userID)
 	if err != nil {
 		h.answerCallback(queryID, "failed to get credentials")
 		return
 	}
 
-	balances, err := h.exchange.GetBalance(ctx, apiKey, apiSecret)
+	balances, err := h.exchangeFor(exchangeName).GetBalance(ctx, apiKey, apiSecret)
 	if err != nil {
 		h.answerCallback(queryID, "failed to refresh portfolio")
 		return

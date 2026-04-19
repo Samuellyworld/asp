@@ -4,6 +4,7 @@ package livetrading
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -41,6 +42,12 @@ type FailedOrderRecorder interface {
 // decrypts stored credentials for order placement
 type KeyDecryptor interface {
 	DecryptKeys(userID int) (apiKey, apiSecret string, err error)
+}
+
+// resolves the user's active exchange so live spot execution can refuse
+// unsupported runtimes instead of silently assuming Binance.
+type PrimaryExchangeResolver interface {
+	PrimaryExchange(userID int) (string, error)
 }
 
 // a live position with real exchange order ids
@@ -90,6 +97,7 @@ type Executor struct {
 	trades       TradeLogger             // nil if no logging configured
 	slippage     SlippageRecorder        // nil if no slippage tracking configured
 	failedOrders FailedOrderRecorder     // nil if no dead-letter queue configured
+	exchanges    PrimaryExchangeResolver // nil if exchange routing is not wired
 	nextID       int
 }
 
@@ -133,6 +141,12 @@ func (e *Executor) SetFailedOrderRecorder(recorder FailedOrderRecorder) {
 	e.failedOrders = recorder
 }
 
+// SetPrimaryExchangeResolver configures user-level exchange resolution for
+// explicit live spot routing checks.
+func (e *Executor) SetPrimaryExchangeResolver(resolver PrimaryExchangeResolver) {
+	e.exchanges = resolver
+}
+
 // SetNextID sets the starting ID for new positions (used for recovery).
 func (e *Executor) SetNextID(id int) {
 	e.mu.Lock()
@@ -165,6 +179,10 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*LivePosition, error) 
 
 	if plan.PositionSize <= 0 {
 		return nil, fmt.Errorf("invalid position size: %.2f", plan.PositionSize)
+	}
+
+	if err := e.ensureSupportedSpotExchange(opp.UserID); err != nil {
+		return nil, err
 	}
 
 	// determine order side and quote asset
@@ -315,6 +333,21 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*LivePosition, error) 
 	}
 
 	return pos, nil
+}
+
+func (e *Executor) ensureSupportedSpotExchange(userID int) error {
+	if e.exchanges == nil {
+		return nil
+	}
+
+	exchangeName, err := e.exchanges.PrimaryExchange(userID)
+	if err != nil {
+		return fmt.Errorf("live spot trading unavailable: %w", err)
+	}
+	if exchangeName != supportedLiveSpotExchange {
+		return errors.New(FormatUnsupportedSpotExchange(exchangeName))
+	}
+	return nil
 }
 
 // closes a live position by placing a market order and canceling sl/tp

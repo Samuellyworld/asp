@@ -209,6 +209,18 @@ func (m *mockFailedRecorder) RecordFailedOrder(ctx context.Context, userID int, 
 	return nil
 }
 
+type mockExchangeResolver struct {
+	exchange string
+	err      error
+}
+
+func (m *mockExchangeResolver) PrimaryExchange(userID int) (string, error) {
+	if m.err != nil {
+		return "", m.err
+	}
+	return m.exchange, nil
+}
+
 // helper to create a test opportunity
 func testOpp(symbol string, action claude.Action, sl, tp, size float64) *opportunity.Opportunity {
 	return &opportunity.Opportunity{
@@ -636,6 +648,16 @@ func TestExecutor_Execute_OrderPlaceError(t *testing.T) {
 	_, err := exec.Execute(opp)
 	if err == nil || !strings.Contains(err.Error(), "failed to place") {
 		t.Fatalf("expected order error, got: %v", err)
+	}
+}
+
+func TestExecutor_Execute_UnsupportedSpotExchange(t *testing.T) {
+	exec := NewExecutor(newMockOrders(), newMockKeys(), nil, nil)
+	exec.SetPrimaryExchangeResolver(&mockExchangeResolver{exchange: "bybit"})
+
+	_, err := exec.Execute(testOpp("BTCUSDT", claude.ActionBuy, 41800, 44200, 500))
+	if err == nil || !strings.Contains(err.Error(), "bybit") {
+		t.Fatalf("expected unsupported exchange error, got: %v", err)
 	}
 }
 
@@ -1179,6 +1201,16 @@ func TestFormatConfirmSuccess(t *testing.T) {
 	msg := FormatConfirmSuccess(config)
 	if !strings.Contains(msg, "Live mode ON") {
 		t.Fatal("should confirm live mode")
+	}
+}
+
+func TestFormatUnsupportedSpotExchange(t *testing.T) {
+	msg := FormatUnsupportedSpotExchange("bybit")
+	if !strings.Contains(msg, "bybit") {
+		t.Fatal("should include requested exchange")
+	}
+	if !strings.Contains(msg, "binance") {
+		t.Fatal("should mention supported live exchange")
 	}
 }
 

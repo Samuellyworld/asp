@@ -62,7 +62,7 @@ class DriftDetector:
         checks["accuracy_decay"] = accuracy_result
 
         # overall drift decision
-        drift_detected = (
+        drift_detected = bool(
             psi_results.get("drifted", False) or
             ks_results.get("drifted", False) or
             accuracy_result.get("drifted", False)
@@ -104,7 +104,7 @@ class DriftDetector:
             psi_values.append(psi)
 
         max_psi = max(psi_values) if psi_values else 0.0
-        drifted = max_psi > self.psi_threshold
+        drifted = bool(max_psi > self.psi_threshold)
 
         return {
             "psi_per_feature": [round(p, 4) for p in psi_values],
@@ -157,7 +157,7 @@ class DriftDetector:
             statistics.append(stat)
 
         min_p = min(p_values) if p_values else 1.0
-        drifted = min_p < self.ks_threshold
+        drifted = bool(min_p < self.ks_threshold)
 
         return {
             "p_values": [round(p, 6) for p in p_values],
@@ -173,7 +173,7 @@ class DriftDetector:
             return {"drifted": False, "reason": "no accuracy data"}
 
         decay = self.reference_accuracy - recent_accuracy
-        drifted = decay > self.accuracy_decay_threshold
+        drifted = bool(decay > self.accuracy_decay_threshold)
 
         return {
             "reference_accuracy": round(self.reference_accuracy, 4),

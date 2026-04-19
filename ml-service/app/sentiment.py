@@ -51,6 +51,11 @@ class SentimentAnalyzer:
 
     def _model_analyze(self, text: str) -> dict:
         """runs transformer model for sentiment classification"""
+        keyword_result = self._keyword_analyze(text)
+        if not self._has_crypto_context(text) and keyword_result["label"] == "NEUTRAL":
+            # Generic non-trading text should not be forced into trade sentiment buckets.
+            return {"score": 0.0, "label": "NEUTRAL", "confidence": 0.3}
+
         result = self._pipeline(text)[0]
         label = result["label"]
         confidence = result["score"]
@@ -75,11 +80,27 @@ class SentimentAnalyzer:
         elif abs(score) < 0.2:
             trading_label = "NEUTRAL"
 
+        # Prefer deterministic crypto-keyword signal when it is strong.
+        if keyword_result["label"] != "NEUTRAL" and keyword_result["confidence"] >= 0.55:
+            trading_label = keyword_result["label"]
+            score = keyword_result["score"]
+            confidence = max(confidence, keyword_result["confidence"])
+
         return {
             "score": round(score, 4),
             "label": trading_label,
             "confidence": round(confidence, 4),
         }
+
+    def _has_crypto_context(self, text: str) -> bool:
+        """checks whether text appears related to crypto/trading context"""
+        text_lower = text.lower()
+        crypto_terms = [
+            "btc", "eth", "usdt", "bitcoin", "ethereum", "crypto", "token", "coin",
+            "bullish", "bearish", "breakout", "breakdown", "support", "resistance",
+            "buy", "sell", "long", "short", "market", "rally", "dump", "pump",
+        ]
+        return any(re.search(r"\\b" + re.escape(term) + r"\\b", text_lower) for term in crypto_terms)
 
     def _keyword_analyze(self, text: str) -> dict:
         """fallback keyword-based sentiment analysis for crypto text"""

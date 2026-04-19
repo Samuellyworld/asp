@@ -1,0 +1,51 @@
+name: Deploy to Hetzner
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-hetzner-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Hetzner VPS
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    steps:
+      - name: Run deploy script over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: ${{ secrets.HETZNER_USER }}
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          port: ${{ secrets.HETZNER_SSH_PORT || '22' }}
+          script_stop: true
+          command_timeout: 40m
+          script: |
+            set -euo pipefail
+            PROJECT_DIR="${{ secrets.HETZNER_PROJECT_DIR }}"
+
+            if [ -z "$PROJECT_DIR" ]; then
+              echo "HETZNER_PROJECT_DIR is not set"
+              exit 1
+            fi
+
+            if [ ! -d "$PROJECT_DIR" ]; then
+              echo "Project directory not found: $PROJECT_DIR"
+              exit 1
+            fi
+
+            cd "$PROJECT_DIR"
+
+            if [ ! -x ./scripts/deploy.sh ]; then
+              chmod +x ./scripts/deploy.sh
+            fi
+
+            ./scripts/deploy.sh

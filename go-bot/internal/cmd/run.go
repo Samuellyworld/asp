@@ -12,14 +12,16 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/trading-bot/go-bot/internal/api"
 	"github.com/trading-bot/go-bot/internal/analysis"
+	"github.com/trading-bot/go-bot/internal/api"
+	"github.com/trading-bot/go-bot/internal/autotuner"
 	"github.com/trading-bot/go-bot/internal/binance"
 	"github.com/trading-bot/go-bot/internal/circuitbreaker"
 	"github.com/trading-bot/go-bot/internal/claude"
 	"github.com/trading-bot/go-bot/internal/config"
 	"github.com/trading-bot/go-bot/internal/database"
 	"github.com/trading-bot/go-bot/internal/datasources"
+	"github.com/trading-bot/go-bot/internal/dca"
 	"github.com/trading-bot/go-bot/internal/discord"
 	"github.com/trading-bot/go-bot/internal/exchange"
 	"github.com/trading-bot/go-bot/internal/leverage"
@@ -112,6 +114,11 @@ func runBot(cmd *cobra.Command, args []string) error {
 	userRepo := user.NewRepository(pg.Pool())
 	binanceClient := binance.NewClient(cfg.Binance.APIURL(), cfg.Binance.Testnet)
 	userSvc := user.NewService(userRepo, encryptor, auditLogger, binanceClient, cfg.Binance.Testnet)
+
+	// exchange registry — currently binance-only, extensible for multi-exchange
+	exchangeRegistry := exchange.NewRegistry()
+	_ = exchangeRegistry // available for multi-exchange routing
+	log.Printf("exchange registry initialized (primary: binance, testnet: %v)", cfg.Binance.Testnet)
 
 	watchRepo := watchlist.NewRepository(pg.Pool())
 	watchSvc := watchlist.NewService(watchRepo)
@@ -293,6 +300,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 	safetyChecker = livetrading.NewSafetyChecker(
 		safetyConfig, balanceProvider, liveExecutor, lossTracker, confirmMgr,
 	)
+	liveExecutor.SetSafetyChecker(safetyChecker)
 
 	liveMonitor := livetrading.NewMonitor(
 		liveExecutor, orderClient, keyDecryptor, prices, livetrading.DefaultMonitorConfig(),
@@ -313,9 +321,9 @@ func runBot(cmd *cobra.Command, args []string) error {
 	levBalanceProvider := &futuresBalanceAdapter{futures: futuresClient, keys: keyDecryptor}
 	levStatusProvider := &leverageStatusAdapter{userSvc: userSvc}
 	levSafetyConfig := leverage.SafetyConfig{
-		HardMaxLeverage:       cfg.Leverage.HardMaxLeverage,
-		UserMaxLeverage:       10, // default, per-user override later
-		MaxMarginPerTrade:     cfg.Leverage.MaxMarginPerTrade,
+		HardMaxLeverage:        cfg.Leverage.HardMaxLeverage,
+		UserMaxLeverage:        10, // default, per-user override later
+		MaxMarginPerTrade:      cfg.Leverage.MaxMarginPerTrade,
 		MinLiquidationDistance: cfg.Leverage.LiquidationWarningPct,
 		RequireLeverageEnabled: true,
 	}
@@ -349,6 +357,18 @@ func runBot(cmd *cobra.Command, args []string) error {
 	levLiveExecutor.SetCircuitBreaker(portfolioBreaker)
 	log.Printf("portfolio circuit breaker enabled (daily loss limit: $%.0f, max consecutive losses: %d, cooldown: %s)",
 		cbConfig.MaxDailyLoss, cbConfig.MaxConsecutiveLosses, cbConfig.CooldownDuration)
+
+	// --- DCA executor ---
+	dcaCfg := dca.DefaultConfig()
+	dcaPrices := &dcaPriceAdapter{ws: wsCache, rest: binanceClient}
+	dcaExecutor := dca.NewExecutor(dcaCfg, dcaPrices)
+	dcaExecutor.Start()
+	defer dcaExecutor.Stop()
+	log.Println("DCA executor started")
+
+	// --- auto-tuner (adaptive parameter optimization) ---
+	tuner := autotuner.NewAutoTuner(50, 30*time.Minute)
+	log.Println("auto-tuner initialized (window=50, eval=30m)")
 
 	// --- position recovery (restore open paper positions from database) ---
 	if err := recoverSpotPositions(ctx, posRepo, paperExecutor); err != nil {
@@ -394,6 +414,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 			LevPaperExecutor: levPaperExecutor,
 			LevLiveExecutor:  levLiveExecutor,
 			LevMonitor:       levPaperMonitor,
+			DCAExecutor:      dcaExecutor,
 		})
 
 		notifier.telegramBot = telegramBot
@@ -584,14 +605,35 @@ func runBot(cmd *cobra.Command, args []string) error {
 	// --- monitor event routing ---
 	// wire these BEFORE starting monitors to avoid dropping events from the first scan cycle
 
-	// paper trading events -> notifications
+	// paper trading events -> notifications + auto-tuner
 	paperMonitor.OnEvent = func(event papertrading.Event) {
 		routePaperEvent(event, telegramBot, notifier)
+		// feed closed trades to auto-tuner for parameter optimization
+		if event.Position != nil && (event.Type == papertrading.EventTPHit || event.Type == papertrading.EventSLHit) {
+			tuner.RecordTrade(autotuner.TradeResult{
+				Symbol:    event.Position.Symbol,
+				Direction: string(event.Position.Action),
+				PnLPct:    event.Position.ClosedPnLPercent(),
+				Timestamp: time.Now(),
+			})
+		}
 	}
 
-	// live trading events -> notifications
+	// live trading events -> notifications + auto-tuner
 	liveMonitor.OnEvent = func(event livetrading.Event) {
 		routeLiveEvent(event, telegramBot, notifier)
+		if event.Position != nil && (event.Type == livetrading.EventTPHit || event.Type == livetrading.EventSLHit) {
+			pnlPct := 0.0
+			if event.Position.PositionSize > 0 {
+				pnlPct = (event.Position.PnL / event.Position.PositionSize) * 100
+			}
+			tuner.RecordTrade(autotuner.TradeResult{
+				Symbol:    event.Position.Symbol,
+				Direction: string(event.Position.Side),
+				PnLPct:    pnlPct,
+				Timestamp: time.Now(),
+			})
+		}
 	}
 
 	// leverage paper monitor events -> notifications
@@ -616,8 +658,8 @@ func runBot(cmd *cobra.Command, args []string) error {
 	reconciler.SetOnMismatch(func(m livetrading.Mismatch) {
 		msg := fmt.Sprintf("⚠️ RECONCILIATION ALERT\n%s: %s\n%s", m.Symbol, m.Type, m.Details)
 		slog.Error("reconciliation mismatch", "position", m.PositionID, "type", m.Type, "details", m.Details)
-		if telegramBot != nil {
-			if err := telegramBot.SendMessage(0, msg); err != nil {
+		if telegramBot != nil && cfg.Telegram.AdminChatID != 0 {
+			if err := telegramBot.SendMessage(cfg.Telegram.AdminChatID, msg); err != nil {
 				slog.Warn("failed to send reconciliation alert via telegram", "error", err)
 			}
 		}
@@ -637,11 +679,44 @@ func runBot(cmd *cobra.Command, args []string) error {
 	// infrastructure watchdog — alerts on consecutive DB failures
 	watchdog := NewInfraWatchdog(pg.Pool(), nil, 60*time.Second)
 	if telegramBot != nil {
-		watchdog.SetAlertSender(telegramBot, 0)
+		watchdog.SetAlertSender(telegramBot, cfg.Telegram.AdminChatID)
 	}
 	watchdog.Start(ctx)
 	defer watchdog.Stop()
 	log.Println("infrastructure watchdog started (60s interval)")
+
+	// --- 24h API key validation loop ---
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				slog.Info("starting 24h API key validation cycle")
+				activeUsers, err := userSvc.ListActive(ctx)
+				if err != nil {
+					slog.Error("key validation: failed to list users", "error", err)
+					continue
+				}
+				for _, u := range activeUsers {
+					apiKey, apiSecret, err := userSvc.GetDecryptedCredentials(ctx, u.ID)
+					if err != nil || apiKey == "" {
+						continue
+					}
+					perms, err := binanceClient.ValidateKeys(ctx, apiKey, apiSecret)
+					if err != nil {
+						slog.Warn("key validation failed", "user_id", u.ID, "error", err)
+					} else {
+						slog.Info("key validation passed", "user_id", u.ID, "spot", perms.Spot, "futures", perms.Futures)
+					}
+				}
+				slog.Info("24h API key validation cycle complete")
+			}
+		}
+	}()
+	log.Println("24h API key validation loop started")
 
 	// --- wait for shutdown ---
 
@@ -694,7 +769,9 @@ func routePaperEvent(event papertrading.Event, tgBot *telegram.Bot, notifier *sc
 
 	// route based on platform
 	if event.Position.Platform == "discord" && notifier.discordBot != nil {
-		if err := notifier.discordBot.SendMessage("", msg); err != nil { log.Printf("warning: failed to send notification: %v", err) }
+		if err := notifier.discordBot.SendMessage("", msg); err != nil {
+			log.Printf("warning: failed to send notification: %v", err)
+		}
 	} else if tgBot != nil {
 		// would need chat id — in production, stored on position or user
 		log.Printf("paper event [%s]: %s", event.Type, msg)
@@ -723,7 +800,9 @@ func routeLiveEvent(event livetrading.Event, tgBot *telegram.Bot, notifier *scan
 	}
 
 	if event.Position.Platform == "discord" && notifier.discordBot != nil {
-		if err := notifier.discordBot.SendMessage("", msg); err != nil { log.Printf("warning: failed to send notification: %v", err) }
+		if err := notifier.discordBot.SendMessage("", msg); err != nil {
+			log.Printf("warning: failed to send notification: %v", err)
+		}
 	} else if tgBot != nil {
 		log.Printf("live event [%s]: %s", event.Type, msg)
 	}
@@ -758,7 +837,9 @@ func routeLeverageEvent(event leverage.LevEvent, tgBot *telegram.Bot, notifier *
 	}
 
 	if event.Position.Platform == "discord" && notifier.discordBot != nil {
-		if err := notifier.discordBot.SendMessage("", msg); err != nil { log.Printf("warning: failed to send notification: %v", err) }
+		if err := notifier.discordBot.SendMessage("", msg); err != nil {
+			log.Printf("warning: failed to send notification: %v", err)
+		}
 	} else if tgBot != nil {
 		log.Printf("leverage event [%s]: %s", event.Type, msg)
 	}

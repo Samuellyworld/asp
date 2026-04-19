@@ -21,6 +21,8 @@ type mockOrders struct {
 	nextID       int64
 	orders       map[int64]*exchange.Order
 	placeErr     error
+	slPlaceErr   error // separate SL error (nil = use placeErr)
+	reversalErr  error // error for the emergency reversal market order
 	cancelErr    error
 	placedCount  int
 	cancelCount  int
@@ -34,6 +36,11 @@ func newMockOrders() *mockOrders {
 func (m *mockOrders) PlaceOrder(symbol string, side exchange.OrderSide, orderType exchange.OrderType, quantity, price float64, apiKey, apiSecret string) (*exchange.Order, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// reversalErr fires on any close-side market order (emergency reversal)
+	if m.reversalErr != nil && m.placedCount > 0 && orderType == exchange.OrderTypeMarket {
+		return nil, m.reversalErr
+	}
 
 	if m.placeErr != nil {
 		return nil, m.placeErr
@@ -67,6 +74,9 @@ func (m *mockOrders) PlaceStopLoss(symbol string, side exchange.OrderSide, quant
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if m.slPlaceErr != nil {
+		return nil, m.slPlaceErr
+	}
 	if m.placeErr != nil {
 		return nil, m.placeErr
 	}
@@ -186,6 +196,17 @@ type mockPositionCounter struct {
 
 func (m *mockPositionCounter) OpenPositionCount(userID int) int {
 	return m.counts[userID]
+}
+
+type mockFailedRecorder struct {
+	count   int
+	lastErr string
+}
+
+func (m *mockFailedRecorder) RecordFailedOrder(ctx context.Context, userID int, positionID, symbol, side, orderType string, quantity, price, stopPrice float64, tradeType, errorMsg string) error {
+	m.count++
+	m.lastErr = errorMsg
+	return nil
 }
 
 // helper to create a test opportunity
@@ -672,6 +693,64 @@ func TestExecutor_Execute_NoSLTP(t *testing.T) {
 	// only 1 market order
 	if orders.placedCount != 1 {
 		t.Fatalf("expected 1 order (market only), got %d", orders.placedCount)
+	}
+}
+
+func TestExecutor_Execute_SLFail_ReversalSucceeds(t *testing.T) {
+	orders := newMockOrders()
+	orders.slPlaceErr = fmt.Errorf("SL rejected by exchange")
+	exec := NewExecutor(orders, newMockKeys(), nil, nil)
+
+	opp := testOpp("BTCUSDT", claude.ActionBuy, 41800, 44200, 500)
+	_, err := exec.Execute(opp)
+	if err == nil {
+		t.Fatal("expected error when SL fails")
+	}
+	if !strings.Contains(err.Error(), "main order reversed") {
+		t.Fatalf("expected reversal message, got: %v", err)
+	}
+	// should not contain CRITICAL — reversal succeeded
+	if strings.Contains(err.Error(), "CRITICAL") {
+		t.Fatalf("reversal succeeded, should not be CRITICAL: %v", err)
+	}
+}
+
+func TestExecutor_Execute_SLFail_ReversalAlsoFails(t *testing.T) {
+	orders := newMockOrders()
+	orders.slPlaceErr = fmt.Errorf("SL rejected")
+	orders.reversalErr = fmt.Errorf("exchange timeout")
+	exec := NewExecutor(orders, newMockKeys(), nil, nil)
+
+	opp := testOpp("BTCUSDT", claude.ActionBuy, 41800, 44200, 500)
+	_, err := exec.Execute(opp)
+	if err == nil {
+		t.Fatal("expected error when SL and reversal both fail")
+	}
+	if !strings.Contains(err.Error(), "CRITICAL") {
+		t.Fatalf("expected CRITICAL error for naked position, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "naked position") {
+		t.Fatalf("expected 'naked position' in error, got: %v", err)
+	}
+}
+
+func TestExecutor_Execute_SLFail_DeadLetterRecorded(t *testing.T) {
+	orders := newMockOrders()
+	orders.slPlaceErr = fmt.Errorf("SL rejected")
+	orders.reversalErr = fmt.Errorf("exchange timeout")
+
+	recorder := &mockFailedRecorder{}
+	exec := NewExecutor(orders, newMockKeys(), nil, nil)
+	exec.SetFailedOrderRecorder(recorder)
+
+	opp := testOpp("BTCUSDT", claude.ActionBuy, 41800, 44200, 500)
+	_, _ = exec.Execute(opp)
+
+	if recorder.count != 1 {
+		t.Fatalf("expected 1 dead-letter record, got %d", recorder.count)
+	}
+	if !strings.Contains(recorder.lastErr, "reversal also failed") {
+		t.Fatalf("expected reversal failure in dead-letter, got: %s", recorder.lastErr)
 	}
 }
 

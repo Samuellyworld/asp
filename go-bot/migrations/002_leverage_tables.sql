@@ -11,8 +11,8 @@ CREATE TABLE IF NOT EXISTS funding_fee_log (
     recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_funding_fee_user ON funding_fee_log(user_id);
-CREATE INDEX idx_funding_fee_position ON funding_fee_log(position_id);
+CREATE INDEX IF NOT EXISTS idx_funding_fee_user ON funding_fee_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_funding_fee_position ON funding_fee_log(position_id);
 
 CREATE TABLE IF NOT EXISTS leverage_confirmations (
     id SERIAL PRIMARY KEY,
@@ -35,5 +35,5 @@ CREATE TABLE IF NOT EXISTS liquidation_alerts (
     alerted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_liq_alerts_user ON liquidation_alerts(user_id);
-CREATE INDEX idx_liq_alerts_position ON liquidation_alerts(position_id);
+CREATE INDEX IF NOT EXISTS idx_liq_alerts_user ON liquidation_alerts(user_id);
+CREATE INDEX IF NOT EXISTS idx_liq_alerts_position ON liquidation_alerts(position_id);

@@ -73,7 +73,10 @@ mod tests {
         assert!((result[4] - 3.0).abs() < 1e-10);
         // each subsequent value should increase since input is rising
         for i in 5..20 {
-            assert!(result[i] > result[i - 1], "ema should rise with rising input");
+            assert!(
+                result[i] > result[i - 1],
+                "ema should rise with rising input"
+            );
         }
     }
 
@@ -116,16 +119,18 @@ mod tests {
     fn test_ema_known_values() {
         // known ema(10) for sequential data
         let values: Vec<f64> = vec![
-            22.27, 22.19, 22.08, 22.17, 22.18,
-            22.13, 22.23, 22.43, 22.24, 22.29,
-            22.15, 22.39, 22.38, 22.61, 22.45,
+            22.27, 22.19, 22.08, 22.17, 22.18, 22.13, 22.23, 22.43, 22.24, 22.29, 22.15, 22.39,
+            22.38, 22.61, 22.45,
         ];
         let result = calculate(&values, 10);
         // sma of first 10: sum / 10
         let sma: f64 = values[..10].iter().sum::<f64>() / 10.0;
         assert!((result[9] - sma).abs() < 1e-10);
         // ema should follow the trend
-        assert!(result[14] > result[9], "ema should rise with generally rising prices");
+        assert!(
+            result[14] > result[9],
+            "ema should rise with generally rising prices"
+        );
     }
 
     #[test]

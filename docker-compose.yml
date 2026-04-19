@@ -51,6 +51,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      rust-engine:
+        condition: service_healthy
+      ml-service:
+        condition: service_healthy
     environment:
       - DATABASE_HOST=postgres
       - DATABASE_PORT=5432
@@ -63,6 +67,7 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-redis_secret}
       - SECURITY_MASTER_KEY=${SECURITY_MASTER_KEY}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_ADMIN_CHAT_ID=${TELEGRAM_ADMIN_CHAT_ID:-0}
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
       - DISCORD_APPLICATION_ID=${DISCORD_APPLICATION_ID}
       - WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
@@ -92,6 +97,9 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
     ports:
       - "${GO_BOT_PORT:-8080}:8080"
+    volumes:
+      - ./migrations:/app/root-migrations:ro
+      - ./go-bot/migrations:/app/migrations:ro
     networks:
       - trading-bot-network
 
@@ -106,6 +114,12 @@ services:
       - RUST_LOG=${RUST_LOG:-info}
     ports:
       - "${RUST_GRPC_PORT:-50051}:50051"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 50051 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     networks:
       - trading-bot-network
 
@@ -123,6 +137,48 @@ services:
       - "${ML_SERVICE_PORT:-8000}:8000"
     volumes:
       - ml_models:/app/models
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - trading-bot-network
+
+  # prometheus - metrics collection
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: trading-bot-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=30d'
+    networks:
+      - trading-bot-network
+
+  # grafana - dashboards and visualization
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: trading-bot-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
     networks:
       - trading-bot-network
 
@@ -132,6 +188,10 @@ volumes:
   redis_data:
     driver: local
   ml_models:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
     driver: local
 
 networks:

@@ -1169,12 +1169,21 @@ func TestWizardFlow_Complete(t *testing.T) {
 
 	env.bot.reset()
 
+	// select exchange
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "binance"))
+	msg := env.bot.lastMessage()
+	if !strings.Contains(msg, "exchange set to") {
+		t.Errorf("expected exchange confirmation, got: %s", msg)
+	}
+
+	env.bot.reset()
+
 	// send api key
 	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "my-api-key-12345"))
 	if len(env.bot.deletes) == 0 {
 		t.Error("expected api key message to be deleted")
 	}
-	msg := env.bot.lastMessage()
+	msg = env.bot.lastMessage()
 	if !strings.Contains(msg, "api key received") {
 		t.Errorf("expected key confirmation, got: %s", msg)
 	}
@@ -1236,6 +1245,10 @@ func TestWizardFlow_ValidationFails(t *testing.T) {
 
 	// start setup
 	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "/setup"))
+	env.bot.reset()
+
+	// select exchange
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, "binance"))
 	env.bot.reset()
 
 	// send api key

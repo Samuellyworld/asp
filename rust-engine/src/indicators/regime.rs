@@ -164,7 +164,8 @@ mod tests {
         // a strong trend should be classified as trending or volatile
         assert!(
             result.regime == "trending" || result.regime == "volatile",
-            "strong trend should be trending or volatile, got {}", result.regime
+            "strong trend should be trending or volatile, got {}",
+            result.regime
         );
     }
 
@@ -173,16 +174,22 @@ mod tests {
         let (h, l, c) = make_quiet_market(60);
         let result = classify(&h, &l, &c, 14).unwrap();
         // quiet market should show low volatility
-        assert!(result.atr_percent < 2.0,
-            "quiet market should have low atr%, got {}", result.atr_percent);
+        assert!(
+            result.atr_percent < 2.0,
+            "quiet market should have low atr%, got {}",
+            result.atr_percent
+        );
     }
 
     #[test]
     fn test_regime_volatile() {
         let (h, l, c) = make_volatile_market(60);
         let result = classify(&h, &l, &c, 14).unwrap();
-        assert!(result.atr_percent > 1.5,
-            "volatile market should have high atr%, got {}", result.atr_percent);
+        assert!(
+            result.atr_percent > 1.5,
+            "volatile market should have high atr%, got {}",
+            result.atr_percent
+        );
     }
 
     #[test]
@@ -196,8 +203,11 @@ mod tests {
     fn test_regime_confidence_range() {
         let (h, l, c) = make_strong_trend(60);
         let result = classify(&h, &l, &c, 14).unwrap();
-        assert!(result.confidence >= 0.0 && result.confidence <= 100.0,
-            "confidence out of range: {}", result.confidence);
+        assert!(
+            result.confidence >= 0.0 && result.confidence <= 100.0,
+            "confidence out of range: {}",
+            result.confidence
+        );
     }
 
     #[test]
@@ -221,7 +231,9 @@ mod tests {
         let (h, l, c) = make_strong_trend(60);
         let result = classify(&h, &l, &c, 14).unwrap();
         // uptrend data -> trend direction should not be DOWN
-        assert_ne!(result.trend_dir, "DOWN",
-            "uptrend data should not have DOWN direction");
+        assert_ne!(
+            result.trend_dir, "DOWN",
+            "uptrend data should not have DOWN direction"
+        );
     }
 }

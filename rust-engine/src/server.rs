@@ -41,7 +41,11 @@ impl TechnicalIndicators for IndicatorService {
     ) -> Result<Response<RsiResponse>, Status> {
         let req = request.into_inner();
         let closes = extract_closes(&req.candles);
-        let period = if req.period > 0 { req.period as usize } else { 14 };
+        let period = if req.period > 0 {
+            req.period as usize
+        } else {
+            14
+        };
 
         match rsi::calculate(&closes, period) {
             Some(result) => Ok(Response::new(RsiResponse {
@@ -61,9 +65,21 @@ impl TechnicalIndicators for IndicatorService {
     ) -> Result<Response<MacdResponse>, Status> {
         let req = request.into_inner();
         let closes = extract_closes(&req.candles);
-        let fast = if req.fast_period > 0 { req.fast_period as usize } else { 12 };
-        let slow = if req.slow_period > 0 { req.slow_period as usize } else { 26 };
-        let signal = if req.signal_period > 0 { req.signal_period as usize } else { 9 };
+        let fast = if req.fast_period > 0 {
+            req.fast_period as usize
+        } else {
+            12
+        };
+        let slow = if req.slow_period > 0 {
+            req.slow_period as usize
+        } else {
+            26
+        };
+        let signal = if req.signal_period > 0 {
+            req.signal_period as usize
+        } else {
+            9
+        };
 
         match macd::calculate(&closes, fast, slow, signal) {
             Some(result) => Ok(Response::new(MacdResponse {
@@ -88,7 +104,11 @@ impl TechnicalIndicators for IndicatorService {
     ) -> Result<Response<BollingerResponse>, Status> {
         let req = request.into_inner();
         let closes = extract_closes(&req.candles);
-        let period = if req.period > 0 { req.period as usize } else { 20 };
+        let period = if req.period > 0 {
+            req.period as usize
+        } else {
+            20
+        };
         let std_dev = if req.std_dev > 0.0 { req.std_dev } else { 2.0 };
 
         match bollinger::calculate(&closes, period, std_dev) {
@@ -115,7 +135,11 @@ impl TechnicalIndicators for IndicatorService {
     ) -> Result<Response<EmaResponse>, Status> {
         let req = request.into_inner();
         let closes = extract_closes(&req.candles);
-        let period = if req.period > 0 { req.period as usize } else { 21 };
+        let period = if req.period > 0 {
+            req.period as usize
+        } else {
+            21
+        };
 
         if closes.len() < period {
             return Err(Status::invalid_argument(
@@ -140,8 +164,16 @@ impl TechnicalIndicators for IndicatorService {
     ) -> Result<Response<VolumeResponse>, Status> {
         let req = request.into_inner();
         let volumes = extract_volumes(&req.candles);
-        let lookback = if req.lookback > 0 { req.lookback as usize } else { 20 };
-        let threshold = if req.threshold > 0.0 { req.threshold } else { 2.0 };
+        let lookback = if req.lookback > 0 {
+            req.lookback as usize
+        } else {
+            20
+        };
+        let threshold = if req.threshold > 0.0 {
+            req.threshold
+        } else {
+            2.0
+        };
 
         match volume::detect(&volumes, lookback, threshold) {
             Some(result) => Ok(Response::new(VolumeResponse {
@@ -165,7 +197,11 @@ impl TechnicalIndicators for IndicatorService {
         let highs = extract_highs(&req.candles);
         let lows = extract_lows(&req.candles);
         let closes = extract_closes(&req.candles);
-        let period = if req.period > 0 { req.period as usize } else { 14 };
+        let period = if req.period > 0 {
+            req.period as usize
+        } else {
+            14
+        };
 
         match atr::calculate(&highs, &lows, &closes, period) {
             Some(result) => Ok(Response::new(AtrResponse {
@@ -188,7 +224,11 @@ impl TechnicalIndicators for IndicatorService {
         let highs = extract_highs(&req.candles);
         let lows = extract_lows(&req.candles);
         let closes = extract_closes(&req.candles);
-        let period = if req.period > 0 { req.period as usize } else { 14 };
+        let period = if req.period > 0 {
+            req.period as usize
+        } else {
+            14
+        };
 
         match adx::calculate(&highs, &lows, &closes, period) {
             Some(result) => Ok(Response::new(AdxResponse {
@@ -213,9 +253,21 @@ impl TechnicalIndicators for IndicatorService {
         let highs = extract_highs(&req.candles);
         let lows = extract_lows(&req.candles);
         let closes = extract_closes(&req.candles);
-        let k_period = if req.k_period > 0 { req.k_period as usize } else { 14 };
-        let d_period = if req.d_period > 0 { req.d_period as usize } else { 3 };
-        let smooth = if req.smooth > 0 { req.smooth as usize } else { 3 };
+        let k_period = if req.k_period > 0 {
+            req.k_period as usize
+        } else {
+            14
+        };
+        let d_period = if req.d_period > 0 {
+            req.d_period as usize
+        } else {
+            3
+        };
+        let smooth = if req.smooth > 0 {
+            req.smooth as usize
+        } else {
+            3
+        };
 
         match stochastic::calculate(&highs, &lows, &closes, k_period, d_period, smooth) {
             Some(result) => Ok(Response::new(StochasticResponse {
@@ -239,7 +291,11 @@ impl TechnicalIndicators for IndicatorService {
         let highs = extract_highs(&req.candles);
         let lows = extract_lows(&req.candles);
         let closes = extract_closes(&req.candles);
-        let period = if req.period > 0 { req.period as usize } else { 14 };
+        let period = if req.period > 0 {
+            req.period as usize
+        } else {
+            14
+        };
 
         match regime::classify(&highs, &lows, &closes, period) {
             Some(result) => Ok(Response::new(RegimeResponse {
@@ -269,15 +325,51 @@ impl TechnicalIndicators for IndicatorService {
         let lows = extract_lows(&req.candles);
 
         // defaults
-        let rsi_period = if req.rsi_period > 0 { req.rsi_period as usize } else { 14 };
-        let macd_fast = if req.macd_fast > 0 { req.macd_fast as usize } else { 12 };
-        let macd_slow = if req.macd_slow > 0 { req.macd_slow as usize } else { 26 };
-        let macd_signal = if req.macd_signal > 0 { req.macd_signal as usize } else { 9 };
-        let bb_period = if req.bb_period > 0 { req.bb_period as usize } else { 20 };
-        let bb_std_dev = if req.bb_std_dev > 0.0 { req.bb_std_dev } else { 2.0 };
-        let ema_period = if req.ema_period > 0 { req.ema_period as usize } else { 21 };
-        let vol_lookback = if req.volume_lookback > 0 { req.volume_lookback as usize } else { 20 };
-        let vol_threshold = if req.volume_threshold > 0.0 { req.volume_threshold } else { 2.0 };
+        let rsi_period = if req.rsi_period > 0 {
+            req.rsi_period as usize
+        } else {
+            14
+        };
+        let macd_fast = if req.macd_fast > 0 {
+            req.macd_fast as usize
+        } else {
+            12
+        };
+        let macd_slow = if req.macd_slow > 0 {
+            req.macd_slow as usize
+        } else {
+            26
+        };
+        let macd_signal = if req.macd_signal > 0 {
+            req.macd_signal as usize
+        } else {
+            9
+        };
+        let bb_period = if req.bb_period > 0 {
+            req.bb_period as usize
+        } else {
+            20
+        };
+        let bb_std_dev = if req.bb_std_dev > 0.0 {
+            req.bb_std_dev
+        } else {
+            2.0
+        };
+        let ema_period = if req.ema_period > 0 {
+            req.ema_period as usize
+        } else {
+            21
+        };
+        let vol_lookback = if req.volume_lookback > 0 {
+            req.volume_lookback as usize
+        } else {
+            20
+        };
+        let vol_threshold = if req.volume_threshold > 0.0 {
+            req.volume_threshold
+        } else {
+            2.0
+        };
 
         // compute each indicator, use None if insufficient data
         let rsi_result = rsi::calculate(&closes, rsi_period);
@@ -303,7 +395,7 @@ impl TechnicalIndicators for IndicatorService {
 
         let rsi_resp = rsi_result.map(|r| {
             match r.signal.as_str() {
-                "OVERSOLD" => bullish += 1,   // oversold = potential buy
+                "OVERSOLD" => bullish += 1, // oversold = potential buy
                 "OVERBOUGHT" => bearish += 1,
                 _ => {}
             }
@@ -394,37 +486,31 @@ impl TechnicalIndicators for IndicatorService {
             }
         });
 
-        let atr_resp = atr_result.map(|r| {
-            AtrResponse {
-                value: r.value,
-                percent: r.percent,
-                signal: r.signal,
-                series: r.series,
-            }
+        let atr_resp = atr_result.map(|r| AtrResponse {
+            value: r.value,
+            percent: r.percent,
+            signal: r.signal,
+            series: r.series,
         });
 
-        let adx_resp = adx_result.map(|r| {
-            AdxResponse {
-                value: r.value,
-                plus_di: r.plus_di,
-                minus_di: r.minus_di,
-                signal: r.signal,
-                trend_dir: r.trend_dir,
-                series: r.series,
-            }
+        let adx_resp = adx_result.map(|r| AdxResponse {
+            value: r.value,
+            plus_di: r.plus_di,
+            minus_di: r.minus_di,
+            signal: r.signal,
+            trend_dir: r.trend_dir,
+            series: r.series,
         });
 
-        let regime_resp = regime_result.map(|r| {
-            RegimeResponse {
-                regime: r.regime,
-                adx: r.adx,
-                atr_percent: r.atr_percent,
-                plus_di: r.plus_di,
-                minus_di: r.minus_di,
-                trend_dir: r.trend_dir,
-                confidence: r.confidence,
-                description: r.description,
-            }
+        let regime_resp = regime_result.map(|r| RegimeResponse {
+            regime: r.regime,
+            adx: r.adx,
+            atr_percent: r.atr_percent,
+            plus_di: r.plus_di,
+            minus_di: r.minus_di,
+            trend_dir: r.trend_dir,
+            confidence: r.confidence,
+            description: r.description,
         });
 
         let overall_signal = determine_overall_signal(bullish, bearish);
@@ -463,16 +549,19 @@ mod tests {
     use super::*;
 
     fn make_candles(prices: &[f64], volumes: &[f64]) -> Vec<Candle> {
-        prices.iter().zip(volumes.iter()).enumerate().map(|(i, (p, v))| {
-            Candle {
+        prices
+            .iter()
+            .zip(volumes.iter())
+            .enumerate()
+            .map(|(i, (p, v))| Candle {
                 open: *p,
                 high: *p * 1.01,
                 low: *p * 0.99,
                 close: *p,
                 volume: *v,
                 timestamp: i as i64,
-            }
-        }).collect()
+            })
+            .collect()
     }
 
     fn make_price_candles(prices: &[f64]) -> Vec<Candle> {

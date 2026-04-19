@@ -9,6 +9,7 @@ import (
 // wizard step identifiers
 const (
 	StepNone      = ""
+	StepExchange  = "exchange"
 	StepAPIKey    = "api_key"
 	StepAPISecret = "api_secret"
 	StepConfirm   = "confirm"
@@ -18,6 +19,7 @@ const (
 type WizardState struct {
 	UserID    int
 	Step      string
+	Exchange  string // selected exchange name (e.g. "binance", "bybit")
 	APIKey    string
 	APISecret string
 }
@@ -40,8 +42,23 @@ func (w *SetupWizard) Start(telegramID int64, userID int) {
 	defer w.mu.Unlock()
 	w.sessions[telegramID] = &WizardState{
 		UserID: userID,
-		Step:   StepAPIKey,
+		Step:   StepExchange,
 	}
+}
+
+// SetExchange stores the chosen exchange and advances to API key step
+func (w *SetupWizard) SetExchange(telegramID int64, exchange string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	session, ok := w.sessions[telegramID]
+	if !ok || session.Step != StepExchange {
+		return fmt.Errorf("no active setup session expecting exchange selection")
+	}
+
+	session.Exchange = exchange
+	session.Step = StepAPIKey
+	return nil
 }
 
 // getSession returns the current wizard state for a user (nil if not in setup)
@@ -94,16 +111,17 @@ func (w *SetupWizard) SetAPISecret(telegramID int64, apiSecret string) error {
 }
 
 // complete finalizes and clears the session, returning the collected credentials
-func (w *SetupWizard) Complete(telegramID int64) (userID int, apiKey, apiSecret string, err error) {
+func (w *SetupWizard) Complete(telegramID int64) (userID int, exchange, apiKey, apiSecret string, err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
 	session, ok := w.sessions[telegramID]
 	if !ok || session.Step != StepConfirm {
-		return 0, "", "", fmt.Errorf("no active setup session ready to complete")
+		return 0, "", "", "", fmt.Errorf("no active setup session ready to complete")
 	}
 
 	userID = session.UserID
+	exchange = session.Exchange
 	apiKey = session.APIKey
 	apiSecret = session.APISecret
 
@@ -112,7 +130,7 @@ func (w *SetupWizard) Complete(telegramID int64) (userID int, apiKey, apiSecret 
 	session.APISecret = ""
 	delete(w.sessions, telegramID)
 
-	return userID, apiKey, apiSecret, nil
+	return userID, exchange, apiKey, apiSecret, nil
 }
 
 // isInSetup checks if a user is currently in the setup flow

@@ -1,16 +1,14 @@
 // average directional index calculation
 // measures trend strength on a 0-100 scale using +DI and -DI
 
-use super::ema;
-
 /// adx result with trend strength and directional indicators
 pub struct ADXResult {
-    pub value: f64,          // adx value 0-100
-    pub plus_di: f64,        // +di (bullish directional indicator)
-    pub minus_di: f64,       // -di (bearish directional indicator)
-    pub signal: String,      // STRONG_TREND, TRENDING, WEAK, NO_TREND
-    pub trend_dir: String,   // UP (+di > -di), DOWN (-di > +di), NEUTRAL
-    pub series: Vec<f64>,    // full adx series
+    pub value: f64,        // adx value 0-100
+    pub plus_di: f64,      // +di (bullish directional indicator)
+    pub minus_di: f64,     // -di (bearish directional indicator)
+    pub signal: String,    // STRONG_TREND, TRENDING, WEAK, NO_TREND
+    pub trend_dir: String, // UP (+di > -di), DOWN (-di > +di), NEUTRAL
+    pub series: Vec<f64>,  // full adx series
 }
 
 /// calculates ADX from ohlc data.
@@ -71,13 +69,25 @@ pub fn calculate(highs: &[f64], lows: &[f64], closes: &[f64], period: usize) -> 
 
     for i in 0..n {
         let atr = smoothed_tr[i];
-        let pdi = if atr > 1e-10 { smoothed_plus_dm[i] / atr * 100.0 } else { 0.0 };
-        let mdi = if atr > 1e-10 { smoothed_minus_dm[i] / atr * 100.0 } else { 0.0 };
+        let pdi = if atr > 1e-10 {
+            smoothed_plus_dm[i] / atr * 100.0
+        } else {
+            0.0
+        };
+        let mdi = if atr > 1e-10 {
+            smoothed_minus_dm[i] / atr * 100.0
+        } else {
+            0.0
+        };
         plus_di_series.push(pdi);
         minus_di_series.push(mdi);
 
         let sum = pdi + mdi;
-        let dx = if sum > 1e-10 { (pdi - mdi).abs() / sum * 100.0 } else { 0.0 };
+        let dx = if sum > 1e-10 {
+            (pdi - mdi).abs() / sum * 100.0
+        } else {
+            0.0
+        };
         dx_series.push(dx);
     }
 
@@ -87,12 +97,13 @@ pub fn calculate(highs: &[f64], lows: &[f64], closes: &[f64], period: usize) -> 
         return None;
     }
 
-    // build full output series with leading zeros
-    // total leading zeros in final adx series = period*2 - 1
-    let mut series = vec![0.0; period * 2 - 1];
+    // build true-range-aligned output series (length = len - 1).
+    // ADX needs two Wilder windows; the first valid value appears after
+    // `period * 2 - 2` true-range entries.
+    let mut series = vec![0.0; period * 2 - 2];
     series.extend_from_slice(&adx_raw);
 
-    // pad if needed to match len-1
+    // pad if needed to match len - 1
     while series.len() < len - 1 {
         series.push(0.0);
     }
@@ -110,7 +121,14 @@ pub fn calculate(highs: &[f64], lows: &[f64], closes: &[f64], period: usize) -> 
         "NEUTRAL".to_string()
     };
 
-    Some(ADXResult { value, plus_di, minus_di, signal, trend_dir, series })
+    Some(ADXResult {
+        value,
+        plus_di,
+        minus_di,
+        signal,
+        trend_dir,
+        series,
+    })
 }
 
 /// wilder's smoothed average (first value = simple sum, then recursive)
@@ -192,8 +210,11 @@ mod tests {
     fn test_adx_uptrend_shows_trend() {
         let (h, l, c) = make_strong_uptrend(60);
         let result = calculate(&h, &l, &c, 14).unwrap();
-        assert!(result.value > 20.0,
-            "strong uptrend should have high adx, got {}", result.value);
+        assert!(
+            result.value > 20.0,
+            "strong uptrend should have high adx, got {}",
+            result.value
+        );
         assert_eq!(result.trend_dir, "UP");
     }
 
@@ -201,8 +222,11 @@ mod tests {
     fn test_adx_downtrend_shows_trend() {
         let (h, l, c) = make_strong_downtrend(60);
         let result = calculate(&h, &l, &c, 14).unwrap();
-        assert!(result.value > 20.0,
-            "strong downtrend should have high adx, got {}", result.value);
+        assert!(
+            result.value > 20.0,
+            "strong downtrend should have high adx, got {}",
+            result.value
+        );
         assert_eq!(result.trend_dir, "DOWN");
     }
 
@@ -210,16 +234,22 @@ mod tests {
     fn test_adx_sideways_low() {
         let (h, l, c) = make_sideways(60);
         let result = calculate(&h, &l, &c, 14).unwrap();
-        assert!(result.value < 30.0,
-            "sideways market should have low adx, got {}", result.value);
+        assert!(
+            result.value < 30.0,
+            "sideways market should have low adx, got {}",
+            result.value
+        );
     }
 
     #[test]
     fn test_adx_range() {
         let (h, l, c) = make_strong_uptrend(60);
         let result = calculate(&h, &l, &c, 14).unwrap();
-        assert!(result.value >= 0.0 && result.value <= 100.0,
-            "adx should be 0-100, got {}", result.value);
+        assert!(
+            result.value >= 0.0 && result.value <= 100.0,
+            "adx should be 0-100, got {}",
+            result.value
+        );
     }
 
     #[test]
@@ -234,16 +264,24 @@ mod tests {
     fn test_adx_uptrend_plus_di_greater() {
         let (h, l, c) = make_strong_uptrend(60);
         let result = calculate(&h, &l, &c, 14).unwrap();
-        assert!(result.plus_di > result.minus_di,
-            "+DI should be > -DI in uptrend: {} vs {}", result.plus_di, result.minus_di);
+        assert!(
+            result.plus_di > result.minus_di,
+            "+DI should be > -DI in uptrend: {} vs {}",
+            result.plus_di,
+            result.minus_di
+        );
     }
 
     #[test]
     fn test_adx_downtrend_minus_di_greater() {
         let (h, l, c) = make_strong_downtrend(60);
         let result = calculate(&h, &l, &c, 14).unwrap();
-        assert!(result.minus_di > result.plus_di,
-            "-DI should be > +DI in downtrend: {} vs {}", result.minus_di, result.plus_di);
+        assert!(
+            result.minus_di > result.plus_di,
+            "-DI should be > +DI in downtrend: {} vs {}",
+            result.minus_di,
+            result.plus_di
+        );
     }
 
     #[test]
@@ -307,5 +345,18 @@ mod tests {
         // should have some non-zero values
         let non_zero: Vec<_> = result.series.iter().filter(|v| v.abs() > 1e-10).collect();
         assert!(!non_zero.is_empty(), "series should have non-zero values");
+    }
+
+    #[test]
+    fn test_adx_series_latest_matches_value() {
+        let (h, l, c) = make_strong_uptrend(60);
+        let result = calculate(&h, &l, &c, 14).unwrap();
+        let latest = *result.series.last().unwrap();
+        assert!(
+            (latest - result.value).abs() < 1e-10,
+            "latest series value should match current adx: {} vs {}",
+            latest,
+            result.value
+        );
     }
 }

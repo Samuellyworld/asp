@@ -75,15 +75,15 @@ func (r *rateLimiter) allow(userID int64) bool {
 
 // Handler processes incoming telegram messages
 type Handler struct {
-	bot       botClient
-	userSvc   *user.Service
-	wizard    *user.SetupWizard
-	watchSvc  *watchlist.Service
-	prefsSvc  *preferences.Service
-	exchange  exchangeClient
-	trading   *TradingDeps // optional, set via SetTradingDeps
-	limiter   *rateLimiter
-	testnet   bool
+	bot      botClient
+	userSvc  *user.Service
+	wizard   *user.SetupWizard
+	watchSvc *watchlist.Service
+	prefsSvc *preferences.Service
+	exchange exchangeClient
+	trading  *TradingDeps // optional, set via SetTradingDeps
+	limiter  *rateLimiter
+	testnet  bool
 }
 
 func NewHandler(
@@ -110,7 +110,7 @@ func (h *Handler) SetTestnet(testnet bool) {
 	h.testnet = testnet
 }
 
-//  routes an incoming update to the appropriate handler
+// routes an incoming update to the appropriate handler
 func (h *Handler) HandleUpdate(ctx context.Context, update Update) {
 	// handle callback queries from inline keyboard buttons
 	if update.CallbackQuery != nil {
@@ -255,26 +255,12 @@ func (h *Handler) handleSetup(ctx context.Context, msg *Message, telegramID int6
 	// start the wizard
 	h.wizard.Start(telegramID, result.User.ID)
 
-	var setupURL, modeNote string
-	if h.testnet {
-		setupURL = "https://testnet.binance.vision"
-		modeNote = "\n🧪 *testnet mode* — using binance testnet (fake money).\n" +
-			"go to the url above → log in with github → generate HMAC_SHA256 key.\n\n"
-	} else {
-		setupURL = "https://www.binance.com/en/my/settings/api-management"
-		modeNote = "\n"
-	}
-
 	h.send(chatID,
 		"🔐 *binance api key setup*\n\n"+
 			"i'll walk you through connecting your binance account.\n\n"+
-			"⚠️ *security requirements*:\n"+
-			"• create keys with *only spot and/or futures* trading enabled\n"+
-			"• *do NOT enable withdrawal* permission\n"+
-			"• keys with withdrawal permission will be rejected\n\n"+
-			"create your api keys at:\n"+setupURL+"\n"+
-			modeNote+
-			"*step 1/2*: please send your *api key*\n\n"+
+			"*step 1/3*: confirm the exchange.\n\n"+
+			"currently supported: *binance*\n"+
+			"send *binance* to continue.\n\n"+
 			"type /cancel to abort setup.",
 	)
 }
@@ -294,6 +280,44 @@ func (h *Handler) handleWizardInput(ctx context.Context, msg *Message, telegramI
 	}
 
 	switch session.Step {
+	case user.StepExchange:
+		exch := strings.ToLower(text)
+		if exch != "binance" {
+			h.send(chatID, "❌ currently only *binance* is supported. send *binance* to continue.")
+			return
+		}
+
+		if err := h.wizard.SetExchange(telegramID, exch); err != nil {
+			h.send(chatID, "something went wrong. please try /setup again.")
+			h.wizard.Cancel(telegramID)
+			return
+		}
+
+		// show exchange-specific setup URL
+		var setupURL, modeNote string
+		switch exch {
+		case "binance":
+			if h.testnet {
+				setupURL = "https://testnet.binance.vision"
+				modeNote = "\n🧪 *testnet mode* — using binance testnet (fake money).\ngo to the url above → log in with github → generate HMAC_SHA256 key.\n\n"
+			} else {
+				setupURL = "https://www.binance.com/en/my/settings/api-management"
+				modeNote = "\n"
+			}
+		}
+
+		h.send(chatID,
+			fmt.Sprintf("✅ exchange set to *%s*\n\n", exch)+
+				"⚠️ *security requirements*:\n"+
+				"• create keys with *only spot and/or futures* trading enabled\n"+
+				"• *do NOT enable withdrawal* permission\n"+
+				"• keys with withdrawal permission will be rejected\n\n"+
+				"create your api keys at:\n"+setupURL+"\n"+
+				modeNote+
+				"*step 2/3*: please send your *api key*\n\n"+
+				"type /cancel to abort setup.",
+		)
+
 	case user.StepAPIKey:
 		// delete the message containing the api key for security
 		h.deleteMessage(chatID, msg.MessageID)
@@ -306,7 +330,7 @@ func (h *Handler) handleWizardInput(ctx context.Context, msg *Message, telegramI
 
 		h.send(chatID,
 			"✅ api key received and message deleted for security.\n\n"+
-				"*step 2/2*: now send your *api secret*\n\n"+
+				"*step 3/3*: now send your *api secret*\n\n"+
 				"type /cancel to abort setup.",
 		)
 
@@ -321,14 +345,14 @@ func (h *Handler) handleWizardInput(ctx context.Context, msg *Message, telegramI
 		}
 
 		// complete the wizard and validate keys
-		userID, apiKey, apiSecret, err := h.wizard.Complete(telegramID)
+		userID, exchangeName, apiKey, apiSecret, err := h.wizard.Complete(telegramID)
 		if err != nil {
 			h.send(chatID, "something went wrong. please try /setup again.")
 			h.wizard.Cancel(telegramID)
 			return
 		}
 
-		h.send(chatID, "🔄 validating your api keys with binance...")
+		h.send(chatID, fmt.Sprintf("🔄 validating your api keys with %s...", exchangeName))
 
 		setupResult, err := h.userSvc.SetupAPIKeys(ctx, userID, apiKey, apiSecret)
 		if err != nil {
@@ -346,13 +370,13 @@ func (h *Handler) handleWizardInput(ctx context.Context, msg *Message, telegramI
 		}
 
 		h.send(chatID, fmt.Sprintf(
-			"✅ *setup complete!*\n\n"+
+			"✅ *setup complete!* (exchange: %s)\n\n"+
 				"%s\n"+
 				"your api keys have been encrypted and stored securely.\n"+
 				"your account is now active.\n\n"+
 				"your default watchlist (top 10 coins) and preferences have been set up.\n\n"+
 				"type /help to see what you can do next.",
-			permsMsg,
+			exchangeName, permsMsg,
 		))
 	}
 }
@@ -410,6 +434,15 @@ func (h *Handler) handleHelp(chatID int64) {
 			"*preferences*\n"+
 			"/settings - view all your preferences\n"+
 			"/set <key> <value> - change a preference\n\n"+
+			"*trading*\n"+
+			"/positions - view open positions\n"+
+			"/close <id> - close a position\n"+
+			"/scan - trigger a market scan\n"+
+			"/live <on|off> - toggle live trading\n"+
+			"/emergency - emergency stop all positions\n"+
+			"/leverage <args> - leverage trading commands\n"+
+			"/dca - view DCA plans and status\n"+
+			"/dca cancel <id> - cancel a DCA plan\n\n"+
 			"/help - show this message",
 	)
 }

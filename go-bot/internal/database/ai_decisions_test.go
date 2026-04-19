@@ -37,7 +37,7 @@ func TestAIDecisionRecord_Fields(t *testing.T) {
 }
 
 func TestAIDecisionRecord_FilterReasons(t *testing.T) {
-	reasons := []string{"none", "hold", "low_confidence", "duplicate",
+	reasons := []string{"none", "hold", "low_confidence", "confidence_decay", "duplicate",
 		"daily_limit", "safety_blocked", "expired", "user_rejected"}
 
 	for _, reason := range reasons {

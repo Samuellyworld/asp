@@ -166,7 +166,28 @@ func (d *DataIngestion) ingest(ctx context.Context) {
 }
 
 func (d *DataIngestion) ingestSymbol(ctx context.Context, symbol, interval string) (int, error) {
-	candles, err := d.fetcher.GetCandles(ctx, symbol, interval, d.config.BatchSize)
+	// check the latest stored candle to determine if we need a backfill
+	latest, err := d.store.LatestTime(ctx, symbol, interval)
+	if err != nil {
+		slog.Debug("data ingestion: no stored candles, doing full fetch", "symbol", symbol, "interval", interval)
+	}
+
+	fetchSize := d.config.BatchSize
+
+	// if we have stored data and it's recent, just fetch a small batch
+	if !latest.IsZero() {
+		gap := time.Since(latest)
+		intervalDur := intervalToDuration(interval)
+		if intervalDur > 0 {
+			missedCandles := int(gap / intervalDur)
+			if missedCandles < fetchSize && missedCandles > 0 {
+				// fetch only the missed candles + small buffer
+				fetchSize = missedCandles + 5
+			}
+		}
+	}
+
+	candles, err := d.fetcher.GetCandles(ctx, symbol, interval, fetchSize)
 	if err != nil {
 		return 0, err
 	}
@@ -190,4 +211,26 @@ func (d *DataIngestion) ingestSymbol(ctx context.Context, symbol, interval strin
 	}
 
 	return d.store.UpsertBatch(ctx, records)
+}
+
+// intervalToDuration converts a candle interval string to a time.Duration.
+func intervalToDuration(interval string) time.Duration {
+	switch interval {
+	case "1m":
+		return time.Minute
+	case "5m":
+		return 5 * time.Minute
+	case "15m":
+		return 15 * time.Minute
+	case "30m":
+		return 30 * time.Minute
+	case "1h":
+		return time.Hour
+	case "4h":
+		return 4 * time.Hour
+	case "1d":
+		return 24 * time.Hour
+	default:
+		return 0
+	}
 }

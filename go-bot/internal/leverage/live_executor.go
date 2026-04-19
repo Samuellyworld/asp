@@ -200,10 +200,17 @@ func (e *LiveExecutor) OpenPosition(
 			// close the position immediately — cannot have leverage without SL
 			slog.Error("failed to place SL on leveraged position, closing immediately",
 				"symbol", symbol, "leverage", leverage, "error", err)
-			_, _ = e.futures.PlaceOrder(
+			_, reverseErr := e.futures.PlaceOrder(
 				ctx, symbol, closeSide, exchange.OrderTypeMarket,
 				filledQty, 0, apiKey, apiSecret,
 			)
+			if reverseErr != nil {
+				// CRITICAL: leveraged position is open on exchange with NO stop loss and reversal FAILED
+				slog.Error("CRITICAL: failed to reverse leveraged position after SL failure — OPEN LEVERAGED POSITION WITHOUT PROTECTION",
+					"symbol", symbol, "quantity", filledQty, "side", side, "leverage", leverage,
+					"sl_error", err, "reversal_error", reverseErr)
+				return nil, fmt.Errorf("CRITICAL: SL failed and reversal failed — naked leveraged position on exchange: sl_err=%w, reversal_err=%v", err, reverseErr)
+			}
 			return nil, fmt.Errorf("failed to place stop loss on leveraged position (position reversed): %w", err)
 		}
 		slOrderID = slOrder.OrderID

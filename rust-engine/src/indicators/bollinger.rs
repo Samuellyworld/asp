@@ -34,9 +34,7 @@ pub fn calculate(closes: &[f64], period: usize, num_std_dev: f64) -> Option<Boll
         } else {
             let window = &closes[i + 1 - period..=i];
             let sma = window.iter().sum::<f64>() / period as f64;
-            let variance = window.iter()
-                .map(|v| (v - sma).powi(2))
-                .sum::<f64>() / period as f64;
+            let variance = window.iter().map(|v| (v - sma).powi(2)).sum::<f64>() / period as f64;
             let std_dev = variance.sqrt();
 
             upper_series.push(sma + num_std_dev * std_dev);
@@ -139,7 +137,9 @@ mod tests {
 
     #[test]
     fn test_bollinger_bandwidth_positive() {
-        let prices: Vec<f64> = (0..40).map(|i| 100.0 + (i as f64 * 0.3).sin() * 10.0).collect();
+        let prices: Vec<f64> = (0..40)
+            .map(|i| 100.0 + (i as f64 * 0.3).sin() * 10.0)
+            .collect();
         let result = calculate(&prices, 20, 2.0).unwrap();
         assert!(result.bandwidth >= 0.0, "bandwidth should be non-negative");
     }
@@ -158,8 +158,14 @@ mod tests {
         let prices = trending_up(30);
         let narrow = calculate(&prices, 20, 1.0).unwrap();
         let wide = calculate(&prices, 20, 3.0).unwrap();
-        assert!(wide.upper > narrow.upper, "wider std_dev should give wider bands");
-        assert!(wide.lower < narrow.lower, "wider std_dev should give wider bands");
+        assert!(
+            wide.upper > narrow.upper,
+            "wider std_dev should give wider bands"
+        );
+        assert!(
+            wide.lower < narrow.lower,
+            "wider std_dev should give wider bands"
+        );
     }
 
     #[test]
@@ -208,9 +214,16 @@ mod tests {
         let result = calculate(&prices, 20, 2.0).unwrap();
         // first 19 elements should be 0 (period - 1 leading zeros)
         for i in 0..19 {
-            assert!((result.upper_series[i]).abs() < 1e-10, "index {} should be 0", i);
+            assert!(
+                (result.upper_series[i]).abs() < 1e-10,
+                "index {} should be 0",
+                i
+            );
         }
         // element 19 should be non-zero
-        assert!(result.upper_series[19].abs() > 1e-10, "index 19 should be non-zero");
+        assert!(
+            result.upper_series[19].abs() > 1e-10,
+            "index 19 should be non-zero"
+        );
     }
 }

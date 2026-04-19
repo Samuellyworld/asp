@@ -45,25 +45,25 @@ type KeyDecryptor interface {
 
 // a live position with real exchange order ids
 type LivePosition struct {
-	ID            string
-	UserID        int
-	Symbol        string
-	Side          exchange.OrderSide
-	EntryPrice    float64
-	Quantity      float64
-	PositionSize  float64
-	StopLoss      float64
-	TakeProfit    float64
-	MainOrderID   int64
-	SLOrderID     int64
-	TPOrderID     int64
-	Status        string // "open", "closed"
-	CloseReason   string
-	ClosePrice    float64
-	PnL           float64
-	OpenedAt      time.Time
-	ClosedAt      *time.Time
-	Platform      string
+	ID           string
+	UserID       int
+	Symbol       string
+	Side         exchange.OrderSide
+	EntryPrice   float64
+	Quantity     float64
+	PositionSize float64
+	StopLoss     float64
+	TakeProfit   float64
+	MainOrderID  int64
+	SLOrderID    int64
+	TPOrderID    int64
+	Status       string // "open", "closed"
+	CloseReason  string
+	ClosePrice   float64
+	PnL          float64
+	OpenedAt     time.Time
+	ClosedAt     *time.Time
+	Platform     string
 }
 
 // executor configuration
@@ -101,6 +101,11 @@ func NewExecutor(orders exchange.OrderExecutor, keys KeyDecryptor, safety *Safet
 		safety:    safety,
 		losses:    losses,
 	}
+}
+
+// SetSafetyChecker updates the pre-trade safety checker.
+func (e *Executor) SetSafetyChecker(safety *SafetyChecker) {
+	e.safety = safety
 }
 
 // SetCircuitBreaker configures portfolio circuit breaker.
@@ -223,10 +228,22 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*LivePosition, error) 
 			// close the main order — position must not exist without a stop loss
 			slog.Error("failed to place stop loss, closing main order",
 				"symbol", opp.Symbol, "error", err)
-			_, _ = e.orders.PlaceOrder(
+			_, reverseErr := e.orders.PlaceOrder(
 				opp.Symbol, closeSide, exchange.OrderTypeMarket,
 				quantity, 0, apiKey, apiSecret,
 			)
+			if reverseErr != nil {
+				// CRITICAL: position is open on exchange with NO stop loss and reversal FAILED
+				slog.Error("CRITICAL: failed to reverse position after SL failure — OPEN POSITION WITHOUT PROTECTION",
+					"symbol", opp.Symbol, "quantity", quantity, "side", side,
+					"sl_error", err, "reversal_error", reverseErr)
+				if e.failedOrders != nil {
+					_ = e.failedOrders.RecordFailedOrder(dbCtx(), opp.UserID, "", opp.Symbol,
+						string(closeSide), "EMERGENCY_REVERSAL", quantity, 0, 0, "SPOT",
+						fmt.Sprintf("SL failed: %s; reversal also failed: %s", err, reverseErr))
+				}
+				return nil, fmt.Errorf("CRITICAL: SL failed and reversal failed — naked position on exchange: sl_err=%w, reversal_err=%v", err, reverseErr)
+			}
 			if e.failedOrders != nil {
 				_ = e.failedOrders.RecordFailedOrder(dbCtx(), opp.UserID, "", opp.Symbol,
 					string(closeSide), "STOP_LOSS_LIMIT", quantity, plan.StopLoss, plan.StopLoss, "SPOT", err.Error())

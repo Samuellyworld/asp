@@ -301,13 +301,26 @@ func (s *Scanner) analyzeAndNotify(
 		return false
 	}
 
-	// check confidence threshold
+	// check confidence threshold (with decay near daily limit)
 	minConf := float64(s.config.DefaultMinConfidence)
 	if scanPrefs != nil && scanPrefs.MinConfidence > 0 {
 		minConf = float64(scanPrefs.MinConfidence)
 	}
+	// confidence decay: when approaching daily limit (last 3 slots), raise bar to 90%
+	maxDaily := s.config.DefaultMaxDaily
+	if notifPrefs != nil && notifPrefs.MaxDailyNotifications > 0 {
+		maxDaily = notifPrefs.MaxDailyNotifications
+	}
+	remaining := maxDaily - s.getDailyCount(u.ID)
+	if remaining <= 3 && minConf < 90 {
+		minConf = 90
+	}
 	if result.Decision.Confidence < minConf {
-		s.logDecision(ctx, u.ID, symbol, result, "low_confidence")
+		reason := "low_confidence"
+		if remaining <= 3 {
+			reason = "confidence_decay"
+		}
+		s.logDecision(ctx, u.ID, symbol, result, reason)
 		return false
 	}
 
@@ -317,11 +330,7 @@ func (s *Scanner) analyzeAndNotify(
 		return false
 	}
 
-	// check daily limit
-	maxDaily := s.config.DefaultMaxDaily
-	if notifPrefs != nil && notifPrefs.MaxDailyNotifications > 0 {
-		maxDaily = notifPrefs.MaxDailyNotifications
-	}
+	// check daily limit (maxDaily already calculated for confidence decay)
 	if s.dailyLimitReached(u.ID, maxDaily) {
 		s.logDecision(ctx, u.ID, symbol, result, "daily_limit")
 		return false
@@ -399,14 +408,19 @@ func (s *Scanner) recordNotification(userID int, symbol string, action claude.Ac
 
 // checks if the user has reached their daily notification limit
 func (s *Scanner) dailyLimitReached(userID int, maxDaily int) bool {
+	return s.getDailyCount(userID) >= maxDaily
+}
+
+// returns current daily notification count for a user
+func (s *Scanner) getDailyCount(userID int) int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	st, ok := s.states[userID]
 	if !ok {
-		return false
+		return 0
 	}
-	return st.dailyCount >= maxDaily
+	return st.dailyCount
 }
 
 // checks whether we already notified the same symbol+direction within the window

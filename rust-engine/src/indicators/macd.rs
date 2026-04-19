@@ -109,22 +109,26 @@ mod tests {
         (0..n).map(|i| 200.0 - (i as f64) * 0.5).collect()
     }
 
-    fn oscillating(n: usize) -> Vec<f64> {
-        (0..n).map(|i| 100.0 + (i as f64 * 0.5).sin() * 5.0).collect()
-    }
-
     #[test]
     fn test_macd_rising_is_bullish() {
         let prices = trending_up(60);
         let result = calculate(&prices, 12, 26, 9).unwrap();
-        assert!(result.macd_line > 0.0, "macd should be positive in uptrend, got {}", result.macd_line);
+        assert!(
+            result.macd_line > 0.0,
+            "macd should be positive in uptrend, got {}",
+            result.macd_line
+        );
     }
 
     #[test]
     fn test_macd_falling_is_bearish() {
         let prices = trending_down(60);
         let result = calculate(&prices, 12, 26, 9).unwrap();
-        assert!(result.macd_line < 0.0, "macd should be negative in downtrend, got {}", result.macd_line);
+        assert!(
+            result.macd_line < 0.0,
+            "macd should be negative in downtrend, got {}",
+            result.macd_line
+        );
     }
 
     #[test]
@@ -154,9 +158,15 @@ mod tests {
         let prices: Vec<f64> = (0..60).map(|i| 100.0 + (i as f64).powi(2) * 0.01).collect();
         let result = calculate(&prices, 12, 26, 9).unwrap();
         // check that non-zero histogram values exist (use permissive threshold)
-        let non_zero: Vec<&f64> = result.histogram_series.iter()
-            .filter(|v| v.abs() > 1e-6).collect();
-        assert!(!non_zero.is_empty(), "histogram should have non-zero values");
+        let non_zero: Vec<&f64> = result
+            .histogram_series
+            .iter()
+            .filter(|v| v.abs() > 1e-6)
+            .collect();
+        assert!(
+            !non_zero.is_empty(),
+            "histogram should have non-zero values"
+        );
     }
 
     #[test]
@@ -176,8 +186,14 @@ mod tests {
     fn test_macd_constant_input() {
         let prices = vec![100.0; 60];
         let result = calculate(&prices, 12, 26, 9).unwrap();
-        assert!(result.macd_line.abs() < 1e-10, "constant input should give macd near 0");
-        assert!(result.histogram.abs() < 1e-10, "constant input should give histogram near 0");
+        assert!(
+            result.macd_line.abs() < 1e-10,
+            "constant input should give macd near 0"
+        );
+        assert!(
+            result.histogram.abs() < 1e-10,
+            "constant input should give histogram near 0"
+        );
     }
 
     #[test]
@@ -223,8 +239,11 @@ mod tests {
         let prices = trending_up(60);
         let result = calculate(&prices, 12, 26, 9).unwrap();
         // in uptrend, macd should be above signal (signal lags)
-        assert!(result.macd_line >= result.signal_line,
+        assert!(
+            result.macd_line >= result.signal_line,
             "macd ({}) should be >= signal ({}) in uptrend",
-            result.macd_line, result.signal_line);
+            result.macd_line,
+            result.signal_line
+        );
     }
 }

@@ -26,6 +26,10 @@ type WSPriceCache struct {
 	stopCh chan struct{}
 	done   chan struct{}
 
+	maxReconnectRetries     int
+	initialReconnectBackoff time.Duration
+	maxReconnectBackoff     time.Duration
+
 	// callback fired on every price update (optional)
 	OnPriceUpdate func(symbol string, price float64)
 }
@@ -50,10 +54,13 @@ type miniTickerMsg struct {
 // wsURL is the binance websocket base URL (e.g. "wss://stream.binance.com:9443").
 func NewWSPriceCache(wsURL string) *WSPriceCache {
 	return &WSPriceCache{
-		prices: make(map[string]priceEntry),
-		wsURL:  strings.TrimRight(wsURL, "/"),
-		stopCh: make(chan struct{}),
-		done:   make(chan struct{}),
+		prices:                  make(map[string]priceEntry),
+		wsURL:                   strings.TrimRight(wsURL, "/"),
+		stopCh:                  make(chan struct{}),
+		done:                    make(chan struct{}),
+		maxReconnectRetries:     10,
+		initialReconnectBackoff: time.Second,
+		maxReconnectBackoff:     60 * time.Second,
 	}
 }
 
@@ -206,9 +213,18 @@ func (w *WSPriceCache) updatePrice(t miniTickerMsg) {
 }
 
 func (w *WSPriceCache) reconnect() {
-	maxBackoff := 60 * time.Second
-	maxRetries := 10
-	backoff := time.Second
+	maxBackoff := w.maxReconnectBackoff
+	if maxBackoff <= 0 {
+		maxBackoff = 60 * time.Second
+	}
+	maxRetries := w.maxReconnectRetries
+	if maxRetries <= 0 {
+		maxRetries = 10
+	}
+	backoff := w.initialReconnectBackoff
+	if backoff <= 0 {
+		backoff = time.Second
+	}
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		select {
@@ -217,7 +233,13 @@ func (w *WSPriceCache) reconnect() {
 		default:
 		}
 
-		time.Sleep(backoff)
+		timer := time.NewTimer(backoff)
+		select {
+		case <-w.stopCh:
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
 
 		url := w.wsURL + "/ws/!miniTicker@arr"
 		conn, _, err := websocket.DefaultDialer.Dial(url, nil)

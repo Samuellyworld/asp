@@ -7,6 +7,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/trading-bot/go-bot/internal/dca"
 	"github.com/trading-bot/go-bot/internal/leverage"
 	"github.com/trading-bot/go-bot/internal/livetrading"
 	"github.com/trading-bot/go-bot/internal/opportunity"
@@ -29,6 +30,9 @@ type TradingDeps struct {
 	LevPaperExecutor *leverage.PaperExecutor
 	LevLiveExecutor  *leverage.LiveExecutor
 	LevMonitor       *leverage.Monitor
+
+	// DCA execution
+	DCAExecutor *dca.Executor
 }
 
 // attaches trading dependencies to the handler
@@ -51,6 +55,8 @@ func (h *Handler) handleTradingCommand(ctx context.Context, command, args string
 		h.handleScan(chatID)
 	case "leverage":
 		return h.handleLeverageCommand(ctx, args, telegramID, chatID)
+	case "dca":
+		h.handleDCA(ctx, args, telegramID, chatID)
 	default:
 		return false
 	}
@@ -497,4 +503,64 @@ func toTelegramKeyboard(rows [][]opportunity.ButtonData) *InlineKeyboardMarkup {
 		keyboard = append(keyboard, buttons)
 	}
 	return &InlineKeyboardMarkup{InlineKeyboard: keyboard}
+}
+
+// handleDCA handles /dca commands: status, cancel <id>
+func (h *Handler) handleDCA(ctx context.Context, args string, telegramID int64, chatID int64) {
+	if h.trading == nil || h.trading.DCAExecutor == nil {
+		h.send(chatID, "DCA trading is not available.")
+		return
+	}
+
+	parts := strings.Fields(args)
+
+	subCmd := ""
+	if len(parts) > 0 {
+		subCmd = strings.ToLower(parts[0])
+	}
+
+	switch subCmd {
+	case "cancel":
+		if len(parts) < 2 {
+			h.send(chatID, "usage: /dca cancel <plan_id>")
+			return
+		}
+		planID := parts[1]
+		if h.trading.DCAExecutor.CancelPlan(planID) {
+			h.send(chatID, fmt.Sprintf("✅ DCA plan %s cancelled", planID))
+		} else {
+			h.send(chatID, fmt.Sprintf("❌ DCA plan %s not found or already completed", planID))
+		}
+
+	default:
+		// show DCA status
+		plans := h.trading.DCAExecutor.ActivePlans()
+		stats := h.trading.DCAExecutor.Stats()
+
+		if len(plans) == 0 {
+			h.send(chatID, fmt.Sprintf(
+				"📊 *DCA Status*\n\nNo active plans.\n\nTotal: %d active, %d completed, %d cancelled",
+				stats["active"], stats["completed"], stats["cancelled"],
+			))
+			return
+		}
+
+		msg := "📊 *DCA Active Plans*\n\n"
+		for _, p := range plans {
+			executed := 0
+			for _, r := range p.Rounds {
+				if r.Executed {
+					executed++
+				}
+			}
+			msg += fmt.Sprintf(
+				"• *%s* (%s)\n  ID: `%s`\n  Rounds: %d/%d | Filled: $%.2f/$%.2f\n  Avg Entry: $%.2f\n\n",
+				p.Symbol, p.Action, p.ID, executed, len(p.Rounds),
+				p.TotalFilled, p.TotalSize, p.AvgEntryPrice,
+			)
+		}
+		msg += fmt.Sprintf("Total: %d active, %d completed, %d cancelled\n\nUse /dca cancel <plan_id> to stop a plan.",
+			stats["active"], stats["completed"], stats["cancelled"])
+		h.send(chatID, msg)
+	}
 }

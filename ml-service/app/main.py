@@ -32,7 +32,31 @@ from app.drift import DriftDetector
 from app.retrain import RetrainingPipeline
 from app.rl_agent import TradingRLAgent
 
+import logging
+import json
+import sys
 import numpy as np
+
+
+class JSONFormatter(logging.Formatter):
+    """Structured JSON log formatter for production."""
+    def format(self, record):
+        log_entry = {
+            "timestamp": self.formatTime(record),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info and record.exc_info[0]:
+            log_entry["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_entry)
+
+
+# configure structured logging
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(JSONFormatter())
+logging.basicConfig(level=logging.INFO, handlers=[handler])
+logger = logging.getLogger("ml-service")
 
 app = FastAPI(
     title="Trading Bot ML Service",

@@ -20,6 +20,8 @@ type mockFutures struct {
 	setMarginTypeErr  error
 	placeOrderResp    *binance.FuturesOrder
 	placeOrderErr     error
+	placeOrderCalls   int
+	reversalErr       error // error for the emergency reversal (2nd PlaceOrder call)
 	placeStopResp     *binance.FuturesOrder
 	placeStopErr      error
 	placeTPResp       *binance.FuturesOrder
@@ -47,6 +49,11 @@ func (m *mockFutures) SetMarginType(ctx context.Context, symbol string, marginTy
 func (m *mockFutures) PlaceOrder(ctx context.Context, symbol string, side exchange.OrderSide, orderType exchange.OrderType, quantity, price float64, apiKey, apiSecret string) (*binance.FuturesOrder, error) {
 	m.lastOrderSide = side
 	m.lastOrderQty = quantity
+	m.placeOrderCalls++
+	// reversalErr fires on the second PlaceOrder call (emergency reversal)
+	if m.reversalErr != nil && m.placeOrderCalls > 1 {
+		return nil, m.reversalErr
+	}
 	if m.placeOrderErr != nil {
 		return nil, m.placeOrderErr
 	}
@@ -354,6 +361,27 @@ func TestLiveExecutor_OpenSLTPErrors(t *testing.T) {
 	_, err := exec.OpenPosition(1, "BTCUSDT", SideLong, 10, 100, 48000, 55000, "telegram")
 	if err == nil {
 		t.Fatal("OpenPosition() should fail when SL placement fails")
+	}
+	// reversal succeeded so error should NOT be CRITICAL
+	if strings.Contains(err.Error(), "CRITICAL") {
+		t.Fatalf("reversal succeeded, should not be CRITICAL: %v", err)
+	}
+}
+
+func TestLiveExecutor_OpenSLFail_ReversalAlsoFails(t *testing.T) {
+	exec, futures, _, _, _ := newTestLiveExecutor()
+	futures.placeStopErr = fmt.Errorf("stop market failed")
+	futures.reversalErr = fmt.Errorf("exchange timeout")
+
+	_, err := exec.OpenPosition(1, "BTCUSDT", SideLong, 10, 100, 48000, 55000, "telegram")
+	if err == nil {
+		t.Fatal("expected error when SL and reversal both fail")
+	}
+	if !strings.Contains(err.Error(), "CRITICAL") {
+		t.Fatalf("expected CRITICAL error for naked leveraged position, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "naked leveraged position") {
+		t.Fatalf("expected 'naked leveraged position' in error, got: %v", err)
 	}
 }
 

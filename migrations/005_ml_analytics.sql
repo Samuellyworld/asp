@@ -131,5 +131,8 @@ CREATE TABLE IF NOT EXISTS slippage_records (
     recorded_at         TIMESTAMPTZ DEFAULT NOW()
 );
 
+ALTER TABLE slippage_records
+    ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+
 CREATE INDEX IF NOT EXISTS idx_slippage_symbol ON slippage_records(symbol, recorded_at DESC);
 CREATE INDEX IF NOT EXISTS idx_slippage_user ON slippage_records(user_id) WHERE user_id IS NOT NULL;

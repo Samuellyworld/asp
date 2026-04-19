@@ -27,6 +27,7 @@ RUN apk add --no-cache ca-certificates tzdata
 
 # Copy binary from builder
 COPY --from=builder /bot /app/bot
+COPY --from=builder /app/migrations /app/migrations
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 
 # Create non-root user

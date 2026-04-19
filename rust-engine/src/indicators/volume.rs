@@ -147,6 +147,9 @@ mod tests {
         let mut volumes = vec![0.0; 20];
         volumes.push(100.0);
         let result = detect(&volumes, 20, 2.0).unwrap();
-        assert!((result.ratio).abs() < 1e-10, "zero average should give 0 ratio");
+        assert!(
+            (result.ratio).abs() < 1e-10,
+            "zero average should give 0 ratio"
+        );
     }
 }

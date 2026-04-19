@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -76,7 +77,8 @@ type APIConfig struct {
 
 //  holds telegram bot settings
 type TelegramConfig struct {
-	BotToken string
+	BotToken    string
+	AdminChatID int64 // admin telegram chat ID for infra alerts (0 = skip)
 }
 
 //  holds discord bot settings
@@ -196,7 +198,8 @@ func Load() (*Config, error) {
 			MasterKey: viper.GetString("security.master_key"),
 		},
 		Telegram: TelegramConfig{
-			BotToken: viper.GetString("telegram.bot_token"),
+			BotToken:    viper.GetString("telegram.bot_token"),
+			AdminChatID: viper.GetInt64("telegram.admin_chat_id"),
 		},
 		Discord: DiscordConfig{
 			BotToken:      viper.GetString("discord.bot_token"),
@@ -231,7 +234,7 @@ func Load() (*Config, error) {
 			MaxDailyNotifications:      viper.GetInt("trading.max_daily_notifications"),
 			ScannerIntervalMinutes:     viper.GetInt("trading.scanner_interval_minutes"),
 			OpportunityExpiryMinutes:   viper.GetInt("trading.opportunity_expiry_minutes"),
-			Timeframes:                 viper.GetStringSlice("trading.timeframes"),
+			Timeframes:                 parseStringSlice("trading.timeframes"),
 			DriftCheckIntervalMinutes:  viper.GetInt("trading.drift_check_interval_minutes"),
 		},
 		Leverage: LeverageConfig{
@@ -256,6 +259,23 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// parseStringSlice handles Viper's known limitation where env vars for slices
+// are returned as a single comma-separated string instead of a proper slice.
+func parseStringSlice(key string) []string {
+	ss := viper.GetStringSlice(key)
+	if len(ss) == 1 && strings.Contains(ss[0], ",") {
+		parts := strings.Split(ss[0], ",")
+		result := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if s := strings.TrimSpace(p); s != "" {
+				result = append(result, s)
+			}
+		}
+		return result
+	}
+	return ss
 }
 
 func setDefaults() {

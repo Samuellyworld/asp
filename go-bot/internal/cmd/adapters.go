@@ -12,6 +12,7 @@ import (
 	"github.com/trading-bot/go-bot/internal/claude"
 	"github.com/trading-bot/go-bot/internal/database"
 	"github.com/trading-bot/go-bot/internal/datasources"
+	"github.com/trading-bot/go-bot/internal/exchange"
 	"github.com/trading-bot/go-bot/internal/livetrading"
 	"github.com/trading-bot/go-bot/internal/pipeline"
 	"github.com/trading-bot/go-bot/internal/user"
@@ -331,4 +332,18 @@ func (a *failedOrderAdapter) RecordFailedOrder(ctx context.Context, userID int, 
 		slog.Error("failed to record failed order to dead-letter queue", "symbol", symbol, "error", err)
 	}
 	return err
+}
+
+// dcaPriceAdapter wraps wsPriceAdapter to match the dca.PriceProvider interface
+type dcaPriceAdapter struct {
+	ws   *binance.WSPriceCache
+	rest *binance.Client
+}
+
+func (a *dcaPriceAdapter) GetPrice(ctx context.Context, symbol string) (*exchange.Ticker, error) {
+	price, err := a.ws.GetPrice(symbol)
+	if err == nil {
+		return &exchange.Ticker{Symbol: symbol, Price: price}, nil
+	}
+	return a.rest.GetPrice(ctx, symbol)
 }

@@ -18,7 +18,7 @@ type AIDecisionRecord struct {
 	UserID           int
 	Symbol           string
 	Timeframe        string
-	Decision         string  // "BUY", "SELL", "HOLD", "CLOSE"
+	Decision         string // "BUY", "SELL", "HOLD", "CLOSE"
 	Confidence       int
 	EntryPrice       float64
 	StopLoss         float64
@@ -34,7 +34,7 @@ type AIDecisionRecord struct {
 	LatencyMs        int
 	WasApproved      *bool // nil = pending, true = approved, false = rejected/expired
 	WasExecuted      bool
-	FilterReason     string // "none", "hold", "low_confidence", "duplicate", "daily_limit", "safety_blocked"
+	FilterReason     string // "none", "hold", "low_confidence", "confidence_decay", "duplicate", "daily_limit", "safety_blocked"
 	CreatedAt        time.Time
 }
 

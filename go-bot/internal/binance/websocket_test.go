@@ -135,8 +135,8 @@ func TestWSPriceCache_HandleMessage_CombinedStream(t *testing.T) {
 	cache := NewWSPriceCache("wss://unused")
 
 	msg := struct {
-		Stream string         `json:"stream"`
-		Data   miniTickerMsg  `json:"data"`
+		Stream string        `json:"stream"`
+		Data   miniTickerMsg `json:"data"`
 	}{
 		Stream: "btcusdt@miniTicker",
 		Data:   miniTickerMsg{Symbol: "BTCUSDT", Close: "43000.00"},
@@ -298,16 +298,17 @@ func TestWSPriceCache_Stop_Idempotent(t *testing.T) {
 
 	// stop twice — should not panic
 	cache.Stop()
+	cache.Stop()
 }
 
 func TestWSPriceCache_Reconnect_MaxRetries(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping long reconnect test in short mode")
-	}
-	// verify reconnect exits after max retries — takes several seconds due to backoff
+	// verify reconnect exits after max retries with compressed test backoff.
 	cache := NewWSPriceCache("ws://localhost:1")
 	cache.stopCh = make(chan struct{})
 	cache.done = make(chan struct{})
+	cache.maxReconnectRetries = 3
+	cache.initialReconnectBackoff = time.Millisecond
+	cache.maxReconnectBackoff = time.Millisecond
 
 	done := make(chan struct{})
 	go func() {
@@ -318,7 +319,7 @@ func TestWSPriceCache_Reconnect_MaxRetries(t *testing.T) {
 	select {
 	case <-done:
 		// reconnect returned — max retries exhausted
-	case <-time.After(10 * time.Minute):
+	case <-time.After(2 * time.Second):
 		close(cache.stopCh)
 		t.Fatal("reconnect appears to be hanging")
 	}
@@ -328,6 +329,9 @@ func TestWSPriceCache_Reconnect_StopsDuringRetry(t *testing.T) {
 	cache := NewWSPriceCache("ws://localhost:1")
 	cache.stopCh = make(chan struct{})
 	cache.done = make(chan struct{})
+	cache.maxReconnectRetries = 10
+	cache.initialReconnectBackoff = time.Second
+	cache.maxReconnectBackoff = time.Second
 
 	// close stopCh after a short delay to simulate shutdown during reconnect
 	go func() {

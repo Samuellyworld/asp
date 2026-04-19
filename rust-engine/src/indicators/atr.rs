@@ -5,8 +5,8 @@
 pub struct ATRResult {
     pub value: f64,
     pub series: Vec<f64>,
-    pub signal: String,      // HIGH, NORMAL, LOW
-    pub percent: f64,        // atr as percentage of current close
+    pub signal: String, // HIGH, NORMAL, LOW
+    pub percent: f64,   // atr as percentage of current close
 }
 
 /// calculates average true range from ohlc data.
@@ -45,10 +45,19 @@ pub fn calculate(highs: &[f64], lows: &[f64], closes: &[f64], period: usize) -> 
 
     let value = *series.last().unwrap_or(&0.0);
     let last_close = *closes.last().unwrap_or(&1.0);
-    let percent = if last_close.abs() > 1e-10 { value / last_close * 100.0 } else { 0.0 };
+    let percent = if last_close.abs() > 1e-10 {
+        value / last_close * 100.0
+    } else {
+        0.0
+    };
     let signal = classify_volatility(percent);
 
-    Some(ATRResult { value, series, signal, percent })
+    Some(ATRResult {
+        value,
+        series,
+        signal,
+        percent,
+    })
 }
 
 /// classifies volatility level from atr percent
@@ -96,7 +105,11 @@ mod tests {
     fn test_atr_basic() {
         let (h, l, c) = make_trending_data(30);
         let result = calculate(&h, &l, &c, 14).unwrap();
-        assert!(result.value > 0.0, "atr should be positive, got {}", result.value);
+        assert!(
+            result.value > 0.0,
+            "atr should be positive, got {}",
+            result.value
+        );
         assert!(result.percent > 0.0);
     }
 
@@ -114,8 +127,12 @@ mod tests {
         let (h2, l2, c2) = make_volatile_data(30);
         let calm = calculate(&h1, &l1, &c1, 14).unwrap();
         let volatile = calculate(&h2, &l2, &c2, 14).unwrap();
-        assert!(volatile.value > calm.value,
-            "volatile data should have higher atr: {} vs {}", volatile.value, calm.value);
+        assert!(
+            volatile.value > calm.value,
+            "volatile data should have higher atr: {} vs {}",
+            volatile.value,
+            calm.value
+        );
     }
 
     #[test]
@@ -127,8 +144,11 @@ mod tests {
         let closes = vec![100.0; n];
         let result = calculate(&highs, &lows, &closes, 14).unwrap();
         // true range should be 4.0 for all bars (high - low = 4, no gaps)
-        assert!((result.value - 4.0).abs() < 0.1,
-            "constant 4-point range should give atr near 4.0, got {}", result.value);
+        assert!(
+            (result.value - 4.0).abs() < 0.1,
+            "constant 4-point range should give atr near 4.0, got {}",
+            result.value
+        );
     }
 
     #[test]
@@ -189,8 +209,10 @@ mod tests {
         let lows = vec![99.0; 15];
         let mut closes = vec![100.0; 15];
         // create a gap after the first 14 bars
-        let mut h = highs; h.push(110.0);
-        let mut l = lows; l.push(108.0);
+        let mut h = highs;
+        h.push(110.0);
+        let mut l = lows;
+        l.push(108.0);
         closes.push(109.0);
         let result = calculate(&h, &l, &closes, 14).unwrap();
         // last atr should be higher due to the gap

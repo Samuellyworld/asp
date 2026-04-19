@@ -3,9 +3,9 @@
 
 /// stochastic result with %K, %D, and signal
 pub struct StochasticResult {
-    pub k: f64,              // %K (fast stochastic) 0-100
-    pub d: f64,              // %D (signal line = SMA of %K) 0-100
-    pub signal: String,      // OVERSOLD, NEUTRAL, OVERBOUGHT, BULLISH_CROSS, BEARISH_CROSS
+    pub k: f64,         // %K (fast stochastic) 0-100
+    pub d: f64,         // %D (signal line = SMA of %K) 0-100
+    pub signal: String, // OVERSOLD, NEUTRAL, OVERBOUGHT, BULLISH_CROSS, BEARISH_CROSS
     pub k_series: Vec<f64>,
     pub d_series: Vec<f64>,
 }
@@ -174,26 +174,38 @@ mod tests {
     fn test_stoch_uptrend_high() {
         let (h, l, c) = make_uptrend(40);
         let result = calculate(&h, &l, &c, 14, 3, 3).unwrap();
-        assert!(result.k > 60.0,
-            "uptrend should give high %K, got {}", result.k);
+        assert!(
+            result.k > 60.0,
+            "uptrend should give high %K, got {}",
+            result.k
+        );
     }
 
     #[test]
     fn test_stoch_downtrend_low() {
         let (h, l, c) = make_downtrend(40);
         let result = calculate(&h, &l, &c, 14, 3, 3).unwrap();
-        assert!(result.k < 40.0,
-            "downtrend should give low %K, got {}", result.k);
+        assert!(
+            result.k < 40.0,
+            "downtrend should give low %K, got {}",
+            result.k
+        );
     }
 
     #[test]
     fn test_stoch_range() {
         let (h, l, c) = make_oscillating(40);
         let result = calculate(&h, &l, &c, 14, 3, 3).unwrap();
-        assert!(result.k >= 0.0 && result.k <= 100.0,
-            "%K out of range: {}", result.k);
-        assert!(result.d >= 0.0 && result.d <= 100.0,
-            "%D out of range: {}", result.d);
+        assert!(
+            result.k >= 0.0 && result.k <= 100.0,
+            "%K out of range: {}",
+            result.k
+        );
+        assert!(
+            result.d >= 0.0 && result.d <= 100.0,
+            "%D out of range: {}",
+            result.d
+        );
     }
 
     #[test]
@@ -253,8 +265,12 @@ mod tests {
         let result = calculate(&h, &l, &c, 14, 3, 3).unwrap();
         // in a strong uptrend, %K should generally lead %D
         // (both should be high, but K should be >= D)
-        assert!(result.k >= result.d - 5.0,
-            "in uptrend K ({}) should be near or above D ({})", result.k, result.d);
+        assert!(
+            result.k >= result.d - 5.0,
+            "in uptrend K ({}) should be near or above D ({})",
+            result.k,
+            result.d
+        );
     }
 
     #[test]
@@ -264,7 +280,10 @@ mod tests {
         let c = vec![100.0; 40];
         let result = calculate(&h, &l, &c, 14, 3, 3).unwrap();
         // close is at midpoint of range -> %K should be around 50
-        assert!((result.k - 50.0).abs() < 5.0,
-            "constant price at midpoint should give %K near 50, got {}", result.k);
+        assert!(
+            (result.k - 50.0).abs() < 5.0,
+            "constant price at midpoint should give %K near 50, got {}",
+            result.k
+        );
     }
 }

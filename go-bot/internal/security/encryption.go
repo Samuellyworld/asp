@@ -163,3 +163,28 @@ func (e *Encryptor) Test() error {
 
 	return nil
 }
+
+// RotateKey re-encrypts data from old key to new key.
+// Returns the new ciphertext encrypted under the new master key.
+func RotateKey(oldKeyBase64, newKeyBase64 string, ciphertextBase64 string, salt []byte) (string, error) {
+	oldEnc, err := NewEncryptor(oldKeyBase64)
+	if err != nil {
+		return "", fmt.Errorf("invalid old key: %w", err)
+	}
+	newEnc, err := NewEncryptor(newKeyBase64)
+	if err != nil {
+		return "", fmt.Errorf("invalid new key: %w", err)
+	}
+
+	plaintext, err := oldEnc.DecryptString(ciphertextBase64, salt)
+	if err != nil {
+		return "", fmt.Errorf("decrypt with old key failed: %w", err)
+	}
+
+	newCiphertext, err := newEnc.EncryptString(plaintext, salt)
+	if err != nil {
+		return "", fmt.Errorf("encrypt with new key failed: %w", err)
+	}
+
+	return newCiphertext, nil
+}

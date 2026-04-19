@@ -22,9 +22,9 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_users_telegram_id ON users(telegram_id) WHERE telegram_id IS NOT NULL;
-CREATE INDEX idx_users_discord_id ON users(discord_id) WHERE discord_id IS NOT NULL;
-CREATE INDEX idx_users_is_activated ON users(is_activated) WHERE is_activated = TRUE;
+CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id) WHERE telegram_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_discord_id ON users(discord_id) WHERE discord_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_is_activated ON users(is_activated) WHERE is_activated = TRUE;
 
 -- user_api_credentials - encrypted exchange api keys
 CREATE TABLE IF NOT EXISTS user_api_credentials (
@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS user_api_credentials (
     UNIQUE(user_id, exchange)
 );
 
-CREATE INDEX idx_user_api_credentials_user_id ON user_api_credentials(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_api_credentials_user_id ON user_api_credentials(user_id);
 
 -- api_key_access_log - audit trail for key decryption
 CREATE TABLE IF NOT EXISTS api_key_access_log (
@@ -58,8 +58,8 @@ CREATE TABLE IF NOT EXISTS api_key_access_log (
     accessed_at         TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_api_key_access_log_user_id ON api_key_access_log(user_id);
-CREATE INDEX idx_api_key_access_log_accessed_at ON api_key_access_log(accessed_at);
+CREATE INDEX IF NOT EXISTS idx_api_key_access_log_user_id ON api_key_access_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_api_key_access_log_accessed_at ON api_key_access_log(accessed_at);
 
 --  trades - individual trade records
 CREATE TABLE IF NOT EXISTS trades (
@@ -79,10 +79,10 @@ CREATE TABLE IF NOT EXISTS trades (
     created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_trades_user_id ON trades(user_id);
-CREATE INDEX idx_trades_symbol ON trades(symbol);
-CREATE INDEX idx_trades_executed_at ON trades(executed_at);
-CREATE INDEX idx_trades_position_id ON trades(position_id) WHERE position_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_trades_user_id ON trades(user_id);
+CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
+CREATE INDEX IF NOT EXISTS idx_trades_executed_at ON trades(executed_at);
+CREATE INDEX IF NOT EXISTS idx_trades_position_id ON trades(position_id) WHERE position_id IS NOT NULL;
 
 -- positions - open and closed positions
 CREATE TABLE IF NOT EXISTS positions (
@@ -120,11 +120,11 @@ CREATE TABLE IF NOT EXISTS positions (
     last_updated_at         TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_positions_user_id ON positions(user_id);
-CREATE INDEX idx_positions_status ON positions(status) WHERE status = 'OPEN';
-CREATE INDEX idx_positions_symbol ON positions(symbol);
-CREATE INDEX idx_positions_paper_open ON positions(is_paper, status) WHERE is_paper = TRUE AND status = 'OPEN';
-CREATE INDEX idx_positions_internal_id ON positions(internal_id) WHERE internal_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_positions_user_id ON positions(user_id);
+CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status) WHERE status = 'OPEN';
+CREATE INDEX IF NOT EXISTS idx_positions_symbol ON positions(symbol);
+CREATE INDEX IF NOT EXISTS idx_positions_paper_open ON positions(is_paper, status) WHERE is_paper = TRUE AND status = 'OPEN';
+CREATE INDEX IF NOT EXISTS idx_positions_internal_id ON positions(internal_id) WHERE internal_id IS NOT NULL;
 
 -- watchlists - user's tracked symbols
 CREATE TABLE IF NOT EXISTS watchlists (
@@ -136,8 +136,8 @@ CREATE TABLE IF NOT EXISTS watchlists (
     added_at        TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX idx_watchlists_user_symbol ON watchlists(user_id, symbol);
-CREATE INDEX idx_watchlists_user_id ON watchlists(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_watchlists_user_symbol ON watchlists(user_id, symbol);
+CREATE INDEX IF NOT EXISTS idx_watchlists_user_id ON watchlists(user_id);
 
 -- alerts - price and indicator alerts
 CREATE TABLE IF NOT EXISTS alerts (
@@ -153,8 +153,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_alerts_user_id ON alerts(user_id);
-CREATE INDEX idx_alerts_active ON alerts(is_active, is_triggered) WHERE is_active = TRUE AND is_triggered = FALSE;
+CREATE INDEX IF NOT EXISTS idx_alerts_user_id ON alerts(user_id);
+CREATE INDEX IF NOT EXISTS idx_alerts_active ON alerts(is_active, is_triggered) WHERE is_active = TRUE AND is_triggered = FALSE;
 
 -- scanning_preferences - per-user scanner settings
 CREATE TABLE IF NOT EXISTS scanning_preferences (
@@ -198,8 +198,8 @@ CREATE TABLE IF NOT EXISTS position_notifications (
     sent_at             TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_position_notifications_position_id ON position_notifications(position_id);
-CREATE INDEX idx_position_notifications_sent_at ON position_notifications(sent_at);
+CREATE INDEX IF NOT EXISTS idx_position_notifications_position_id ON position_notifications(position_id);
+CREATE INDEX IF NOT EXISTS idx_position_notifications_sent_at ON position_notifications(sent_at);
 
 -- funding_fee_log - leverage funding fee records
 CREATE TABLE IF NOT EXISTS funding_fee_log (
@@ -213,8 +213,8 @@ CREATE TABLE IF NOT EXISTS funding_fee_log (
     recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_funding_fee_user ON funding_fee_log(user_id);
-CREATE INDEX idx_funding_fee_position ON funding_fee_log(position_id);
+CREATE INDEX IF NOT EXISTS idx_funding_fee_user ON funding_fee_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_funding_fee_position ON funding_fee_log(position_id);
 
 -- leverage_confirmations - user consent for leverage trading
 CREATE TABLE IF NOT EXISTS leverage_confirmations (
@@ -239,8 +239,8 @@ CREATE TABLE IF NOT EXISTS liquidation_alerts (
     alerted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_liq_alerts_user ON liquidation_alerts(user_id);
-CREATE INDEX idx_liq_alerts_position ON liquidation_alerts(position_id);
+CREATE INDEX IF NOT EXISTS idx_liq_alerts_user ON liquidation_alerts(user_id);
+CREATE INDEX IF NOT EXISTS idx_liq_alerts_position ON liquidation_alerts(position_id);
 
 -- daily_notification_log - track daily notification count
 CREATE TABLE IF NOT EXISTS daily_notification_log (
@@ -252,7 +252,7 @@ CREATE TABLE IF NOT EXISTS daily_notification_log (
     UNIQUE(user_id, date)
 );
 
-CREATE INDEX idx_daily_notification_log_user_date ON daily_notification_log(user_id, date);
+CREATE INDEX IF NOT EXISTS idx_daily_notification_log_user_date ON daily_notification_log(user_id, date);
 
 -- ai_decisions - claude ai decision logs
 CREATE TABLE IF NOT EXISTS ai_decisions (
@@ -276,13 +276,13 @@ CREATE TABLE IF NOT EXISTS ai_decisions (
     latency_ms          INTEGER,
     was_approved        BOOLEAN,
     was_executed        BOOLEAN DEFAULT FALSE,
-    filter_reason       VARCHAR(30) DEFAULT 'none' CHECK (filter_reason IN ('none', 'hold', 'low_confidence', 'duplicate', 'daily_limit', 'safety_blocked', 'expired', 'user_rejected')),
+    filter_reason       VARCHAR(30) DEFAULT 'none' CHECK (filter_reason IN ('none', 'hold', 'low_confidence', 'confidence_decay', 'duplicate', 'daily_limit', 'safety_blocked', 'expired', 'user_rejected')),
     created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_ai_decisions_user_id ON ai_decisions(user_id);
-CREATE INDEX idx_ai_decisions_symbol ON ai_decisions(symbol);
-CREATE INDEX idx_ai_decisions_created_at ON ai_decisions(created_at);
+CREATE INDEX IF NOT EXISTS idx_ai_decisions_user_id ON ai_decisions(user_id);
+CREATE INDEX IF NOT EXISTS idx_ai_decisions_symbol ON ai_decisions(symbol);
+CREATE INDEX IF NOT EXISTS idx_ai_decisions_created_at ON ai_decisions(created_at);
 
 -- daily_stats - daily trading statistics per user
 CREATE TABLE IF NOT EXISTS daily_stats (
@@ -304,7 +304,7 @@ CREATE TABLE IF NOT EXISTS daily_stats (
     UNIQUE(user_id, date)
 );
 
-CREATE INDEX idx_daily_stats_user_date ON daily_stats(user_id, date);
+CREATE INDEX IF NOT EXISTS idx_daily_stats_user_date ON daily_stats(user_id, date);
 
 -- trading_preferences - user's trading settings
 CREATE TABLE IF NOT EXISTS trading_preferences (
@@ -341,16 +341,30 @@ CREATE TABLE IF NOT EXISTS opportunity_notifications (
     sent_at             TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_opportunity_notifications_user_id ON opportunity_notifications(user_id);
-CREATE INDEX idx_opportunity_notifications_status ON opportunity_notifications(status) WHERE status = 'PENDING';
-CREATE INDEX idx_opportunity_notifications_sent_at ON opportunity_notifications(sent_at);
+CREATE INDEX IF NOT EXISTS idx_opportunity_notifications_user_id ON opportunity_notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_opportunity_notifications_status ON opportunity_notifications(status) WHERE status = 'PENDING';
+CREATE INDEX IF NOT EXISTS idx_opportunity_notifications_sent_at ON opportunity_notifications(sent_at);
 
--- add foreign key for positions -> ai_decisions (after both tables exist)
-ALTER TABLE positions ADD CONSTRAINT fk_positions_ai_decision
-    FOREIGN KEY (ai_decision_id) REFERENCES ai_decisions(id) ON DELETE SET NULL;
+-- add foreign keys after both referenced tables exist
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_positions_ai_decision'
+    ) THEN
+        ALTER TABLE positions ADD CONSTRAINT fk_positions_ai_decision
+            FOREIGN KEY (ai_decision_id) REFERENCES ai_decisions(id) ON DELETE SET NULL;
+    END IF;
+END $$;
 
-ALTER TABLE trades ADD CONSTRAINT fk_trades_position
-    FOREIGN KEY (position_id) REFERENCES positions(id) ON DELETE SET NULL;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_trades_position'
+    ) THEN
+        ALTER TABLE trades ADD CONSTRAINT fk_trades_position
+            FOREIGN KEY (position_id) REFERENCES positions(id) ON DELETE SET NULL;
+    END IF;
+END $$;
 
 -- create updated_at trigger function
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -362,23 +376,53 @@ END;
 $$ language 'plpgsql';
 
 -- apply updated_at triggers
-CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_users_updated_at') THEN
+        CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+END $$;
 
-CREATE TRIGGER update_user_api_credentials_updated_at BEFORE UPDATE ON user_api_credentials
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_user_api_credentials_updated_at') THEN
+        CREATE TRIGGER update_user_api_credentials_updated_at BEFORE UPDATE ON user_api_credentials
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+END $$;
 
-CREATE TRIGGER update_scanning_preferences_updated_at BEFORE UPDATE ON scanning_preferences
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_scanning_preferences_updated_at') THEN
+        CREATE TRIGGER update_scanning_preferences_updated_at BEFORE UPDATE ON scanning_preferences
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+END $$;
 
-CREATE TRIGGER update_notification_preferences_updated_at BEFORE UPDATE ON notification_preferences
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_notification_preferences_updated_at') THEN
+        CREATE TRIGGER update_notification_preferences_updated_at BEFORE UPDATE ON notification_preferences
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+END $$;
 
-CREATE TRIGGER update_daily_stats_updated_at BEFORE UPDATE ON daily_stats
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_daily_stats_updated_at') THEN
+        CREATE TRIGGER update_daily_stats_updated_at BEFORE UPDATE ON daily_stats
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+END $$;
 
-CREATE TRIGGER update_trading_preferences_updated_at BEFORE UPDATE ON trading_preferences
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_trading_preferences_updated_at') THEN
+        CREATE TRIGGER update_trading_preferences_updated_at BEFORE UPDATE ON trading_preferences
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+END $$;
 
 -- insert default top 10 watchlist symbols (reusable function)
 CREATE OR REPLACE FUNCTION populate_default_watchlist(p_user_id INTEGER)

@@ -106,15 +106,21 @@ mod tests {
     }
 
     fn sideways_prices() -> Vec<f64> {
-        vec![100.0, 101.0, 100.0, 101.0, 100.0, 101.0, 100.0, 101.0,
-             100.0, 101.0, 100.0, 101.0, 100.0, 101.0, 100.0, 101.0]
+        vec![
+            100.0, 101.0, 100.0, 101.0, 100.0, 101.0, 100.0, 101.0, 100.0, 101.0, 100.0, 101.0,
+            100.0, 101.0, 100.0, 101.0,
+        ]
     }
 
     #[test]
     fn test_rsi_rising_is_high() {
         let prices = rising_prices(30);
         let result = calculate(&prices, 14).unwrap();
-        assert!(result.value > 70.0, "rising prices should give high rsi, got {}", result.value);
+        assert!(
+            result.value > 70.0,
+            "rising prices should give high rsi, got {}",
+            result.value
+        );
         assert_eq!(result.signal, "OVERBOUGHT");
     }
 
@@ -122,7 +128,11 @@ mod tests {
     fn test_rsi_falling_is_low() {
         let prices = falling_prices(30);
         let result = calculate(&prices, 14).unwrap();
-        assert!(result.value < 30.0, "falling prices should give low rsi, got {}", result.value);
+        assert!(
+            result.value < 30.0,
+            "falling prices should give low rsi, got {}",
+            result.value
+        );
         assert_eq!(result.signal, "OVERSOLD");
     }
 
@@ -130,8 +140,11 @@ mod tests {
     fn test_rsi_sideways_is_neutral() {
         let prices = sideways_prices();
         let result = calculate(&prices, 14).unwrap();
-        assert!(result.value > 30.0 && result.value < 70.0,
-            "sideways prices should give neutral rsi, got {}", result.value);
+        assert!(
+            result.value > 30.0 && result.value < 70.0,
+            "sideways prices should give neutral rsi, got {}",
+            result.value
+        );
         assert_eq!(result.signal, "NEUTRAL");
     }
 
@@ -140,7 +153,8 @@ mod tests {
         let prices = rising_prices(50);
         let result = calculate(&prices, 14).unwrap();
         for val in &result.series {
-            if *val != 0.0 { // skip leading zeros
+            if *val != 0.0 {
+                // skip leading zeros
                 assert!(*val >= 0.0 && *val <= 100.0, "rsi out of range: {}", val);
             }
         }
@@ -171,15 +185,16 @@ mod tests {
         // known rsi(14) calculation
         // prices that produce a calculable rsi
         let prices = vec![
-            44.34, 44.09, 44.15, 43.61, 44.33,
-            44.83, 45.10, 45.42, 45.84, 46.08,
-            45.89, 46.03, 45.61, 46.28, 46.28,
-            46.00, 46.03, 46.41, 46.22, 45.64,
+            44.34, 44.09, 44.15, 43.61, 44.33, 44.83, 45.10, 45.42, 45.84, 46.08, 45.89, 46.03,
+            45.61, 46.28, 46.28, 46.00, 46.03, 46.41, 46.22, 45.64,
         ];
         let result = calculate(&prices, 14).unwrap();
         // rsi should be in a reasonable range for this data
-        assert!(result.value > 40.0 && result.value < 80.0,
-            "unexpected rsi value: {}", result.value);
+        assert!(
+            result.value > 40.0 && result.value < 80.0,
+            "unexpected rsi value: {}",
+            result.value
+        );
     }
 
     #[test]
@@ -187,7 +202,11 @@ mod tests {
         // every bar is a gain -> rsi should approach 100
         let prices: Vec<f64> = (0..30).map(|i| 100.0 + (i as f64) * 2.0).collect();
         let result = calculate(&prices, 14).unwrap();
-        assert!(result.value > 90.0, "all gains should give rsi near 100, got {}", result.value);
+        assert!(
+            result.value > 90.0,
+            "all gains should give rsi near 100, got {}",
+            result.value
+        );
     }
 
     #[test]
@@ -195,7 +214,11 @@ mod tests {
         // every bar is a loss -> rsi should approach 0
         let prices: Vec<f64> = (0..30).map(|i| 100.0 - (i as f64) * 2.0).collect();
         let result = calculate(&prices, 14).unwrap();
-        assert!(result.value < 10.0, "all losses should give rsi near 0, got {}", result.value);
+        assert!(
+            result.value < 10.0,
+            "all losses should give rsi near 0, got {}",
+            result.value
+        );
     }
 
     #[test]

@@ -26,11 +26,21 @@ func TestSetupWizard_FullFlow(t *testing.T) {
 	if session == nil {
 		t.Fatal("GetSession() returned nil")
 	}
-	if session.Step != StepAPIKey {
-		t.Errorf("initial step = %q, want %q", session.Step, StepAPIKey)
+	if session.Step != StepExchange {
+		t.Errorf("initial step = %q, want %q", session.Step, StepExchange)
 	}
 	if session.UserID != userID {
 		t.Errorf("userID = %d, want %d", session.UserID, userID)
+	}
+
+	// set exchange
+	if err := w.SetExchange(telegramID, "binance"); err != nil {
+		t.Fatalf("SetExchange() error: %v", err)
+	}
+
+	session = w.GetSession(telegramID)
+	if session.Step != StepAPIKey {
+		t.Errorf("step after SetExchange = %q, want %q", session.Step, StepAPIKey)
 	}
 
 	// set api key
@@ -54,13 +64,16 @@ func TestSetupWizard_FullFlow(t *testing.T) {
 	}
 
 	// complete
-	gotUserID, gotKey, gotSecret, err := w.Complete(telegramID)
+	gotUserID, gotExchange, gotKey, gotSecret, err := w.Complete(telegramID)
 	if err != nil {
 		t.Fatalf("Complete() error: %v", err)
 	}
 
 	if gotUserID != userID {
 		t.Errorf("Complete() userID = %d, want %d", gotUserID, userID)
+	}
+	if gotExchange != "binance" {
+		t.Errorf("Complete() exchange = %q, want %q", gotExchange, "binance")
 	}
 	if gotKey != "test-api-key" {
 		t.Errorf("Complete() apiKey = %q, want %q", gotKey, "test-api-key")
@@ -80,6 +93,10 @@ func TestSetupWizard_Cancel(t *testing.T) {
 	telegramID := int64(12345)
 
 	w.Start(telegramID, 1)
+
+	if err := w.SetExchange(telegramID, "binance"); err != nil {
+		t.Fatalf("SetExchange() error: %v", err)
+	}
 
 	if err := w.SetAPIKey(telegramID, "key"); err != nil {
 		t.Fatalf("SetAPIKey() error: %v", err)
@@ -114,6 +131,7 @@ func TestSetupWizard_SetAPIKey_WrongStep(t *testing.T) {
 
 	// start and advance past api key step
 	w.Start(telegramID, 1)
+	_ = w.SetExchange(telegramID, "binance")
 	_ = w.SetAPIKey(telegramID, "key")
 
 	// now at api secret step, setting api key again should fail
@@ -133,7 +151,7 @@ func TestSetupWizard_SetAPISecret_WrongStep(t *testing.T) {
 		t.Fatal("SetAPISecret() should fail when not in setup")
 	}
 
-	// start - at api key step, not api secret
+	// start - at exchange step, not api secret
 	w.Start(telegramID, 1)
 	err = w.SetAPISecret(telegramID, "secret")
 	if err == nil {
@@ -146,14 +164,14 @@ func TestSetupWizard_Complete_WrongStep(t *testing.T) {
 	telegramID := int64(12345)
 
 	// not in setup
-	_, _, _, err := w.Complete(telegramID)
+	_, _, _, _, err := w.Complete(telegramID)
 	if err == nil {
 		t.Fatal("Complete() should fail when not in setup")
 	}
 
-	// start - at api key step, not confirm
+	// start - at exchange step, not confirm
 	w.Start(telegramID, 1)
-	_, _, _, err = w.Complete(telegramID)
+	_, _, _, _, err = w.Complete(telegramID)
 	if err == nil {
 		t.Fatal("Complete() should fail when at wrong step")
 	}
@@ -174,7 +192,8 @@ func TestSetupWizard_MultipleSessions(t *testing.T) {
 		t.Fatal("user2 should be in setup")
 	}
 
-	// advance user1, user2 should remain at api key step
+	// advance user1 through exchange, user2 should remain at exchange step
+	_ = w.SetExchange(user1, "binance")
 	_ = w.SetAPIKey(user1, "key1")
 
 	s1 := w.GetSession(user1)
@@ -183,8 +202,8 @@ func TestSetupWizard_MultipleSessions(t *testing.T) {
 	if s1.Step != StepAPISecret {
 		t.Errorf("user1 step = %q, want %q", s1.Step, StepAPISecret)
 	}
-	if s2.Step != StepAPIKey {
-		t.Errorf("user2 step = %q, want %q", s2.Step, StepAPIKey)
+	if s2.Step != StepExchange {
+		t.Errorf("user2 step = %q, want %q", s2.Step, StepExchange)
 	}
 
 	// cancel user1, user2 should still be in setup
@@ -202,6 +221,7 @@ func TestSetupWizard_RestartClearsOldSession(t *testing.T) {
 	telegramID := int64(12345)
 
 	w.Start(telegramID, 1)
+	_ = w.SetExchange(telegramID, "binance")
 	_ = w.SetAPIKey(telegramID, "old-key")
 
 	// restart should create a fresh session
@@ -211,8 +231,8 @@ func TestSetupWizard_RestartClearsOldSession(t *testing.T) {
 	if session.UserID != 2 {
 		t.Errorf("restarted session userID = %d, want %d", session.UserID, 2)
 	}
-	if session.Step != StepAPIKey {
-		t.Errorf("restarted session step = %q, want %q", session.Step, StepAPIKey)
+	if session.Step != StepExchange {
+		t.Errorf("restarted session step = %q, want %q", session.Step, StepExchange)
 	}
 	if session.APIKey != "" {
 		t.Errorf("restarted session should have empty api key, got %q", session.APIKey)

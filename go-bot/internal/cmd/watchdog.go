@@ -111,6 +111,7 @@ func (w *InfraWatchdog) recordFailure(service string, err error, fails *int, ale
 	if *fails >= w.failThreshold && !*alerted {
 		*alerted = true
 		msg := fmt.Sprintf("🔴 INFRA ALERT: %s is DOWN (%d consecutive failures)\nError: %s", service, *fails, err)
+		infraAlerts.WithLabelValues(service, "down").Inc()
 		w.alert(msg)
 	}
 }
@@ -121,6 +122,7 @@ func (w *InfraWatchdog) recordRecovery(service string, fails *int, alerted *bool
 
 	if *alerted {
 		msg := fmt.Sprintf("🟢 INFRA RECOVERY: %s is back UP (was down for %d checks)", service, *fails)
+		infraAlerts.WithLabelValues(service, "recovery").Inc()
 		w.alert(msg)
 	}
 	*fails = 0

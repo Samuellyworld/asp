@@ -18,22 +18,23 @@ import (
 type Status string
 
 const (
-	StatusPending  Status = "pending"
-	StatusApproved Status = "approved"
-	StatusRejected Status = "rejected"
-	StatusExpired  Status = "expired"
-	StatusModified Status = "modified"
+	StatusPending   Status = "pending"
+	StatusExecuting Status = "executing"
+	StatusApproved  Status = "approved"
+	StatusRejected  Status = "rejected"
+	StatusExpired   Status = "expired"
+	StatusModified  Status = "modified"
 )
 
 // a trading opportunity detected by the scanner
 type Opportunity struct {
-	ID        string
-	UserID    int
-	Symbol    string
-	Action    claude.Action
-	Result    *pipeline.Result
-	Status    Status
-	CreatedAt time.Time
+	ID         string
+	UserID     int
+	Symbol     string
+	Action     claude.Action
+	Result     *pipeline.Result
+	Status     Status
+	CreatedAt  time.Time
 	ResolvedAt *time.Time
 
 	// modified trade plan (set when user modifies)
@@ -52,7 +53,7 @@ type Opportunity struct {
 
 // configuration for the opportunity manager
 type Config struct {
-	ExpiryDuration time.Duration
+	ExpiryDuration  time.Duration
 	CleanupInterval time.Duration
 }
 
@@ -172,13 +173,59 @@ func (m *Manager) Approve(id string, userID int) bool {
 	defer m.mu.Unlock()
 
 	opp, ok := m.opportunities[id]
-	if !ok || opp.UserID != userID || opp.Status != StatusPending {
+	if !ok || opp.UserID != userID || (opp.Status != StatusPending && opp.Status != StatusModified && opp.Status != StatusExecuting) {
 		return false
 	}
 
 	now := m.now()
 	opp.Status = StatusApproved
 	opp.ResolvedAt = &now
+	go m.syncToDB(opp)
+	return true
+}
+
+// BeginExecution atomically claims an opportunity for execution. It prevents
+// duplicate button clicks from sending multiple exchange orders while keeping
+// the opportunity retryable if execution fails before a trade is opened.
+func (m *Manager) BeginExecution(id string, userID int) (*Opportunity, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	opp, ok := m.opportunities[id]
+	if !ok || opp.UserID != userID || (opp.Status != StatusPending && opp.Status != StatusModified) {
+		return nil, false
+	}
+
+	opp.Status = StatusExecuting
+	opp.ResolvedAt = nil
+	go m.syncToDB(opp)
+	return opp, true
+}
+
+// CompleteExecution marks a claimed opportunity as approved after execution
+// has succeeded.
+func (m *Manager) CompleteExecution(id string, userID int) bool {
+	return m.Approve(id, userID)
+}
+
+// FailExecution releases an execution claim so the user can retry transient
+// failures. Modified opportunities return to modified status; unmodified ones
+// return to pending.
+func (m *Manager) FailExecution(id string, userID int) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	opp, ok := m.opportunities[id]
+	if !ok || opp.UserID != userID || opp.Status != StatusExecuting {
+		return false
+	}
+
+	if opp.ModifiedPlan != nil {
+		opp.Status = StatusModified
+	} else {
+		opp.Status = StatusPending
+	}
+	opp.ResolvedAt = nil
 	go m.syncToDB(opp)
 	return true
 }

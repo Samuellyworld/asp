@@ -14,26 +14,26 @@ import (
 // --- mocks for live executor tests ---
 
 type mockFutures struct {
-	setLeverageCalls  int
-	setLeverageErr    error
-	setMarginCalls    int
-	setMarginTypeErr  error
-	placeOrderResp    *binance.FuturesOrder
-	placeOrderErr     error
-	placeOrderCalls   int
-	reversalErr       error // error for the emergency reversal (2nd PlaceOrder call)
-	placeStopResp     *binance.FuturesOrder
-	placeStopErr      error
-	placeTPResp       *binance.FuturesOrder
-	placeTPErr        error
-	cancelCalls       int
-	cancelErr         error
-	positions         []binance.FuturesPosition
-	positionsErr      error
-	lastOrderSide     exchange.OrderSide
-	lastOrderQty      float64
-	lastStopPrice     float64
-	lastTPPrice       float64
+	setLeverageCalls int
+	setLeverageErr   error
+	setMarginCalls   int
+	setMarginTypeErr error
+	placeOrderResp   *binance.FuturesOrder
+	placeOrderErr    error
+	placeOrderCalls  int
+	reversalErr      error // error for the emergency reversal (2nd PlaceOrder call)
+	placeStopResp    *binance.FuturesOrder
+	placeStopErr     error
+	placeTPResp      *binance.FuturesOrder
+	placeTPErr       error
+	cancelCalls      int
+	cancelErr        error
+	positions        []binance.FuturesPosition
+	positionsErr     error
+	lastOrderSide    exchange.OrderSide
+	lastOrderQty     float64
+	lastStopPrice    float64
+	lastTPPrice      float64
 }
 
 func (m *mockFutures) SetLeverage(ctx context.Context, symbol string, leverage int, apiKey, apiSecret string) error {
@@ -110,6 +110,28 @@ func (m *mockFutures) PlaceTakeProfitMarket(ctx context.Context, symbol string, 
 func (m *mockFutures) CancelOrder(ctx context.Context, symbol string, orderID int64, apiKey, apiSecret string) error {
 	m.cancelCalls++
 	return m.cancelErr
+}
+
+func (m *mockFutures) GetOrder(ctx context.Context, symbol string, orderID int64, apiKey, apiSecret string) (*binance.FuturesOrder, error) {
+	switch orderID {
+	case 100:
+		if m.placeOrderResp != nil {
+			return m.placeOrderResp, nil
+		}
+	case 200:
+		if m.placeStopResp != nil {
+			return m.placeStopResp, nil
+		}
+	case 300:
+		if m.placeTPResp != nil {
+			return m.placeTPResp, nil
+		}
+	}
+	return &binance.FuturesOrder{
+		OrderID: orderID,
+		Symbol:  symbol,
+		Status:  exchange.OrderStatusNew,
+	}, nil
 }
 
 func (m *mockFutures) GetPositions(ctx context.Context, apiKey, apiSecret string) ([]binance.FuturesPosition, error) {
@@ -203,7 +225,7 @@ func defaultSafetyChecker() *SafetyChecker {
 		HardMaxLeverage:        20,
 		UserMaxLeverage:        10,
 		MaxMarginPerTrade:      500,
-		MinLiquidationDistance:  5,
+		MinLiquidationDistance: 5,
 		RequireLeverageEnabled: true,
 	}
 	return NewSafetyChecker(
@@ -490,8 +512,10 @@ func TestLiveExecutor_OpenErrors(t *testing.T) {
 			wantErr: "failed to set margin type",
 		},
 		{
-			name:    "place order error",
-			setup:   func(f *mockFutures, _ *mockLiveKeys, _ *mockMarkPrice) { f.placeOrderErr = fmt.Errorf("order rejected") },
+			name: "place order error",
+			setup: func(f *mockFutures, _ *mockLiveKeys, _ *mockMarkPrice) {
+				f.placeOrderErr = fmt.Errorf("order rejected")
+			},
 			wantErr: "failed to place order",
 		},
 		{

@@ -29,6 +29,7 @@ func (a *spotPositionStoreAdapter) SavePosition(ctx context.Context, pos *papert
 	p := &database.PersistedPosition{
 		InternalID:   pos.ID,
 		UserID:       pos.UserID,
+		Exchange:     "binance",
 		Symbol:       pos.Symbol,
 		Side:         spotSide(pos.Action),
 		Action:       string(pos.Action),
@@ -78,6 +79,7 @@ func (a *leveragePositionStoreAdapter) SavePosition(ctx context.Context, pos *le
 	p := &database.PersistedPosition{
 		InternalID:       pos.ID,
 		UserID:           pos.UserID,
+		Exchange:         "binance",
 		Symbol:           pos.Symbol,
 		Side:             string(pos.Side),
 		PositionType:     "FUTURES",
@@ -370,6 +372,10 @@ func (a *leverageTradeLoggerAdapter) LogOpen(ctx context.Context, pos *leverage.
 		IsPaper:    pos.IsPaper,
 		ExecutedAt: pos.OpenedAt,
 	}
+	if !pos.IsPaper && pos.MainOrderID > 0 {
+		rec.Exchange = "binance"
+		rec.ExchangeOrderID = fmt.Sprintf("%d", pos.MainOrderID)
+	}
 	_, err := a.trades.Insert(ctx, rec)
 	return err
 }
@@ -423,6 +429,7 @@ func (a *livePositionStoreAdapter) SavePosition(ctx context.Context, pos *livetr
 	p := &database.PersistedPosition{
 		InternalID:   pos.ID,
 		UserID:       pos.UserID,
+		Exchange:     pos.Exchange,
 		Symbol:       pos.Symbol,
 		Side:         side,
 		PositionType: "SPOT",
@@ -434,6 +441,9 @@ func (a *livePositionStoreAdapter) SavePosition(ctx context.Context, pos *livetr
 		TakeProfit:   pos.TakeProfit,
 		IsPaper:      false,
 		Platform:     pos.Platform,
+		MainOrderID:  pos.MainOrderID,
+		SLOrderID:    pos.SLOrderID,
+		TPOrderID:    pos.TPOrderID,
 		OpenedAt:     pos.OpenedAt,
 	}
 	return a.repo.Insert(ctx, p)
@@ -461,6 +471,7 @@ func (a *liveTradeLoggerAdapter) LogOpen(ctx context.Context, pos *livetrading.L
 	}
 	rec := &database.TradeRecord{
 		UserID:          pos.UserID,
+		Exchange:        pos.Exchange,
 		Symbol:          pos.Symbol,
 		Side:            side,
 		TradeType:       "SPOT",
@@ -485,6 +496,7 @@ func (a *liveTradeLoggerAdapter) LogClose(ctx context.Context, pos *livetrading.
 	}
 	rec := &database.TradeRecord{
 		UserID:     pos.UserID,
+		Exchange:   pos.Exchange,
 		Symbol:     pos.Symbol,
 		Side:       side,
 		TradeType:  "SPOT",
@@ -492,6 +504,9 @@ func (a *liveTradeLoggerAdapter) LogClose(ctx context.Context, pos *livetrading.
 		Price:      pos.ClosePrice,
 		IsPaper:    false,
 		ExecutedAt: executedAt,
+	}
+	if pos.CloseOrderID > 0 {
+		rec.ExchangeOrderID = fmt.Sprintf("%d", pos.CloseOrderID)
 	}
 	if _, err := a.trades.Insert(ctx, rec); err != nil {
 		return err
@@ -514,6 +529,7 @@ func (a *liveLeveragePositionStoreAdapter) SavePosition(ctx context.Context, pos
 	p := &database.PersistedPosition{
 		InternalID:       pos.ID,
 		UserID:           pos.UserID,
+		Exchange:         "binance",
 		Symbol:           pos.Symbol,
 		Side:             string(pos.Side),
 		PositionType:     "FUTURES",
@@ -531,6 +547,9 @@ func (a *liveLeveragePositionStoreAdapter) SavePosition(ctx context.Context, pos
 		MarginType:       pos.MarginType,
 		IsPaper:          false,
 		Platform:         pos.Platform,
+		MainOrderID:      pos.MainOrderID,
+		SLOrderID:        pos.SLOrderID,
+		TPOrderID:        pos.TPOrderID,
 		OpenedAt:         pos.OpenedAt,
 	}
 	return a.repo.Insert(ctx, p)
@@ -565,6 +584,7 @@ func recoverLivePositions(ctx context.Context, repo *database.PositionRepository
 		pos := &livetrading.LivePosition{
 			ID:           r.InternalID,
 			UserID:       r.UserID,
+			Exchange:     r.Exchange,
 			Symbol:       r.Symbol,
 			Side:         side,
 			EntryPrice:   r.EntryPrice,
@@ -572,6 +592,9 @@ func recoverLivePositions(ctx context.Context, repo *database.PositionRepository
 			PositionSize: r.PositionSize,
 			StopLoss:     r.StopLoss,
 			TakeProfit:   r.TakeProfit,
+			MainOrderID:  r.MainOrderID,
+			SLOrderID:    r.SLOrderID,
+			TPOrderID:    r.TPOrderID,
 			Status:       "open",
 			OpenedAt:     r.OpenedAt,
 			Platform:     r.Platform,
@@ -622,6 +645,9 @@ func recoverLiveLeveragePositions(ctx context.Context, repo *database.PositionRe
 			Status:           "open",
 			OpenedAt:         r.OpenedAt,
 			Platform:         r.Platform,
+			MainOrderID:      r.MainOrderID,
+			SLOrderID:        r.SLOrderID,
+			TPOrderID:        r.TPOrderID,
 		}
 		executor.RestorePosition(pos)
 		slog.Info("recovered live leverage position", "id", r.InternalID, "symbol", r.Symbol)

@@ -158,18 +158,33 @@ func (m *Monitor) CheckPositions() {
 // checks if sl or tp orders have been filled on the exchange.
 // returns true if the position was closed (caller should skip further checks).
 func (m *Monitor) checkOrderFills(pos *LivePosition) bool {
-	apiKey, apiSecret, err := m.keys.DecryptKeys(pos.UserID)
+	orders := m.orders
+	if m.executor != nil {
+		routed, err := m.executor.ordersForPosition(pos)
+		if err == nil {
+			orders = routed
+		}
+	}
+	if orders == nil {
+		return false
+	}
+
+	exchangeName := pos.Exchange
+	if exchangeName == "" {
+		exchangeName = supportedLiveSpotExchange
+	}
+	apiKey, apiSecret, err := decryptKeysForExchange(m.keys, pos.UserID, exchangeName)
 	if err != nil {
 		return false
 	}
 
 	// check stop loss order
-	if pos.SLOrderID > 0 && m.orders != nil {
-		slOrder, err := m.orders.GetOrder(pos.Symbol, pos.SLOrderID, apiKey, apiSecret)
+	if pos.SLOrderID > 0 {
+		slOrder, err := orders.GetOrder(pos.Symbol, pos.SLOrderID, apiKey, apiSecret)
 		if err == nil && slOrder.Status == exchange.OrderStatusFilled {
-			closed, err := m.executor.Close(pos.ID, "stop_loss")
+			closed, err := m.executor.CloseFromFilledOrder(pos.ID, "stop_loss", slOrder)
 			if err != nil {
-				// close failed — don't skip this position; retry on next cycle
+				// state update failed — don't skip this position; retry on next cycle
 				return false
 			}
 			m.emit(Event{Type: EventSLHit, Position: closed, IsUrgent: true})
@@ -178,12 +193,12 @@ func (m *Monitor) checkOrderFills(pos *LivePosition) bool {
 	}
 
 	// check take profit order
-	if pos.TPOrderID > 0 && m.orders != nil {
-		tpOrder, err := m.orders.GetOrder(pos.Symbol, pos.TPOrderID, apiKey, apiSecret)
+	if pos.TPOrderID > 0 {
+		tpOrder, err := orders.GetOrder(pos.Symbol, pos.TPOrderID, apiKey, apiSecret)
 		if err == nil && tpOrder.Status == exchange.OrderStatusFilled {
-			closed, err := m.executor.Close(pos.ID, "take_profit")
+			closed, err := m.executor.CloseFromFilledOrder(pos.ID, "take_profit", tpOrder)
 			if err != nil {
-				// close failed — don't skip this position; retry on next cycle
+				// state update failed — don't skip this position; retry on next cycle
 				return false
 			}
 			m.emit(Event{Type: EventTPHit, Position: closed, IsUrgent: true})

@@ -3,6 +3,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -63,10 +64,7 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 
 		if s.apiKey != "" {
 			key := r.Header.Get("X-API-Key")
-			if key == "" {
-				key = r.URL.Query().Get("api_key")
-			}
-			if key != s.apiKey {
+			if subtle.ConstantTimeCompare([]byte(key), []byte(s.apiKey)) != 1 {
 				writeError(w, http.StatusUnauthorized, "invalid or missing API key")
 				return
 			}
@@ -328,9 +326,9 @@ func (s *Server) handleCandles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"candles": apiCandles,
-		"count":   len(apiCandles),
-		"symbol":  symbol,
+		"candles":  apiCandles,
+		"count":    len(apiCandles),
+		"symbol":   symbol,
 		"interval": interval,
 	})
 }
@@ -402,6 +400,7 @@ func positionToAPI(p *database.PersistedPosition) map[string]any {
 		"id":            p.ID,
 		"internal_id":   p.InternalID,
 		"user_id":       p.UserID,
+		"exchange":      p.Exchange,
 		"symbol":        p.Symbol,
 		"side":          p.Side,
 		"position_type": p.PositionType,
@@ -452,6 +451,15 @@ func positionToAPI(p *database.PersistedPosition) map[string]any {
 	if p.ClosedAt != nil {
 		m["closed_at"] = p.ClosedAt.Format(time.RFC3339)
 	}
+	if p.MainOrderID != 0 {
+		m["main_order_id"] = p.MainOrderID
+	}
+	if p.SLOrderID != 0 {
+		m["sl_order_id"] = p.SLOrderID
+	}
+	if p.TPOrderID != 0 {
+		m["tp_order_id"] = p.TPOrderID
+	}
 
 	return m
 }
@@ -463,6 +471,7 @@ func tradesToAPI(trades []*database.TradeRecord) []map[string]any {
 			"id":          t.ID,
 			"user_id":     t.UserID,
 			"symbol":      t.Symbol,
+			"exchange":    t.Exchange,
 			"side":        t.Side,
 			"trade_type":  t.TradeType,
 			"quantity":    t.Quantity,
@@ -548,17 +557,17 @@ func dailyStatsToAPI(stats []*database.DailyStatsRecord) []map[string]any {
 	result := make([]map[string]any, len(stats))
 	for i, s := range stats {
 		result[i] = map[string]any{
-			"date":                s.Date.Format("2006-01-02"),
-			"total_trades":        s.TotalTrades,
-			"winning_trades":      s.WinningTrades,
-			"losing_trades":       s.LosingTrades,
-			"realized_pnl":        s.RealizedPnL,
-			"unrealized_pnl":      s.UnrealizedPnL,
-			"fees_paid":           s.FeesPaid,
-			"funding_paid":        s.FundingPaid,
-			"ai_decisions_made":   s.AIDecisionsMade,
+			"date":                  s.Date.Format("2006-01-02"),
+			"total_trades":          s.TotalTrades,
+			"winning_trades":        s.WinningTrades,
+			"losing_trades":         s.LosingTrades,
+			"realized_pnl":          s.RealizedPnL,
+			"unrealized_pnl":        s.UnrealizedPnL,
+			"fees_paid":             s.FeesPaid,
+			"funding_paid":          s.FundingPaid,
+			"ai_decisions_made":     s.AIDecisionsMade,
 			"ai_decisions_approved": s.AIDecisionsApproved,
-			"notifications_sent":  s.NotificationsSent,
+			"notifications_sent":    s.NotificationsSent,
 		}
 	}
 	return result

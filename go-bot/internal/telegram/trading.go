@@ -318,34 +318,42 @@ func (h *Handler) callbackOppApprove(ctx context.Context, queryID string, telegr
 		return
 	}
 
-	if !h.trading.OppManager.Approve(oppID, userID) {
+	opp, ok := h.trading.OppManager.BeginExecution(oppID, userID)
+	if !ok {
 		h.answerCallback(queryID, "opportunity already resolved")
 		return
 	}
-
-	// update the message to show approved status
-	h.editMessage(chatID, messageID, opportunity.FormatApprovedMessage(opp), nil)
 
 	// route to appropriate executor
 	if h.trading.Confirm != nil && h.trading.Confirm.IsConfirmed(userID) && h.trading.LiveExecutor != nil {
 		pos, err := h.trading.LiveExecutor.Execute(opp)
 		if err != nil {
-			h.answerCallback(queryID, "approved")
+			if !strings.Contains(err.Error(), "CRITICAL") {
+				h.trading.OppManager.FailExecution(oppID, userID)
+			}
+			h.answerCallback(queryID, "execution failed")
 			h.send(chatID, fmt.Sprintf("❌ live execution failed: %v", err))
 			return
 		}
+		h.trading.OppManager.CompleteExecution(oppID, userID)
+		h.editMessage(chatID, messageID, opportunity.FormatApprovedMessage(opp), nil)
 		h.answerCallback(queryID, "trade executed!")
 		h.send(chatID, livetrading.FormatTradeExecuted(pos))
 	} else if h.trading.PaperExecutor != nil {
 		pos, err := h.trading.PaperExecutor.Execute(opp)
 		if err != nil {
-			h.answerCallback(queryID, "approved")
+			h.trading.OppManager.FailExecution(oppID, userID)
+			h.answerCallback(queryID, "execution failed")
 			h.send(chatID, fmt.Sprintf("❌ paper execution failed: %v", err))
 			return
 		}
+		h.trading.OppManager.CompleteExecution(oppID, userID)
+		h.editMessage(chatID, messageID, opportunity.FormatApprovedMessage(opp), nil)
 		h.answerCallback(queryID, "paper trade opened!")
 		h.send(chatID, papertrading.FormatTradeExecuted(pos))
 	} else {
+		h.trading.OppManager.CompleteExecution(oppID, userID)
+		h.editMessage(chatID, messageID, opportunity.FormatApprovedMessage(opp), nil)
 		h.answerCallback(queryID, "approved (no executor available)")
 	}
 }

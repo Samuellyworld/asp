@@ -11,13 +11,14 @@ import (
 	"time"
 )
 
-//wraps the http connection to the python ml service
+// wraps the http connection to the python ml service
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
+	apiKey     string
 }
 
-//  represents ohlcv price data for ml predictions
+// represents ohlcv price data for ml predictions
 type Candle struct {
 	Open      float64 `json:"open"`
 	High      float64 `json:"high"`
@@ -27,7 +28,7 @@ type Candle struct {
 	Timestamp int64   `json:"timestamp"`
 }
 
-//  is the input for the price prediction endpoint
+// is the input for the price prediction endpoint
 type PricePredictionRequest struct {
 	Symbol    string   `json:"symbol"`
 	Candles   []Candle `json:"candles"`
@@ -44,19 +45,19 @@ type PricePredictionResponse struct {
 	CurrentPrice   float64 `json:"current_price"`
 }
 
-//  is the input for the sentiment analysis endpoint
+// is the input for the sentiment analysis endpoint
 type SentimentRequest struct {
 	Text string `json:"text"`
 }
 
-//  is the output from the sentiment analysis endpoint
+// is the output from the sentiment analysis endpoint
 type SentimentResponse struct {
 	Score      float64 `json:"score"`
 	Label      string  `json:"label"`
 	Confidence float64 `json:"confidence"`
 }
 
-//  is the output from the health check endpoint
+// is the output from the health check endpoint
 type HealthResponse struct {
 	Status string `json:"status"`
 }
@@ -89,11 +90,11 @@ type PatternDetectRequest struct {
 }
 
 type PatternDetectResponse struct {
-	Patterns      []map[string]interface{} `json:"patterns"`
-	PatternCount  int                      `json:"pattern_count"`
-	Signal        string                   `json:"signal"`
-	SignalStrength float64                 `json:"signal_strength"`
-	Summary       string                   `json:"summary"`
+	Patterns       []map[string]interface{} `json:"patterns"`
+	PatternCount   int                      `json:"pattern_count"`
+	Signal         string                   `json:"signal"`
+	SignalStrength float64                  `json:"signal_strength"`
+	Summary        string                   `json:"summary"`
 }
 
 // --- drift detection ---
@@ -153,13 +154,13 @@ type RLTrainRequest struct {
 }
 
 type RLTrainResponse struct {
-	Success          bool    `json:"success"`
-	Reason           string  `json:"reason,omitempty"`
-	Episodes         int     `json:"episodes,omitempty"`
-	AvgRewardLast20  float64 `json:"avg_reward_last_20,omitempty"`
-	AvgPnlLast20     float64 `json:"avg_pnl_last_20,omitempty"`
-	BestPnl          float64 `json:"best_pnl,omitempty"`
-	FinalEpsilon     float64 `json:"final_epsilon,omitempty"`
+	Success         bool    `json:"success"`
+	Reason          string  `json:"reason,omitempty"`
+	Episodes        int     `json:"episodes,omitempty"`
+	AvgRewardLast20 float64 `json:"avg_reward_last_20,omitempty"`
+	AvgPnlLast20    float64 `json:"avg_pnl_last_20,omitempty"`
+	BestPnl         float64 `json:"best_pnl,omitempty"`
+	FinalEpsilon    float64 `json:"final_epsilon,omitempty"`
 }
 
 type RLActionRequest struct {
@@ -186,6 +187,11 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
+// SetAPIKey configures optional X-API-Key authentication for the ML service.
+func (c *Client) SetAPIKey(apiKey string) {
+	c.apiKey = apiKey
+}
+
 // checks if the ml service is running
 func (c *Client) Health(ctx context.Context) (*HealthResponse, error) {
 	resp, err := c.get(ctx, "/health")
@@ -201,7 +207,7 @@ func (c *Client) Health(ctx context.Context) (*HealthResponse, error) {
 	return &result, nil
 }
 
-//  calls the price prediction endpoint
+// calls the price prediction endpoint
 func (c *Client) PredictPrice(ctx context.Context, req *PricePredictionRequest) (*PricePredictionResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -226,7 +232,7 @@ func (c *Client) PredictPrice(ctx context.Context, req *PricePredictionRequest) 
 	return &result, nil
 }
 
-//  calls the sentiment analysis endpoint
+// calls the sentiment analysis endpoint
 func (c *Client) AnalyzeSentiment(ctx context.Context, text string) (*SentimentResponse, error) {
 	req := SentimentRequest{Text: text}
 	body, err := json.Marshal(req)
@@ -252,7 +258,7 @@ func (c *Client) AnalyzeSentiment(ctx context.Context, text string) (*SentimentR
 	return &result, nil
 }
 
-//  returns true if the ml service is reachable
+// returns true if the ml service is reachable
 func (c *Client) IsAvailable(ctx context.Context) bool {
 	health, err := c.Health(ctx)
 	return err == nil && health.Status == "healthy"
@@ -263,6 +269,7 @@ func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.addAuth(req)
 	return c.httpClient.Do(req)
 }
 
@@ -272,7 +279,14 @@ func (c *Client) post(ctx context.Context, path string, body []byte) (*http.Resp
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	c.addAuth(req)
 	return c.httpClient.Do(req)
+}
+
+func (c *Client) addAuth(req *http.Request) {
+	if c.apiKey != "" {
+		req.Header.Set("X-API-Key", c.apiKey)
+	}
 }
 
 // EnsemblePredict calls the ensemble prediction endpoint.

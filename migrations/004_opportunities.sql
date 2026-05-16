@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
     user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     symbol          VARCHAR(20) NOT NULL,
     action          VARCHAR(10) NOT NULL CHECK (action IN ('BUY', 'SELL', 'HOLD')),
-    status          VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected', 'expired', 'modified')),
+    status          VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'executing', 'approved', 'rejected', 'expired', 'modified')),
     confidence      DECIMAL(5, 2),
     entry_price     DECIMAL(20, 8),
     stop_loss       DECIMAL(20, 8),

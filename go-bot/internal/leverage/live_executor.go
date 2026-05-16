@@ -27,6 +27,7 @@ type FuturesOrderClient interface {
 	PlaceStopMarket(ctx context.Context, symbol string, side exchange.OrderSide, quantity, stopPrice float64, apiKey, apiSecret string) (*binance.FuturesOrder, error)
 	PlaceTakeProfitMarket(ctx context.Context, symbol string, side exchange.OrderSide, quantity, stopPrice float64, apiKey, apiSecret string) (*binance.FuturesOrder, error)
 	CancelOrder(ctx context.Context, symbol string, orderID int64, apiKey, apiSecret string) error
+	GetOrder(ctx context.Context, symbol string, orderID int64, apiKey, apiSecret string) (*binance.FuturesOrder, error)
 	GetPositions(ctx context.Context, apiKey, apiSecret string) ([]binance.FuturesPosition, error)
 }
 
@@ -40,9 +41,9 @@ type LiveExecutor struct {
 	safety    *SafetyChecker
 	funding   *FundingTracker
 	prices    MarkPriceProvider
-	breaker   *circuitbreaker.Breaker       // nil if no circuit breaker configured
-	store     LeveragePositionStore          // nil if no persistence configured
-	trades    LeverageTradeLogger            // nil if no logging configured
+	breaker   *circuitbreaker.Breaker // nil if no circuit breaker configured
+	store     LeveragePositionStore   // nil if no persistence configured
+	trades    LeverageTradeLogger     // nil if no logging configured
 	nextID    int
 }
 
@@ -351,9 +352,69 @@ func (e *LiveExecutor) Close(posID string, reason string) (*LeveragePosition, er
 
 	closePrice := closeOrder.AvgPrice
 	if closePrice <= 0 {
-		closePrice = pos.MarkPrice
+		closePrice = closeOrder.Price
+	}
+	return e.finalizeClose(posID, reason, closePrice, closeOrder.OrderID)
+}
+
+// CloseFromFilledOrder reconciles a position as closed by an already-filled
+// exchange order. It does not place another market order.
+func (e *LiveExecutor) CloseFromFilledOrder(posID string, reason string, closeOrder *binance.FuturesOrder) (*LeveragePosition, error) {
+	if closeOrder == nil {
+		return nil, fmt.Errorf("filled order is nil")
+	}
+	if pos := e.Get(posID); pos != nil {
+		e.cancelProtectionOrdersExcept(pos, closeOrder.OrderID)
 	}
 
+	closePrice := closeOrder.AvgPrice
+	if closePrice <= 0 {
+		closePrice = closeOrder.Price
+	}
+	if closePrice <= 0 {
+		closePrice = closeOrder.StopPrice
+	}
+	return e.finalizeClose(posID, reason, closePrice, closeOrder.OrderID)
+}
+
+func (e *LiveExecutor) cancelProtectionOrdersExcept(pos *LeveragePosition, filledOrderID int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	apiKey, apiSecret, err := e.keys.DecryptKeys(pos.UserID)
+	if err != nil {
+		slog.Warn("failed to decrypt keys for leverage protection cleanup", "position", pos.ID, "error", err)
+		return
+	}
+	if pos.SLOrderID > 0 && pos.SLOrderID != filledOrderID {
+		if err := e.futures.CancelOrder(ctx, pos.Symbol, pos.SLOrderID, apiKey, apiSecret); err != nil {
+			slog.Warn("failed to cancel sibling leverage SL order after fill", "position", pos.ID, "order", pos.SLOrderID, "error", err)
+		}
+	}
+	if pos.TPOrderID > 0 && pos.TPOrderID != filledOrderID {
+		if err := e.futures.CancelOrder(ctx, pos.Symbol, pos.TPOrderID, apiKey, apiSecret); err != nil {
+			slog.Warn("failed to cancel sibling leverage TP order after fill", "position", pos.ID, "order", pos.TPOrderID, "error", err)
+		}
+	}
+}
+
+func (e *LiveExecutor) finalizeClose(posID string, reason string, closePrice float64, closeOrderID int64) (*LeveragePosition, error) {
+	e.mu.Lock()
+	pos, ok := e.positions[posID]
+	if !ok {
+		e.mu.Unlock()
+		return nil, fmt.Errorf("position not found: %s", posID)
+	}
+	if pos.Status == "closed" {
+		e.mu.Unlock()
+		return nil, fmt.Errorf("position already closed: %s", posID)
+	}
+	if closePrice <= 0 {
+		closePrice = pos.MarkPrice
+	}
+	if closePrice <= 0 {
+		closePrice = pos.EntryPrice
+	}
 	// calculate pnl
 	var pnl float64
 	if pos.Side == SideLong {
@@ -370,11 +431,11 @@ func (e *LiveExecutor) Close(posID string, reason string) (*LeveragePosition, er
 	}
 	pnl -= fundingFees
 
-	e.mu.Lock()
 	now := time.Now()
 	pos.Status = "closed"
 	pos.CloseReason = reason
 	pos.ClosePrice = closePrice
+	pos.CloseOrderID = closeOrderID
 	pos.ClosedAt = &now
 	pos.PnL = pnl
 	pos.FundingPaid = fundingFees
@@ -386,11 +447,16 @@ func (e *LiveExecutor) Close(posID string, reason string) (*LeveragePosition, er
 	delete(e.positions, posID)
 	e.mu.Unlock()
 
+	e.persistClosed(pos)
+	return pos, nil
+}
+
+func (e *LiveExecutor) persistClosed(pos *LeveragePosition) {
 	// persist to database (best-effort)
 	if e.store != nil {
 		dbCtx, dbCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := e.store.ClosePosition(dbCtx, pos); err != nil {
-			slog.Error("failed to persist live leverage position close", "id", posID, "error", err)
+			slog.Error("failed to persist live leverage position close", "id", pos.ID, "error", err)
 		}
 		dbCancel()
 	}
@@ -399,12 +465,10 @@ func (e *LiveExecutor) Close(posID string, reason string) (*LeveragePosition, er
 	if e.trades != nil {
 		dbCtx, dbCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := e.trades.LogClose(dbCtx, pos); err != nil {
-			slog.Error("failed to log live leverage trade close", "id", posID, "error", err)
+			slog.Error("failed to log live leverage trade close", "id", pos.ID, "error", err)
 		}
 		dbCancel()
 	}
-
-	return pos, nil
 }
 
 // returns a position by id from open or closed positions

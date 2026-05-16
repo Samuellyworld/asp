@@ -26,15 +26,15 @@ type LeveragePosition struct {
 	EntryPrice       float64
 	MarkPrice        float64
 	Quantity         float64
-	Margin           float64    // initial margin = notional / leverage
-	NotionalValue    float64    // quantity * entry price
+	Margin           float64 // initial margin = notional / leverage
+	NotionalValue    float64 // quantity * entry price
 	LiquidationPrice float64
 	StopLoss         float64
 	TakeProfit       float64
-	FundingPaid      float64    // cumulative funding fees
-	MarginType       string     // "isolated"
+	FundingPaid      float64 // cumulative funding fees
+	MarginType       string  // "isolated"
 	IsPaper          bool
-	Status           string     // "open", "closed"
+	Status           string // "open", "closed"
 	CloseReason      string
 	ClosePrice       float64
 	PnL              float64
@@ -44,6 +44,7 @@ type LeveragePosition struct {
 	MainOrderID      int64 // binance order id (0 for paper)
 	SLOrderID        int64
 	TPOrderID        int64
+	CloseOrderID     int64
 	TrailingStop     trailingstop.TrailingStop
 }
 

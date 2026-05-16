@@ -15,9 +15,9 @@ import (
 
 // ReconcilerConfig controls how often and what to reconcile.
 type ReconcilerConfig struct {
-	Interval         time.Duration // how often to run full reconciliation (default: 5m)
-	OrderCheckDelay  time.Duration // wait this long after order placement before verifying (default: 10s)
-	StaleOrderAge    time.Duration // orders older than this without fill are flagged (default: 5m)
+	Interval        time.Duration // how often to run full reconciliation (default: 5m)
+	OrderCheckDelay time.Duration // wait this long after order placement before verifying (default: 10s)
+	StaleOrderAge   time.Duration // orders older than this without fill are flagged (default: 5m)
 }
 
 // DefaultReconcilerConfig returns sensible defaults.
@@ -46,14 +46,14 @@ type OnMismatchFunc func(Mismatch)
 
 // Reconciler periodically checks in-memory positions against exchange state.
 type Reconciler struct {
-	executor *Executor
-	orders   exchange.OrderExecutor
-	keys     KeyDecryptor
-	config   ReconcilerConfig
+	executor   *Executor
+	orders     exchange.OrderExecutor
+	keys       KeyDecryptor
+	config     ReconcilerConfig
 	onMismatch OnMismatchFunc
 
-	mu           sync.Mutex
-	mismatches   []Mismatch
+	mu            sync.Mutex
+	mismatches    []Mismatch
 	pendingOrders map[string]time.Time // positionID -> order placement time
 
 	cancel  context.CancelFunc
@@ -172,7 +172,23 @@ func (r *Reconciler) Reconcile() {
 }
 
 func (r *Reconciler) reconcilePosition(pos *LivePosition) {
-	apiKey, apiSecret, err := r.keys.DecryptKeys(pos.UserID)
+	orders := r.orders
+	if r.executor != nil {
+		routed, err := r.executor.ordersForPosition(pos)
+		if err == nil {
+			orders = routed
+		}
+	}
+	if orders == nil {
+		slog.Warn("reconciler: no order executor", "position", pos.ID)
+		return
+	}
+
+	exchangeName := pos.Exchange
+	if exchangeName == "" {
+		exchangeName = supportedLiveSpotExchange
+	}
+	apiKey, apiSecret, err := decryptKeysForExchange(r.keys, pos.UserID, exchangeName)
 	if err != nil {
 		slog.Warn("reconciler: failed to decrypt keys", "position", pos.ID, "error", err)
 		return
@@ -180,7 +196,7 @@ func (r *Reconciler) reconcilePosition(pos *LivePosition) {
 
 	// 1. Verify main order fill status
 	if pos.MainOrderID > 0 {
-		mainOrder, err := r.orders.GetOrder(pos.Symbol, pos.MainOrderID, apiKey, apiSecret)
+		mainOrder, err := orders.GetOrder(pos.Symbol, pos.MainOrderID, apiKey, apiSecret)
 		if err != nil {
 			slog.Warn("reconciler: failed to query main order", "position", pos.ID, "order", pos.MainOrderID, "error", err)
 			return
@@ -230,7 +246,7 @@ func (r *Reconciler) reconcilePosition(pos *LivePosition) {
 
 	// 2. Verify SL order is still active (hasn't been canceled behind our back)
 	if pos.SLOrderID > 0 {
-		slOrder, err := r.orders.GetOrder(pos.Symbol, pos.SLOrderID, apiKey, apiSecret)
+		slOrder, err := orders.GetOrder(pos.Symbol, pos.SLOrderID, apiKey, apiSecret)
 		if err != nil {
 			slog.Warn("reconciler: failed to query SL order", "position", pos.ID, "order", pos.SLOrderID, "error", err)
 		} else if slOrder.Status == exchange.OrderStatusCanceled || slOrder.Status == exchange.OrderStatusExpired || slOrder.Status == exchange.OrderStatusRejected {
@@ -249,7 +265,7 @@ func (r *Reconciler) reconcilePosition(pos *LivePosition) {
 	// 3. Check for stale orders (placed long ago, still not filled)
 	if time.Since(pos.OpenedAt) > r.config.StaleOrderAge {
 		if pos.MainOrderID > 0 {
-			mainOrder, err := r.orders.GetOrder(pos.Symbol, pos.MainOrderID, apiKey, apiSecret)
+			mainOrder, err := orders.GetOrder(pos.Symbol, pos.MainOrderID, apiKey, apiSecret)
 			if err == nil && mainOrder.Status == exchange.OrderStatusNew {
 				m := Mismatch{
 					PositionID: pos.ID,

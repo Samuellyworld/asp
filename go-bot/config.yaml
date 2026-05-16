@@ -44,6 +44,28 @@ claude:
   model: "claude-sonnet-4-20250514"
   max_tokens: 4096
 
+openai:
+  api_key: ""
+  model: "gpt-5.4"
+  max_output_tokens: 1024
+  base_url: "https://api.openai.com/v1"
+
+ai:
+  consensus_enabled: false
+
+alerting:
+  enabled: true
+  dedup_minutes: 30
+  stale_scanner_minutes: 15
+  email:
+    enabled: false
+    smtp_host: ""
+    smtp_port: 587
+    username: ""
+    password: ""
+    from: ""
+    to: []
+
 rust_engine:
   address: "localhost:50051"
 

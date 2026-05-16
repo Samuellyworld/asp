@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	aiwrap "github.com/trading-bot/go-bot/internal/ai"
 	"github.com/trading-bot/go-bot/internal/analysis"
 	"github.com/trading-bot/go-bot/internal/api"
 	"github.com/trading-bot/go-bot/internal/autotuner"
@@ -28,7 +29,9 @@ import (
 	"github.com/trading-bot/go-bot/internal/leverage"
 	"github.com/trading-bot/go-bot/internal/livetrading"
 	mlclient "github.com/trading-bot/go-bot/internal/ml-client"
+	openaiclient "github.com/trading-bot/go-bot/internal/openai"
 	"github.com/trading-bot/go-bot/internal/opportunity"
+	"github.com/trading-bot/go-bot/internal/opsalert"
 	"github.com/trading-bot/go-bot/internal/papertrading"
 	"github.com/trading-bot/go-bot/internal/pipeline"
 	"github.com/trading-bot/go-bot/internal/preferences"
@@ -113,6 +116,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 
 	auditLogger := security.NewAuditLogger(pg.Pool())
 	userRepo := user.NewRepository(pg.Pool())
+	opsAlerts := buildOpsAlertManager(cfg)
 	binanceClient := binance.NewClient(cfg.Binance.APIURL(), cfg.Binance.Testnet)
 	orderClient := binance.NewOrderClient(cfg.Binance.APIURL(), cfg.Binance.Testnet)
 	orderClient.SetRateLimiter(binanceClient.RateLimiter()) // share spot rate limiter
@@ -155,16 +159,36 @@ func runBot(cmd *cobra.Command, args []string) error {
 		log.Printf("ml service configured at %s", cfg.MLService.BaseURL)
 	}
 
-	// claude ai client
+	// AI clients
 	var aiProvider pipeline.AIProvider
+	var claudeProvider pipeline.AIProvider
 	if cfg.Claude.APIKey != "" {
 		claudeClient := claude.NewClient(
 			cfg.Claude.APIKey,
 			claude.WithModel(cfg.Claude.Model),
 			claude.WithMaxTokens(cfg.Claude.MaxTokens),
 		)
+		claudeProvider = claudeClient
 		aiProvider = claudeClient
 		log.Println("claude ai client initialized")
+	}
+	var openaiProvider pipeline.AIProvider
+	if cfg.OpenAI.APIKey != "" {
+		openaiClient := openaiclient.NewClient(
+			cfg.OpenAI.APIKey,
+			openaiclient.WithModel(cfg.OpenAI.Model),
+			openaiclient.WithMaxOutputTokens(cfg.OpenAI.MaxOutputTokens),
+			openaiclient.WithBaseURL(cfg.OpenAI.BaseURL),
+		)
+		openaiProvider = openaiClient
+		if aiProvider == nil {
+			aiProvider = openaiClient
+		}
+		log.Printf("openai ai client initialized (model: %s)", cfg.OpenAI.Model)
+	}
+	if cfg.AI.ConsensusEnabled && claudeProvider != nil && openaiProvider != nil {
+		aiProvider = aiwrap.NewConsensusProvider(claudeProvider, openaiProvider)
+		log.Println("ai consensus enabled (claude primary + openai cross-check)")
 	}
 
 	// assemble the analysis pipeline
@@ -298,6 +322,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 	liveExecutor.SetStore(&livePositionStoreAdapter{repo: posRepo})
 	liveExecutor.SetTradeLogger(&liveTradeLoggerAdapter{trades: tradeRepo, daily: dailyStatsRepo})
 	liveExecutor.SetSlippageTracker(slippageTracker)
+	liveExecutor.SetAlerter(opsAlerts)
 	failedOrderRepo := database.NewFailedOrderRepository(pg.Pool())
 	liveExecutor.SetFailedOrderRecorder(&failedOrderAdapter{repo: failedOrderRepo})
 	emergencyStop := livetrading.NewEmergencyStop(liveExecutor)
@@ -347,6 +372,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 	levLiveExecutor := leverage.NewLiveExecutor(futuresClient, keyDecryptor, levSafetyChecker, fundingTracker, markPrices)
 	levLiveExecutor.SetStore(&liveLeveragePositionStoreAdapter{repo: posRepo})
 	levLiveExecutor.SetTradeLogger(&leverageTradeLoggerAdapter{trades: tradeRepo, daily: dailyStatsRepo})
+	levLiveExecutor.SetAlerter(opsAlerts)
 
 	// leverage monitor (uses paper executor by default — handles both via interfaces)
 	levMonitorConfig := leverage.DefaultMonitorConfig()
@@ -414,6 +440,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 		handler.SetExchangeTestnet("binance", cfg.Binance.Testnet)
 		handler.SetExchangeTestnet("bybit", cfg.Bybit.Testnet)
 		handler.SetExchangeRegistry(exchangeRegistry)
+		addTelegramOpsAlerts(opsAlerts, telegramBot, cfg.Telegram.AdminChatID)
 
 		handler.SetTradingDeps(&telegram.TradingDeps{
 			OppManager:       oppManager,
@@ -672,6 +699,26 @@ func runBot(cmd *cobra.Command, args []string) error {
 	reconciler.SetOnMismatch(func(m livetrading.Mismatch) {
 		msg := fmt.Sprintf("⚠️ RECONCILIATION ALERT\n%s: %s\n%s", m.Symbol, m.Type, m.Details)
 		slog.Error("reconciliation mismatch", "position", m.PositionID, "type", m.Type, "details", m.Details)
+		if opsAlerts != nil {
+			severity := opsalertSeverityForMismatch(m.Type)
+			if err := opsAlerts.Notify(context.Background(), opsalert.Alert{
+				Key:        fmt.Sprintf("reconciliation:%s:%s", m.Type, m.PositionID),
+				Severity:   severity,
+				Component:  "exchange_reconciler",
+				Title:      "Exchange reconciliation mismatch",
+				Summary:    m.Details,
+				UserID:     m.UserID,
+				Symbol:     m.Symbol,
+				PositionID: m.PositionID,
+				Fields: map[string]string{
+					"type":     m.Type,
+					"expected": fmt.Sprintf("%.8f", m.Expected),
+					"actual":   fmt.Sprintf("%.8f", m.Actual),
+				},
+			}); err != nil {
+				slog.Warn("failed to send reconciliation ops alert", "error", err)
+			}
+		}
 		if telegramBot != nil && cfg.Telegram.AdminChatID != 0 {
 			if err := telegramBot.SendMessage(cfg.Telegram.AdminChatID, msg); err != nil {
 				slog.Warn("failed to send reconciliation alert via telegram", "error", err)
@@ -695,6 +742,10 @@ func runBot(cmd *cobra.Command, args []string) error {
 	if telegramBot != nil {
 		watchdog.SetAlertSender(telegramBot, cfg.Telegram.AdminChatID)
 	}
+	watchdog.SetAlerter(opsAlerts)
+	watchdog.SetMLURL(cfg.MLService.BaseURL)
+	watchdog.SetRustAddress(cfg.RustEngine.Address)
+	watchdog.SetScanner(bgScanner, time.Duration(cfg.Alerting.StaleScannerMinutes)*time.Minute)
 	watchdog.Start(ctx)
 	defer watchdog.Stop()
 	log.Println("infrastructure watchdog started (60s interval)")

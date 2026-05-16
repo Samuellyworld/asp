@@ -156,6 +156,11 @@ func validConfig() *Config {
 			DefaultConfidenceThreshold: 80,
 			Timeframes:                 []string{"4h", "1d"},
 		},
+		Alerting: AlertingConfig{
+			Enabled:             true,
+			DedupMinutes:        30,
+			StaleScannerMinutes: 15,
+		},
 		Database: DatabaseConfig{Host: "localhost", Port: 5432},
 	}
 }
@@ -236,6 +241,22 @@ func TestValidate(t *testing.T) {
 			wantErr: true,
 			errMsg:  "database.port must be 1-65535, got 0",
 		},
+		{
+			name:    "openai api key requires model",
+			modify:  func(cfg *Config) { cfg.OpenAI.APIKey = "sk-test"; cfg.OpenAI.Model = "" },
+			wantErr: true,
+			errMsg:  "openai.model is required when openai.api_key is set",
+		},
+		{
+			name: "email alerting requires recipients",
+			modify: func(cfg *Config) {
+				cfg.Alerting.Email.Enabled = true
+				cfg.Alerting.Email.SMTPHost = "smtp.example.com"
+				cfg.Alerting.Email.From = "bot@example.com"
+			},
+			wantErr: true,
+			errMsg:  "alerting.email.to is required when email alerts are enabled",
+		},
 	}
 
 	for _, tt := range tests {
@@ -291,6 +312,12 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 	if cfg.Trading.ScannerIntervalMinutes != 5 {
 		t.Errorf("trading.scanner_interval_minutes = %d, want %d", cfg.Trading.ScannerIntervalMinutes, 5)
+	}
+	if cfg.OpenAI.Model != "gpt-5.4" {
+		t.Errorf("openai.model = %q, want gpt-5.4", cfg.OpenAI.Model)
+	}
+	if cfg.Alerting.DedupMinutes != 30 {
+		t.Errorf("alerting.dedup_minutes = %d, want 30", cfg.Alerting.DedupMinutes)
 	}
 
 	// check log level default

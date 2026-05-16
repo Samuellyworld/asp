@@ -12,6 +12,7 @@ import (
 	"github.com/trading-bot/go-bot/internal/binance"
 	"github.com/trading-bot/go-bot/internal/circuitbreaker"
 	"github.com/trading-bot/go-bot/internal/exchange"
+	"github.com/trading-bot/go-bot/internal/opsalert"
 )
 
 // decrypts stored api credentials
@@ -44,6 +45,7 @@ type LiveExecutor struct {
 	breaker   *circuitbreaker.Breaker // nil if no circuit breaker configured
 	store     LeveragePositionStore   // nil if no persistence configured
 	trades    LeverageTradeLogger     // nil if no logging configured
+	alerter   opsalert.Notifier       // nil if operational alerting disabled
 	nextID    int
 }
 
@@ -78,6 +80,11 @@ func (e *LiveExecutor) SetStore(store LeveragePositionStore) {
 // SetTradeLogger configures trade record logging. Call before Start.
 func (e *LiveExecutor) SetTradeLogger(logger LeverageTradeLogger) {
 	e.trades = logger
+}
+
+// SetAlerter configures operational alerts for live futures failures.
+func (e *LiveExecutor) SetAlerter(alerter opsalert.Notifier) {
+	e.alerter = alerter
 }
 
 // SetNextID sets the starting ID for new positions (used for recovery).
@@ -169,6 +176,21 @@ func (e *LiveExecutor) OpenPosition(
 		apiKey, apiSecret,
 	)
 	if err != nil {
+		e.notifyAlert(opsalert.Alert{
+			Key:       fmt.Sprintf("futures-main-order-failed:%d:%s", userID, symbol),
+			Severity:  opsalert.SeverityCritical,
+			Component: "leverage_trading",
+			Title:     "Futures order placement failed",
+			Summary:   "The live futures entry order was rejected or could not reach the exchange.",
+			UserID:    userID,
+			Symbol:    symbol,
+			Error:     err.Error(),
+			Fields: map[string]string{
+				"side":     string(side),
+				"leverage": fmt.Sprintf("%d", leverage),
+				"margin":   fmt.Sprintf("%.2f", margin),
+			},
+		})
 		return nil, fmt.Errorf("failed to place order: %w", err)
 	}
 
@@ -210,8 +232,37 @@ func (e *LiveExecutor) OpenPosition(
 				slog.Error("CRITICAL: failed to reverse leveraged position after SL failure — OPEN LEVERAGED POSITION WITHOUT PROTECTION",
 					"symbol", symbol, "quantity", filledQty, "side", side, "leverage", leverage,
 					"sl_error", err, "reversal_error", reverseErr)
+				e.notifyAlert(opsalert.Alert{
+					Key:       fmt.Sprintf("futures-naked-position:%d:%s:%d", userID, symbol, mainOrder.OrderID),
+					Severity:  opsalert.SeverityCritical,
+					Component: "leverage_trading",
+					Title:     "Open futures position has no stop loss",
+					Summary:   "Stop-loss placement failed and the emergency reversal also failed. Manual exchange review is required immediately.",
+					UserID:    userID,
+					Symbol:    symbol,
+					Error:     fmt.Sprintf("stop_loss=%s; reversal=%s", err, reverseErr),
+					Fields: map[string]string{
+						"main_order_id": fmt.Sprintf("%d", mainOrder.OrderID),
+						"quantity":      fmt.Sprintf("%.8f", filledQty),
+						"leverage":      fmt.Sprintf("%d", leverage),
+					},
+				})
 				return nil, fmt.Errorf("CRITICAL: SL failed and reversal failed — naked leveraged position on exchange: sl_err=%w, reversal_err=%v", err, reverseErr)
 			}
+			e.notifyAlert(opsalert.Alert{
+				Key:       fmt.Sprintf("futures-sl-failed-reversed:%d:%s:%d", userID, symbol, mainOrder.OrderID),
+				Severity:  opsalert.SeverityWarning,
+				Component: "leverage_trading",
+				Title:     "Futures stop loss failed, position reversed",
+				Summary:   "The futures entry filled, stop-loss placement failed, and the bot reversed the position with a market order.",
+				UserID:    userID,
+				Symbol:    symbol,
+				Error:     err.Error(),
+				Fields: map[string]string{
+					"main_order_id": fmt.Sprintf("%d", mainOrder.OrderID),
+					"leverage":      fmt.Sprintf("%d", leverage),
+				},
+			})
 			return nil, fmt.Errorf("failed to place stop loss on leveraged position (position reversed): %w", err)
 		}
 		slOrderID = slOrder.OrderID
@@ -227,6 +278,20 @@ func (e *LiveExecutor) OpenPosition(
 		if err != nil {
 			slog.Warn("failed to place TP on leveraged position, will rely on SL only",
 				"symbol", symbol, "error", err)
+			e.notifyAlert(opsalert.Alert{
+				Key:       fmt.Sprintf("futures-tp-placement-failed:%d:%s:%d", userID, symbol, mainOrder.OrderID),
+				Severity:  opsalert.SeverityWarning,
+				Component: "leverage_trading",
+				Title:     "Futures take profit placement failed",
+				Summary:   "The live futures position is open and protected by stop loss, but the take-profit order was not placed.",
+				UserID:    userID,
+				Symbol:    symbol,
+				Error:     err.Error(),
+				Fields: map[string]string{
+					"main_order_id": fmt.Sprintf("%d", mainOrder.OrderID),
+					"leverage":      fmt.Sprintf("%d", leverage),
+				},
+			})
 		} else {
 			tpOrderID = tpOrder.OrderID
 		}
@@ -274,6 +339,8 @@ func (e *LiveExecutor) OpenPosition(
 	e.positions[id] = pos
 	e.mu.Unlock()
 
+	e.alertMissingProtection(pos)
+
 	// persist to database (best-effort — position is already on exchange)
 	if e.store != nil {
 		dbCtx, dbCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -293,6 +360,54 @@ func (e *LiveExecutor) OpenPosition(
 	}
 
 	return pos, nil
+}
+
+func (e *LiveExecutor) alertMissingProtection(pos *LeveragePosition) {
+	if pos == nil {
+		return
+	}
+	if pos.SLOrderID == 0 {
+		e.notifyAlert(opsalert.Alert{
+			Key:        fmt.Sprintf("futures-missing-sl:%d:%s", pos.UserID, pos.ID),
+			Severity:   opsalert.SeverityCritical,
+			Component:  "leverage_trading",
+			Title:      "Futures position missing stop loss",
+			Summary:    "A live futures position is open without an exchange stop-loss order. Review the exchange account immediately.",
+			UserID:     pos.UserID,
+			Symbol:     pos.Symbol,
+			PositionID: pos.ID,
+			Fields: map[string]string{
+				"main_order_id": fmt.Sprintf("%d", pos.MainOrderID),
+				"quantity":      fmt.Sprintf("%.8f", pos.Quantity),
+				"leverage":      fmt.Sprintf("%d", pos.Leverage),
+			},
+		})
+	}
+	if pos.TPOrderID == 0 {
+		e.notifyAlert(opsalert.Alert{
+			Key:        fmt.Sprintf("futures-missing-tp:%d:%s", pos.UserID, pos.ID),
+			Severity:   opsalert.SeverityWarning,
+			Component:  "leverage_trading",
+			Title:      "Futures position missing take profit",
+			Summary:    "A live futures position is open without an exchange take-profit order. Stop-loss protection is the priority, but exit automation is incomplete.",
+			UserID:     pos.UserID,
+			Symbol:     pos.Symbol,
+			PositionID: pos.ID,
+			Fields: map[string]string{
+				"main_order_id": fmt.Sprintf("%d", pos.MainOrderID),
+				"leverage":      fmt.Sprintf("%d", pos.Leverage),
+			},
+		})
+	}
+}
+
+func (e *LiveExecutor) notifyAlert(alert opsalert.Alert) {
+	if e.alerter == nil {
+		return
+	}
+	if err := e.alerter.Notify(context.Background(), alert); err != nil {
+		slog.Warn("failed to send leverage alert", "key", alert.Key, "error", err)
+	}
 }
 
 // closes a live leveraged position by canceling sl/tp and placing a closing order.

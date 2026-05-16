@@ -19,6 +19,9 @@ type Config struct {
 	Binance     BinanceConfig
 	Bybit       BybitConfig
 	Claude      ClaudeConfig
+	OpenAI      OpenAIConfig
+	AI          AIConfig
+	Alerting    AlertingConfig
 	Trading     TradingConfig
 	RustEngine  RustEngineConfig
 	MLService   MLServiceConfig
@@ -151,6 +154,38 @@ type ClaudeConfig struct {
 	MaxTokens int
 }
 
+// holds OpenAI Responses API settings for optional cross-check analysis
+type OpenAIConfig struct {
+	APIKey          string
+	Model           string
+	MaxOutputTokens int
+	BaseURL         string
+}
+
+// holds AI provider composition settings
+type AIConfig struct {
+	ConsensusEnabled bool
+}
+
+// holds operational alerting settings
+type AlertingConfig struct {
+	Enabled             bool
+	DedupMinutes        int
+	StaleScannerMinutes int
+	Email               EmailConfig
+}
+
+// holds SMTP email alert settings
+type EmailConfig struct {
+	Enabled  bool
+	SMTPHost string
+	SMTPPort int
+	Username string
+	Password string
+	From     string
+	To       []string
+}
+
 // holds grpc connection settings for the rust indicators engine
 type RustEngineConfig struct {
 	Address string
@@ -245,6 +280,29 @@ func Load() (*Config, error) {
 			Model:     viper.GetString("claude.model"),
 			MaxTokens: viper.GetInt("claude.max_tokens"),
 		},
+		OpenAI: OpenAIConfig{
+			APIKey:          viper.GetString("openai.api_key"),
+			Model:           viper.GetString("openai.model"),
+			MaxOutputTokens: viper.GetInt("openai.max_output_tokens"),
+			BaseURL:         viper.GetString("openai.base_url"),
+		},
+		AI: AIConfig{
+			ConsensusEnabled: viper.GetBool("ai.consensus_enabled"),
+		},
+		Alerting: AlertingConfig{
+			Enabled:             viper.GetBool("alerting.enabled"),
+			DedupMinutes:        viper.GetInt("alerting.dedup_minutes"),
+			StaleScannerMinutes: viper.GetInt("alerting.stale_scanner_minutes"),
+			Email: EmailConfig{
+				Enabled:  viper.GetBool("alerting.email.enabled"),
+				SMTPHost: viper.GetString("alerting.email.smtp_host"),
+				SMTPPort: viper.GetInt("alerting.email.smtp_port"),
+				Username: viper.GetString("alerting.email.username"),
+				Password: viper.GetString("alerting.email.password"),
+				From:     viper.GetString("alerting.email.from"),
+				To:       parseStringSlice("alerting.email.to"),
+			},
+		},
 		RustEngine: RustEngineConfig{
 			Address: viper.GetString("rust_engine.address"),
 		},
@@ -336,6 +394,18 @@ func setDefaults() {
 	viper.SetDefault("claude.model", "claude-sonnet-4-20250514")
 	viper.SetDefault("claude.max_tokens", 4096)
 
+	// openai
+	viper.SetDefault("openai.model", "gpt-5.4")
+	viper.SetDefault("openai.max_output_tokens", 1024)
+	viper.SetDefault("openai.base_url", "https://api.openai.com/v1")
+	viper.SetDefault("ai.consensus_enabled", false)
+
+	// alerting
+	viper.SetDefault("alerting.enabled", true)
+	viper.SetDefault("alerting.dedup_minutes", 30)
+	viper.SetDefault("alerting.stale_scanner_minutes", 15)
+	viper.SetDefault("alerting.email.smtp_port", 587)
+
 	// rust engine (grpc indicators)
 	viper.SetDefault("rust_engine.address", "localhost:50051")
 
@@ -410,6 +480,30 @@ func Validate(cfg *Config) error {
 	}
 	if cfg.Database.Port <= 0 || cfg.Database.Port > 65535 {
 		return fmt.Errorf("database.port must be 1-65535, got %d", cfg.Database.Port)
+	}
+
+	if cfg.OpenAI.APIKey != "" && cfg.OpenAI.Model == "" {
+		return fmt.Errorf("openai.model is required when openai.api_key is set")
+	}
+	if cfg.OpenAI.APIKey != "" && cfg.OpenAI.MaxOutputTokens <= 0 {
+		return fmt.Errorf("openai.max_output_tokens must be positive")
+	}
+	if cfg.Alerting.DedupMinutes <= 0 {
+		return fmt.Errorf("alerting.dedup_minutes must be positive")
+	}
+	if cfg.Alerting.StaleScannerMinutes <= 0 {
+		return fmt.Errorf("alerting.stale_scanner_minutes must be positive")
+	}
+	if cfg.Alerting.Email.Enabled {
+		if cfg.Alerting.Email.SMTPHost == "" {
+			return fmt.Errorf("alerting.email.smtp_host is required when email alerts are enabled")
+		}
+		if cfg.Alerting.Email.From == "" {
+			return fmt.Errorf("alerting.email.from is required when email alerts are enabled")
+		}
+		if len(cfg.Alerting.Email.To) == 0 {
+			return fmt.Errorf("alerting.email.to is required when email alerts are enabled")
+		}
 	}
 
 	return nil

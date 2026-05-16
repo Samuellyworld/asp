@@ -60,6 +60,12 @@ Rules:
   * If win rate < 40%, increase HOLD bias until conditions improve`
 }
 
+// SystemPrompt returns the shared AI trading system prompt. Other model
+// providers use the same contract so their decisions are comparable.
+func SystemPrompt() string {
+	return buildSystemPrompt()
+}
+
 // builds the user prompt with all available analysis data
 func buildUserPrompt(input *AnalysisInput) string {
 	var b strings.Builder
@@ -130,6 +136,11 @@ func buildUserPrompt(input *AnalysisInput) string {
 
 	b.WriteString("Provide your trading decision in the required JSON format.")
 	return b.String()
+}
+
+// UserPrompt returns the shared AI trading user prompt for the given input.
+func UserPrompt(input *AnalysisInput) string {
+	return buildUserPrompt(input)
 }
 
 // formats technical indicators for the prompt

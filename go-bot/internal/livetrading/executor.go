@@ -15,12 +15,12 @@ import (
 	"github.com/trading-bot/go-bot/internal/claude"
 	"github.com/trading-bot/go-bot/internal/exchange"
 	"github.com/trading-bot/go-bot/internal/opportunity"
+	"github.com/trading-bot/go-bot/internal/opsalert"
 )
 
-// dbCtx returns a context with a 5-second timeout for best-effort DB operations
-func dbCtx() context.Context {
-	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
-	return ctx
+// dbCtx returns a context with a 5-second timeout for best-effort DB operations.
+func dbCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 5*time.Second)
 }
 
 // optional persistence layer for live positions (nil = in-memory only)
@@ -113,6 +113,7 @@ type Executor struct {
 	trades       TradeLogger             // nil if no logging configured
 	slippage     SlippageRecorder        // nil if no slippage tracking configured
 	failedOrders FailedOrderRecorder     // nil if no dead-letter queue configured
+	alerter      opsalert.Notifier       // nil if operational alerting disabled
 	exchanges    PrimaryExchangeResolver // nil if exchange routing is not wired
 	orderRouter  OrderRouter             // nil = use orders/default exchange
 	nextID       int
@@ -156,6 +157,11 @@ func (e *Executor) SetSlippageTracker(tracker SlippageRecorder) {
 // SetFailedOrderRecorder configures the dead-letter queue for failed orders.
 func (e *Executor) SetFailedOrderRecorder(recorder FailedOrderRecorder) {
 	e.failedOrders = recorder
+}
+
+// SetAlerter configures operational alerts for execution failures.
+func (e *Executor) SetAlerter(alerter opsalert.Notifier) {
+	e.alerter = alerter
 }
 
 // SetPrimaryExchangeResolver configures user-level exchange resolution for
@@ -251,9 +257,26 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*LivePosition, error) 
 	)
 	if err != nil {
 		if e.failedOrders != nil {
-			_ = e.failedOrders.RecordFailedOrder(dbCtx(), opp.UserID, "", opp.Symbol,
+			ctx, cancel := dbCtx()
+			_ = e.failedOrders.RecordFailedOrder(ctx, opp.UserID, "", opp.Symbol,
 				string(side), "MARKET", plan.PositionSize, plan.Entry, 0, "SPOT", err.Error())
+			cancel()
 		}
+		e.notifyAlert(opsalert.Alert{
+			Key:       fmt.Sprintf("spot-main-order-failed:%d:%s:%s", opp.UserID, exchangeName, opp.Symbol),
+			Severity:  opsalert.SeverityCritical,
+			Component: "live_trading",
+			Title:     "Spot order placement failed",
+			Summary:   "The live spot entry order was rejected or could not reach the exchange.",
+			UserID:    opp.UserID,
+			Symbol:    opp.Symbol,
+			Error:     err.Error(),
+			Fields: map[string]string{
+				"exchange":      exchangeName,
+				"side":          string(side),
+				"position_size": fmt.Sprintf("%.2f", plan.PositionSize),
+			},
+		})
 		return nil, fmt.Errorf("failed to place order: %w", err)
 	}
 
@@ -294,16 +317,49 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*LivePosition, error) 
 					"symbol", opp.Symbol, "quantity", quantity, "side", side,
 					"sl_error", err, "reversal_error", reverseErr)
 				if e.failedOrders != nil {
-					_ = e.failedOrders.RecordFailedOrder(dbCtx(), opp.UserID, "", opp.Symbol,
+					ctx, cancel := dbCtx()
+					_ = e.failedOrders.RecordFailedOrder(ctx, opp.UserID, "", opp.Symbol,
 						string(closeSide), "EMERGENCY_REVERSAL", quantity, 0, 0, "SPOT",
 						fmt.Sprintf("SL failed: %s; reversal also failed: %s", err, reverseErr))
+					cancel()
 				}
+				e.notifyAlert(opsalert.Alert{
+					Key:       fmt.Sprintf("spot-naked-position:%d:%s:%d", opp.UserID, opp.Symbol, mainOrder.OrderID),
+					Severity:  opsalert.SeverityCritical,
+					Component: "live_trading",
+					Title:     "Open spot position has no stop loss",
+					Summary:   "Stop-loss placement failed and the emergency reversal also failed. Manual exchange review is required immediately.",
+					UserID:    opp.UserID,
+					Symbol:    opp.Symbol,
+					Error:     fmt.Sprintf("stop_loss=%s; reversal=%s", err, reverseErr),
+					Fields: map[string]string{
+						"exchange":      exchangeName,
+						"main_order_id": fmt.Sprintf("%d", mainOrder.OrderID),
+						"quantity":      fmt.Sprintf("%.8f", quantity),
+					},
+				})
 				return nil, fmt.Errorf("CRITICAL: SL failed and reversal failed — naked position on exchange: sl_err=%w, reversal_err=%v", err, reverseErr)
 			}
 			if e.failedOrders != nil {
-				_ = e.failedOrders.RecordFailedOrder(dbCtx(), opp.UserID, "", opp.Symbol,
+				ctx, cancel := dbCtx()
+				_ = e.failedOrders.RecordFailedOrder(ctx, opp.UserID, "", opp.Symbol,
 					string(closeSide), "STOP_LOSS_LIMIT", quantity, plan.StopLoss, plan.StopLoss, "SPOT", err.Error())
+				cancel()
 			}
+			e.notifyAlert(opsalert.Alert{
+				Key:       fmt.Sprintf("spot-sl-failed-reversed:%d:%s:%d", opp.UserID, opp.Symbol, mainOrder.OrderID),
+				Severity:  opsalert.SeverityWarning,
+				Component: "live_trading",
+				Title:     "Spot stop loss failed, position reversed",
+				Summary:   "The entry order filled, stop-loss placement failed, and the bot reversed the position with a market order.",
+				UserID:    opp.UserID,
+				Symbol:    opp.Symbol,
+				Error:     err.Error(),
+				Fields: map[string]string{
+					"exchange":      exchangeName,
+					"main_order_id": fmt.Sprintf("%d", mainOrder.OrderID),
+				},
+			})
 			return nil, fmt.Errorf("failed to place stop loss (main order reversed): %w", err)
 		}
 		slOrderID = slOrder.OrderID
@@ -320,6 +376,20 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*LivePosition, error) 
 		if err != nil {
 			slog.Warn("failed to place take profit order, position will rely on SL only",
 				"symbol", opp.Symbol, "error", err)
+			e.notifyAlert(opsalert.Alert{
+				Key:       fmt.Sprintf("spot-tp-placement-failed:%d:%s:%d", opp.UserID, opp.Symbol, mainOrder.OrderID),
+				Severity:  opsalert.SeverityWarning,
+				Component: "live_trading",
+				Title:     "Spot take profit placement failed",
+				Summary:   "The live spot position is open and protected by stop loss, but the take-profit order was not placed.",
+				UserID:    opp.UserID,
+				Symbol:    opp.Symbol,
+				Error:     err.Error(),
+				Fields: map[string]string{
+					"exchange":      exchangeName,
+					"main_order_id": fmt.Sprintf("%d", mainOrder.OrderID),
+				},
+			})
 		} else {
 			tpOrderID = tpOrder.OrderID
 		}
@@ -351,6 +421,8 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*LivePosition, error) 
 	e.positions[id] = pos
 	e.mu.Unlock()
 
+	e.alertMissingProtection(pos)
+
 	// record slippage (expected from AI decision vs actual fill)
 	if e.slippage != nil && plan.Entry > 0 {
 		rec := e.slippage.Record(opp.Symbol, string(side), plan.Entry, fillPrice, quantity, false)
@@ -359,19 +431,71 @@ func (e *Executor) Execute(opp *opportunity.Opportunity) (*LivePosition, error) 
 
 	// persist to database (best-effort — position is already on exchange)
 	if e.store != nil {
-		if err := e.store.SavePosition(dbCtx(), pos); err != nil {
+		ctx, cancel := dbCtx()
+		if err := e.store.SavePosition(ctx, pos); err != nil {
 			slog.Error("failed to persist live position", "id", id, "error", err)
 		}
+		cancel()
 	}
 
 	// log trade open record (best-effort)
 	if e.trades != nil {
-		if err := e.trades.LogOpen(dbCtx(), pos); err != nil {
+		ctx, cancel := dbCtx()
+		if err := e.trades.LogOpen(ctx, pos); err != nil {
 			slog.Error("failed to log live trade open", "id", id, "error", err)
 		}
+		cancel()
 	}
 
 	return pos, nil
+}
+
+func (e *Executor) alertMissingProtection(pos *LivePosition) {
+	if pos == nil {
+		return
+	}
+	if pos.SLOrderID == 0 {
+		e.notifyAlert(opsalert.Alert{
+			Key:        fmt.Sprintf("spot-missing-sl:%d:%s:%s", pos.UserID, pos.Exchange, pos.ID),
+			Severity:   opsalert.SeverityCritical,
+			Component:  "live_trading",
+			Title:      "Spot position missing stop loss",
+			Summary:    "A live spot position is open without an exchange stop-loss order. Review the exchange account immediately.",
+			UserID:     pos.UserID,
+			Symbol:     pos.Symbol,
+			PositionID: pos.ID,
+			Fields: map[string]string{
+				"exchange":      pos.Exchange,
+				"main_order_id": fmt.Sprintf("%d", pos.MainOrderID),
+				"quantity":      fmt.Sprintf("%.8f", pos.Quantity),
+			},
+		})
+	}
+	if pos.TPOrderID == 0 {
+		e.notifyAlert(opsalert.Alert{
+			Key:        fmt.Sprintf("spot-missing-tp:%d:%s:%s", pos.UserID, pos.Exchange, pos.ID),
+			Severity:   opsalert.SeverityWarning,
+			Component:  "live_trading",
+			Title:      "Spot position missing take profit",
+			Summary:    "A live spot position is open without an exchange take-profit order. Stop-loss protection is the priority, but exit automation is incomplete.",
+			UserID:     pos.UserID,
+			Symbol:     pos.Symbol,
+			PositionID: pos.ID,
+			Fields: map[string]string{
+				"exchange":      pos.Exchange,
+				"main_order_id": fmt.Sprintf("%d", pos.MainOrderID),
+			},
+		})
+	}
+}
+
+func (e *Executor) notifyAlert(alert opsalert.Alert) {
+	if e.alerter == nil {
+		return
+	}
+	if err := e.alerter.Notify(context.Background(), alert); err != nil {
+		slog.Warn("failed to send live trading alert", "key", alert.Key, "error", err)
+	}
 }
 
 func (e *Executor) ensureSupportedSpotExchange(userID int) error {
@@ -638,16 +762,20 @@ func (e *Executor) finalizeClose(posID string, reason string, closePrice float64
 func (e *Executor) persistClosed(pos *LivePosition) {
 	// persist to database (best-effort)
 	if e.store != nil {
-		if err := e.store.ClosePosition(dbCtx(), pos); err != nil {
+		ctx, cancel := dbCtx()
+		if err := e.store.ClosePosition(ctx, pos); err != nil {
 			slog.Error("failed to persist live position close", "id", pos.ID, "error", err)
 		}
+		cancel()
 	}
 
 	// log trade close record (best-effort)
 	if e.trades != nil {
-		if err := e.trades.LogClose(dbCtx(), pos); err != nil {
+		ctx, cancel := dbCtx()
+		if err := e.trades.LogClose(ctx, pos); err != nil {
 			slog.Error("failed to log live trade close", "id", pos.ID, "error", err)
 		}
+		cancel()
 	}
 }
 

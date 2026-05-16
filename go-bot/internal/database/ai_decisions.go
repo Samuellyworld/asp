@@ -59,13 +59,13 @@ func (r *AIDecisionRepository) Insert(ctx context.Context, d *AIDecisionRecord) 
 			entry_price, stop_loss, take_profit, position_size_usd, risk_reward_ratio,
 			reasoning, indicators_data, ml_prediction, sentiment_data,
 			prompt_tokens, completion_tokens, latency_ms,
-			was_approved, was_executed
+			was_approved, was_executed, filter_reason
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8, $9, $10,
 			$11, $12, $13, $14,
 			$15, $16, $17,
-			$18, $19
+			$18, $19, $20
 		)
 		RETURNING id`
 
@@ -76,7 +76,7 @@ func (r *AIDecisionRepository) Insert(ctx context.Context, d *AIDecisionRecord) 
 		nullFloat(d.PositionSizeUSD), nullFloat(d.RiskRewardRatio),
 		nullStr(d.Reasoning), indJSON, mlJSON, sentJSON,
 		d.PromptTokens, d.CompletionTokens, d.LatencyMs,
-		d.WasApproved, d.WasExecuted,
+		d.WasApproved, d.WasExecuted, nullStr(defaultFilterReason(d.FilterReason)),
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("failed to insert ai_decision: %w", err)
@@ -206,7 +206,7 @@ type TradeOutcomeRow struct {
 func (r *AIDecisionRepository) RecentOutcomes(ctx context.Context, limit int) ([]*TradeOutcomeRow, error) {
 	query := `
 		SELECT d.symbol, d.decision, d.confidence,
-		       COALESCE(d.entry_price, 0), COALESCE(p.exit_price, 0),
+		       COALESCE(d.entry_price, 0), COALESCE(p.close_price, 0),
 		       COALESCE(p.realized_pnl / NULLIF(p.position_size, 0) * 100, 0) as pnl_pct,
 		       COALESCE(d.timeframe, '4h'),
 		       d.created_at
@@ -238,4 +238,11 @@ func (r *AIDecisionRepository) RecentOutcomes(ctx context.Context, limit int) ([
 		results = append(results, o)
 	}
 	return results, rows.Err()
+}
+
+func defaultFilterReason(reason string) string {
+	if reason == "" {
+		return "none"
+	}
+	return reason
 }

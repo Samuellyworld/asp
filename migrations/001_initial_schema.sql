@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS trades (
     id                  SERIAL PRIMARY KEY,
     user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     position_id         INTEGER,
+    exchange            VARCHAR(30),
     exchange_order_id   VARCHAR(100),
     symbol              VARCHAR(20) NOT NULL,
     side                VARCHAR(10) NOT NULL CHECK (side IN ('BUY', 'SELL')),
@@ -83,11 +84,15 @@ CREATE INDEX IF NOT EXISTS idx_trades_user_id ON trades(user_id);
 CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
 CREATE INDEX IF NOT EXISTS idx_trades_executed_at ON trades(executed_at);
 CREATE INDEX IF NOT EXISTS idx_trades_position_id ON trades(position_id) WHERE position_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_live_exchange_order_unique
+    ON trades(exchange, exchange_order_id)
+    WHERE exchange IS NOT NULL AND exchange_order_id IS NOT NULL AND is_paper = FALSE;
 
 -- positions - open and closed positions
 CREATE TABLE IF NOT EXISTS positions (
     id                      SERIAL PRIMARY KEY,
     user_id                 INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    exchange                VARCHAR(30),
     symbol                  VARCHAR(20) NOT NULL,
     side                    VARCHAR(10) NOT NULL CHECK (side IN ('LONG', 'SHORT')),
     position_type           VARCHAR(20) NOT NULL CHECK (position_type IN ('SPOT', 'FUTURES')),
@@ -115,6 +120,9 @@ CREATE TABLE IF NOT EXISTS positions (
     notional_value          DECIMAL(20, 8),
     margin_type             VARCHAR(20) DEFAULT 'isolated',
     funding_paid            DECIMAL(20, 8) DEFAULT 0,
+    main_order_id           BIGINT,
+    sl_order_id             BIGINT,
+    tp_order_id             BIGINT,
     opened_at               TIMESTAMPTZ DEFAULT NOW(),
     closed_at               TIMESTAMPTZ,
     last_updated_at         TIMESTAMPTZ DEFAULT NOW()

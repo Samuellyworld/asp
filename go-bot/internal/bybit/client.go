@@ -334,6 +334,12 @@ func (c *Client) PlaceOrder(symbol string, side exchange.OrderSide, orderType ex
 	order.Status = exchange.OrderStatusNew
 	order.Quantity = quantity
 	order.Price = price
+	if orderType == exchange.OrderTypeMarket {
+		if filled, err := c.GetOrder(symbol, order.OrderID, apiKey, apiSecret); err == nil {
+			order = filled
+			order.Symbol = symbol
+		}
+	}
 	return order, nil
 }
 

@@ -43,8 +43,8 @@ type Executor struct {
 	positions map[string]*Position
 	closed    []*Position
 	prices    PriceProvider
-	store     PositionStore // nil if no persistence configured
-	trades    TradeLogger   // nil if no logging configured
+	store     PositionStore           // nil if no persistence configured
+	trades    TradeLogger             // nil if no logging configured
 	breaker   *circuitbreaker.Breaker // nil if no circuit breaker configured
 	nextID    int
 }
@@ -88,7 +88,7 @@ func (e *Executor) RestorePosition(pos *Position) {
 // opens a paper position from an approved or modified opportunity.
 // simulates an immediate fill at the current market price.
 func (e *Executor) Execute(opp *opportunity.Opportunity) (*Position, error) {
-	if opp.Status != opportunity.StatusApproved && opp.Status != opportunity.StatusModified {
+	if opp.Status != opportunity.StatusApproved && opp.Status != opportunity.StatusModified && opp.Status != opportunity.StatusExecuting {
 		return nil, fmt.Errorf("opportunity not approved: %s", opp.Status)
 	}
 

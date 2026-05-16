@@ -7,6 +7,9 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/trading-bot/go-bot/internal/binance"
+	"github.com/trading-bot/go-bot/internal/exchange"
 )
 
 // event types for leverage position monitoring
@@ -29,7 +32,7 @@ const (
 type LevEvent struct {
 	Type          LevEventType
 	Position      *LeveragePosition
-	DistancePct   float64    // distance to liquidation
+	DistancePct   float64 // distance to liquidation
 	AlertLevel    AlertLevel
 	FundingRate   float64 // for funding events
 	FundingAmount float64
@@ -44,6 +47,14 @@ type MarkPriceProvider interface {
 // can close a position (paper or live executor)
 type PositionCloser interface {
 	Close(posID string, reason string) (*LeveragePosition, error)
+}
+
+type filledOrderCloser interface {
+	CloseFromFilledOrder(posID string, reason string, order *binance.FuturesOrder) (*LeveragePosition, error)
+}
+
+type FuturesOrderStatusProvider interface {
+	GetOrder(ctx context.Context, symbol string, orderID int64, apiKey, apiSecret string) (*binance.FuturesOrder, error)
 }
 
 // provides list of open positions
@@ -81,6 +92,8 @@ type Monitor struct {
 	closer       PositionCloser
 	priceUpdater MarkPriceUpdater
 	prices       MarkPriceProvider
+	futures      FuturesOrderStatusProvider
+	keys         KeyDecryptor
 	funding      *FundingTracker
 	config       MonitorConfig
 	OnEvent      func(LevEvent)
@@ -125,6 +138,14 @@ type MonitorOption func(*Monitor)
 func WithMarkPriceUpdater(u MarkPriceUpdater) MonitorOption {
 	return func(m *Monitor) {
 		m.priceUpdater = u
+	}
+}
+
+// WithFuturesOrderStatus enables live futures SL/TP order reconciliation.
+func WithFuturesOrderStatus(futures FuturesOrderStatusProvider, keys KeyDecryptor) MonitorOption {
+	return func(m *Monitor) {
+		m.futures = futures
+		m.keys = keys
 	}
 }
 
@@ -196,6 +217,10 @@ func (m *Monitor) CheckPositions() {
 
 // checks a single position for all conditions
 func (m *Monitor) checkPosition(pos *LeveragePosition) {
+	if m.checkLiveOrderFills(pos) {
+		return
+	}
+
 	// fetch mark price
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -211,8 +236,11 @@ func (m *Monitor) checkPosition(pos *LeveragePosition) {
 		pos.MarkPrice = markPrice
 	}
 
-	// check tp/sl hits first (highest priority)
-	if pos.IsTPHit() {
+	exchangeProtected := !pos.IsPaper && m.futures != nil && (pos.TPOrderID > 0 || pos.SLOrderID > 0)
+
+	// check tp/sl hits first (highest priority). Live exchange-protected
+	// positions are closed from order status above, not by a second market close.
+	if !exchangeProtected && pos.IsTPHit() {
 		closed, err := m.closer.Close(pos.ID, "take_profit")
 		if err != nil {
 			return
@@ -225,7 +253,7 @@ func (m *Monitor) checkPosition(pos *LeveragePosition) {
 		return
 	}
 
-	if pos.IsSLHit() {
+	if !exchangeProtected && pos.IsSLHit() {
 		closed, err := m.closer.Close(pos.ID, "stop_loss")
 		if err != nil {
 			return
@@ -318,6 +346,54 @@ func (m *Monitor) checkPosition(pos *LeveragePosition) {
 			IsUrgent: false,
 		})
 	}
+}
+
+func (m *Monitor) checkLiveOrderFills(pos *LeveragePosition) bool {
+	if pos.IsPaper || m.futures == nil || m.keys == nil {
+		return false
+	}
+
+	apiKey, apiSecret, err := m.keys.DecryptKeys(pos.UserID)
+	if err != nil {
+		return false
+	}
+
+	if pos.SLOrderID > 0 {
+		if m.closeIfFuturesOrderFilled(pos, pos.SLOrderID, "stop_loss", LevEventSLHit, apiKey, apiSecret) {
+			return true
+		}
+	}
+	if pos.TPOrderID > 0 {
+		if m.closeIfFuturesOrderFilled(pos, pos.TPOrderID, "take_profit", LevEventTPHit, apiKey, apiSecret) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Monitor) closeIfFuturesOrderFilled(pos *LeveragePosition, orderID int64, reason string, eventType LevEventType, apiKey, apiSecret string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	order, err := m.futures.GetOrder(ctx, pos.Symbol, orderID, apiKey, apiSecret)
+	if err != nil || order.Status != exchange.OrderStatusFilled {
+		return false
+	}
+
+	closer, ok := m.closer.(filledOrderCloser)
+	if !ok {
+		return false
+	}
+	closed, err := closer.CloseFromFilledOrder(pos.ID, reason, order)
+	if err != nil {
+		return false
+	}
+	m.emit(LevEvent{
+		Type:     eventType,
+		Position: closed,
+		IsUrgent: true,
+	})
+	return true
 }
 
 // determines whether a notification should be sent for a position based

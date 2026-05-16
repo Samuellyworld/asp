@@ -14,35 +14,39 @@ import (
 // PersistedPosition is a flat row representation that maps to the positions table.
 // Both spot paper and leverage paper positions serialize into this.
 type PersistedPosition struct {
-	ID              int
-	InternalID      string
-	UserID          int
-	Symbol          string
-	Side            string  // "LONG" or "SHORT"
-	Action          string  // "BUY" or "SELL" (spot paper only)
-	PositionType    string  // "SPOT" or "FUTURES"
-	Status          string  // "OPEN", "CLOSED"
-	EntryPrice      float64
-	CurrentPrice    float64
-	MarkPrice       float64
-	ClosePrice      float64
-	Quantity        float64
-	PositionSize    float64
-	Margin          float64
-	NotionalValue   float64
-	Leverage        int
-	StopLoss        float64
-	TakeProfit      float64
+	ID               int
+	InternalID       string
+	UserID           int
+	Exchange         string
+	Symbol           string
+	Side             string // "LONG" or "SHORT"
+	Action           string // "BUY" or "SELL" (spot paper only)
+	PositionType     string // "SPOT" or "FUTURES"
+	Status           string // "OPEN", "CLOSED"
+	EntryPrice       float64
+	CurrentPrice     float64
+	MarkPrice        float64
+	ClosePrice       float64
+	Quantity         float64
+	PositionSize     float64
+	Margin           float64
+	NotionalValue    float64
+	Leverage         int
+	StopLoss         float64
+	TakeProfit       float64
 	LiquidationPrice float64
-	FundingPaid     float64
-	MarginType      string
-	UnrealizedPnL   float64
-	RealizedPnL     float64
-	IsPaper         bool
-	CloseReason     string
-	Platform        string
-	OpenedAt        time.Time
-	ClosedAt        *time.Time
+	FundingPaid      float64
+	MarginType       string
+	UnrealizedPnL    float64
+	RealizedPnL      float64
+	IsPaper          bool
+	CloseReason      string
+	Platform         string
+	OpenedAt         time.Time
+	ClosedAt         *time.Time
+	MainOrderID      int64
+	SLOrderID        int64
+	TPOrderID        int64
 }
 
 // PositionRepository handles position CRUD for paper trading persistence.
@@ -58,25 +62,40 @@ func NewPositionRepository(pool *pgxpool.Pool) *PositionRepository {
 func (r *PositionRepository) Insert(ctx context.Context, p *PersistedPosition) error {
 	query := `
 		INSERT INTO positions (
-			internal_id, user_id, symbol, side, action, position_type, status,
+			internal_id, user_id, exchange, symbol, side, action, position_type, status,
 			entry_price, current_price, mark_price, quantity, position_size,
 			margin, notional_value, leverage, stop_loss, take_profit,
 			liquidation_price, funding_paid, margin_type,
-			unrealized_pnl, realized_pnl, is_paper, platform, opened_at
+			unrealized_pnl, realized_pnl, is_paper, platform,
+			main_order_id, sl_order_id, tp_order_id, opened_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7,
-			$8, $9, $10, $11, $12,
-			$13, $14, $15, $16, $17,
-			$18, $19, $20,
-			$21, $22, $23, $24, $25
-		)`
+			$1, $2, $3, $4, $5, $6, $7, $8,
+			$9, $10, $11, $12, $13,
+			$14, $15, $16, $17, $18,
+			$19, $20, $21,
+			$22, $23, $24, $25,
+			$26, $27, $28, $29
+		)
+		ON CONFLICT (internal_id) DO UPDATE SET
+			status = EXCLUDED.status,
+			current_price = EXCLUDED.current_price,
+			mark_price = EXCLUDED.mark_price,
+			quantity = EXCLUDED.quantity,
+			position_size = EXCLUDED.position_size,
+			stop_loss = EXCLUDED.stop_loss,
+			take_profit = EXCLUDED.take_profit,
+			main_order_id = EXCLUDED.main_order_id,
+			sl_order_id = EXCLUDED.sl_order_id,
+			tp_order_id = EXCLUDED.tp_order_id,
+			last_updated_at = NOW()`
 
 	_, err := r.pool.Exec(ctx, query,
-		p.InternalID, p.UserID, p.Symbol, p.Side, nullStr(p.Action), p.PositionType, p.Status,
+		p.InternalID, p.UserID, nullStr(p.Exchange), p.Symbol, p.Side, nullStr(p.Action), p.PositionType, p.Status,
 		p.EntryPrice, p.CurrentPrice, p.MarkPrice, p.Quantity, p.PositionSize,
 		p.Margin, p.NotionalValue, p.Leverage, nullFloat(p.StopLoss), nullFloat(p.TakeProfit),
 		nullFloat(p.LiquidationPrice), p.FundingPaid, p.MarginType,
-		p.UnrealizedPnL, p.RealizedPnL, p.IsPaper, nullStr(p.Platform), p.OpenedAt,
+		p.UnrealizedPnL, p.RealizedPnL, p.IsPaper, nullStr(p.Platform),
+		nullInt64(p.MainOrderID), nullInt64(p.SLOrderID), nullInt64(p.TPOrderID), p.OpenedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert position %s: %w", p.InternalID, err)
@@ -150,6 +169,7 @@ func (r *PositionRepository) LoadOpenLiveFutures(ctx context.Context) ([]*Persis
 func (r *PositionRepository) loadOpen(ctx context.Context, posType string, isPaper bool) ([]*PersistedPosition, error) {
 	query := `
 		SELECT id, internal_id, user_id, symbol, side, action, position_type, status,
+			   COALESCE(exchange, 'binance'),
 			   entry_price, COALESCE(current_price, 0), COALESCE(mark_price, 0),
 			   quantity, COALESCE(position_size, 0),
 			   COALESCE(margin, 0), COALESCE(notional_value, 0), COALESCE(leverage, 1),
@@ -157,7 +177,9 @@ func (r *PositionRepository) loadOpen(ctx context.Context, posType string, isPap
 			   COALESCE(liquidation_price, 0), COALESCE(funding_paid, 0),
 			   COALESCE(margin_type, 'isolated'),
 			   COALESCE(unrealized_pnl, 0), COALESCE(realized_pnl, 0),
-			   is_paper, COALESCE(platform, ''), opened_at
+			   is_paper, COALESCE(platform, ''),
+			   COALESCE(main_order_id, 0), COALESCE(sl_order_id, 0), COALESCE(tp_order_id, 0),
+			   opened_at
 		FROM positions
 		WHERE is_paper = $1 AND status = 'OPEN' AND position_type = $2
 		ORDER BY opened_at ASC`
@@ -174,6 +196,7 @@ func (r *PositionRepository) loadOpen(ctx context.Context, posType string, isPap
 		var action *string
 		err := rows.Scan(
 			&p.ID, &p.InternalID, &p.UserID, &p.Symbol, &p.Side, &action, &p.PositionType, &p.Status,
+			&p.Exchange,
 			&p.EntryPrice, &p.CurrentPrice, &p.MarkPrice,
 			&p.Quantity, &p.PositionSize,
 			&p.Margin, &p.NotionalValue, &p.Leverage,
@@ -181,7 +204,9 @@ func (r *PositionRepository) loadOpen(ctx context.Context, posType string, isPap
 			&p.LiquidationPrice, &p.FundingPaid,
 			&p.MarginType,
 			&p.UnrealizedPnL, &p.RealizedPnL,
-			&p.IsPaper, &p.Platform, &p.OpenedAt,
+			&p.IsPaper, &p.Platform,
+			&p.MainOrderID, &p.SLOrderID, &p.TPOrderID,
+			&p.OpenedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan position row: %w", err)
@@ -231,6 +256,13 @@ func nullStr(v string) interface{} {
 	return v
 }
 
+func nullInt64(v int64) interface{} {
+	if v == 0 {
+		return nil
+	}
+	return v
+}
+
 // ListByUser returns positions for a user, optionally filtered by status (OPEN/CLOSED).
 // Pass empty string for status to return all. Results limited to `limit` rows.
 func (r *PositionRepository) ListByUser(ctx context.Context, userID int, status string, limit int) ([]*PersistedPosition, error) {
@@ -240,6 +272,7 @@ func (r *PositionRepository) ListByUser(ctx context.Context, userID int, status 
 
 	query := `
 		SELECT id, internal_id, user_id, symbol, side, action, position_type, status,
+			   COALESCE(exchange, 'binance'),
 			   entry_price, COALESCE(current_price, 0), COALESCE(mark_price, 0),
 			   COALESCE(close_price, 0),
 			   quantity, COALESCE(position_size, 0),
@@ -249,6 +282,7 @@ func (r *PositionRepository) ListByUser(ctx context.Context, userID int, status 
 			   COALESCE(margin_type, 'isolated'),
 			   COALESCE(unrealized_pnl, 0), COALESCE(realized_pnl, 0),
 			   is_paper, COALESCE(close_reason, ''), COALESCE(platform, ''),
+			   COALESCE(main_order_id, 0), COALESCE(sl_order_id, 0), COALESCE(tp_order_id, 0),
 			   opened_at, closed_at
 		FROM positions
 		WHERE user_id = $1`
@@ -278,6 +312,7 @@ func (r *PositionRepository) ListByUser(ctx context.Context, userID int, status 
 func (r *PositionRepository) GetByID(ctx context.Context, id int) (*PersistedPosition, error) {
 	query := `
 		SELECT id, internal_id, user_id, symbol, side, action, position_type, status,
+			   COALESCE(exchange, 'binance'),
 			   entry_price, COALESCE(current_price, 0), COALESCE(mark_price, 0),
 			   COALESCE(close_price, 0),
 			   quantity, COALESCE(position_size, 0),
@@ -287,6 +322,7 @@ func (r *PositionRepository) GetByID(ctx context.Context, id int) (*PersistedPos
 			   COALESCE(margin_type, 'isolated'),
 			   COALESCE(unrealized_pnl, 0), COALESCE(realized_pnl, 0),
 			   is_paper, COALESCE(close_reason, ''), COALESCE(platform, ''),
+			   COALESCE(main_order_id, 0), COALESCE(sl_order_id, 0), COALESCE(tp_order_id, 0),
 			   opened_at, closed_at
 		FROM positions
 		WHERE id = $1`
@@ -295,6 +331,7 @@ func (r *PositionRepository) GetByID(ctx context.Context, id int) (*PersistedPos
 	var action, closeReason *string
 	err := r.pool.QueryRow(ctx, query, id).Scan(
 		&p.ID, &p.InternalID, &p.UserID, &p.Symbol, &p.Side, &action, &p.PositionType, &p.Status,
+		&p.Exchange,
 		&p.EntryPrice, &p.CurrentPrice, &p.MarkPrice, &p.ClosePrice,
 		&p.Quantity, &p.PositionSize,
 		&p.Margin, &p.NotionalValue, &p.Leverage,
@@ -302,6 +339,7 @@ func (r *PositionRepository) GetByID(ctx context.Context, id int) (*PersistedPos
 		&p.LiquidationPrice, &p.FundingPaid, &p.MarginType,
 		&p.UnrealizedPnL, &p.RealizedPnL,
 		&p.IsPaper, &closeReason, &p.Platform,
+		&p.MainOrderID, &p.SLOrderID, &p.TPOrderID,
 		&p.OpenedAt, &p.ClosedAt,
 	)
 	if err != nil {
@@ -323,6 +361,7 @@ func scanPositionRows(rows pgx.Rows) ([]*PersistedPosition, error) {
 		var action, closeReason *string
 		err := rows.Scan(
 			&p.ID, &p.InternalID, &p.UserID, &p.Symbol, &p.Side, &action, &p.PositionType, &p.Status,
+			&p.Exchange,
 			&p.EntryPrice, &p.CurrentPrice, &p.MarkPrice, &p.ClosePrice,
 			&p.Quantity, &p.PositionSize,
 			&p.Margin, &p.NotionalValue, &p.Leverage,
@@ -330,6 +369,7 @@ func scanPositionRows(rows pgx.Rows) ([]*PersistedPosition, error) {
 			&p.LiquidationPrice, &p.FundingPaid, &p.MarginType,
 			&p.UnrealizedPnL, &p.RealizedPnL,
 			&p.IsPaper, &closeReason, &p.Platform,
+			&p.MainOrderID, &p.SLOrderID, &p.TPOrderID,
 			&p.OpenedAt, &p.ClosedAt,
 		)
 		if err != nil {

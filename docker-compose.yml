@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trading_bot_secret}
       POSTGRES_DB: ${POSTGRES_DB:-trading_bot}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./migrations:/docker-entrypoint-initdb.d:ro
@@ -28,7 +28,7 @@ services:
     restart: unless-stopped
     command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_secret}
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -87,6 +87,7 @@ services:
       - BYBIT_MAINNET_API_URL=https://api.bybit.com
       - RUST_ENGINE_ADDRESS=rust-engine:50051
       - ML_SERVICE_BASE_URL=http://ml-service:8000
+      - ML_SERVICE_API_KEY=${ML_SERVICE_API_KEY:-}
       - DATASOURCES_CRYPTOPANIC_TOKEN=${DATASOURCES_CRYPTOPANIC_TOKEN}
       - DATASOURCES_COINGLASS_API_KEY=${DATASOURCES_COINGLASS_API_KEY}
       - DATASOURCES_COINGECKO_API_KEY=${DATASOURCES_COINGECKO_API_KEY}
@@ -99,7 +100,7 @@ services:
       - LEVERAGE_MAX_MARGIN_PER_TRADE=${LEVERAGE_MAX_MARGIN_PER_TRADE:-500}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     ports:
-      - "${GO_BOT_PORT:-8080}:8080"
+      - "127.0.0.1:${GO_BOT_PORT:-8080}:8080"
     volumes:
       - ./migrations:/app/root-migrations:ro
       - ./go-bot/migrations:/app/migrations:ro
@@ -116,7 +117,7 @@ services:
     environment:
       - RUST_LOG=${RUST_LOG:-info}
     ports:
-      - "${RUST_GRPC_PORT:-50051}:50051"
+      - "127.0.0.1:${RUST_GRPC_PORT:-50051}:50051"
     healthcheck:
       test: ["CMD-SHELL", "nc -z 127.0.0.1 50051 || exit 1"]
       interval: 15s
@@ -136,8 +137,9 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - MODEL_PATH=/app/models
+      - ML_SERVICE_API_KEY=${ML_SERVICE_API_KEY:-}
     ports:
-      - "${ML_SERVICE_PORT:-8000}:8000"
+      - "127.0.0.1:${ML_SERVICE_PORT:-8000}:8000"
     volumes:
       - ml_models:/app/models
     healthcheck:
@@ -158,7 +160,7 @@ services:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.retention.time=30d'
@@ -179,7 +181,7 @@ services:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
-      - "${GRAFANA_PORT:-3000}:3000"
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
     depends_on:
       - prometheus
     networks:

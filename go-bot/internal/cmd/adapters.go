@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/trading-bot/go-bot/internal/binance"
@@ -141,6 +142,71 @@ func (a *liveSpotExchangeResolver) PrimaryExchange(userID int) (string, error) {
 		return "", fmt.Errorf("no credentials found for user %d", userID)
 	}
 	return cred.Exchange, nil
+}
+
+type liveSpotOrderRouter struct {
+	repo     *user.Repository
+	registry *exchange.Registry
+}
+
+func (a *liveSpotOrderRouter) OrderExecutorFor(userID int) (string, exchange.OrderExecutor, error) {
+	cred, err := a.repo.GetPrimaryCredentials(context.Background(), userID)
+	if err != nil {
+		return "", nil, err
+	}
+	if cred == nil {
+		return "", nil, fmt.Errorf("no credentials found for user %d", userID)
+	}
+	ex, err := a.registry.Get(exchange.ExchangeName(cred.Exchange))
+	if err != nil {
+		return "", nil, err
+	}
+	return cred.Exchange, ex, nil
+}
+
+func (a *liveSpotOrderRouter) OrderExecutor(exchangeName string) (exchange.OrderExecutor, error) {
+	if exchangeName == "" {
+		return nil, fmt.Errorf("empty exchange")
+	}
+	return a.registry.Get(exchange.ExchangeName(strings.ToLower(strings.TrimSpace(exchangeName))))
+}
+
+type exchangeKeyDecryptor interface {
+	DecryptKeysForExchange(userID int, exchange string) (apiKey, apiSecret string, err error)
+}
+
+type liveBalanceProvider struct {
+	repo     *user.Repository
+	keys     exchangeKeyDecryptor
+	registry *exchange.Registry
+}
+
+func (a *liveBalanceProvider) GetAvailableBalance(userID int, asset string) (float64, error) {
+	cred, err := a.repo.GetPrimaryCredentials(context.Background(), userID)
+	if err != nil {
+		return 0, err
+	}
+	if cred == nil {
+		return 0, fmt.Errorf("no credentials found for user %d", userID)
+	}
+	ex, err := a.registry.Get(exchange.ExchangeName(cred.Exchange))
+	if err != nil {
+		return 0, err
+	}
+	apiKey, apiSecret, err := a.keys.DecryptKeysForExchange(userID, cred.Exchange)
+	if err != nil {
+		return 0, err
+	}
+	balances, err := ex.GetBalance(context.Background(), apiKey, apiSecret)
+	if err != nil {
+		return 0, err
+	}
+	for _, b := range balances {
+		if strings.EqualFold(b.Asset, asset) {
+			return b.Free, nil
+		}
+	}
+	return 0, nil
 }
 
 // adapts binance.FuturesClient to the leverage.MarkPriceProvider interface

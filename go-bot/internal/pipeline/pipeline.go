@@ -138,6 +138,10 @@ func (p *Pipeline) Analyze(ctx context.Context, symbol string) (*Result, error) 
 	// rust indicators
 	go func() {
 		defer wg.Done()
+		if p.indicators == nil {
+			indErr = fmt.Errorf("indicator provider unavailable")
+			return
+		}
 		indicators, indErr = p.indicators.AnalyzeAll(ctx, analysisCandles, nil)
 	}()
 
@@ -173,7 +177,7 @@ func (p *Pipeline) Analyze(ctx context.Context, symbol string) (*Result, error) 
 	// higher-timeframe context (skip primary timeframe, fetch others)
 	go func() {
 		defer wg.Done()
-		if len(p.timeframes) > 1 {
+		if len(p.timeframes) > 1 && p.indicators != nil {
 			htfCtx = p.fetchHTFContext(ctx, symbol)
 		}
 	}()
@@ -215,6 +219,18 @@ func (p *Pipeline) Analyze(ctx context.Context, symbol string) (*Result, error) 
 		}
 	}
 
+	if p.ai == nil {
+		result.Errors = append(result.Errors, "ai: provider unavailable")
+		result.Decision = &claude.Decision{
+			Action:     claude.ActionHold,
+			Confidence: 0,
+			Reasoning:  "AI provider unavailable; defaulting to HOLD.",
+			Timestamp:  time.Now(),
+		}
+		result.Latency = time.Since(start)
+		return result, nil
+	}
+
 	decision, err := p.ai.Analyze(ctx, aiInput)
 	if err != nil {
 		return nil, fmt.Errorf("ai analysis failed: %w", err)
@@ -243,6 +259,10 @@ func (p *Pipeline) fetchMarketData(ctx context.Context, symbol string) (*exchang
 // fetchHTFContext fetches candles for higher timeframes and runs indicators
 // to provide multi-timeframe confirmation signals
 func (p *Pipeline) fetchHTFContext(ctx context.Context, symbol string) []claude.HTFSnapshot {
+	if p.indicators == nil {
+		return nil
+	}
+
 	var snapshots []claude.HTFSnapshot
 	for _, tf := range p.timeframes[1:] {
 		candles, err := p.exchange.GetCandles(ctx, symbol, tf, 50)

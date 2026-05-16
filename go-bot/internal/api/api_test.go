@@ -54,11 +54,11 @@ func TestAuth_ValidKey_Header(t *testing.T) {
 	}
 }
 
-func TestAuth_ValidKey_QueryParam(t *testing.T) {
+func TestAuth_QueryParamKeyRejected(t *testing.T) {
 	rr := serve(newTestServer("secret123"), http.MethodGet,
 		"/api/positions?user_id=1&api_key=secret123", nil)
-	if rr.Code == http.StatusUnauthorized {
-		t.Error("should pass auth with query param key")
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rr.Code)
 	}
 }
 
@@ -458,7 +458,7 @@ func TestDecisionsToAPI(t *testing.T) {
 			PromptTokens: 1000, CompletionTokens: 500, LatencyMs: 1200,
 			WasApproved: &approved, WasExecuted: true,
 			IndicatorsData: map[string]interface{}{"rsi": 65},
-			CreatedAt: time.Now(),
+			CreatedAt:      time.Now(),
 		},
 		{
 			ID: 2, UserID: 5, Symbol: "ETH/USDT", Decision: "HOLD",

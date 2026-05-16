@@ -159,6 +159,7 @@ type RustEngineConfig struct {
 // holds http connection settings for the python ml service
 type MLServiceConfig struct {
 	BaseURL string
+	APIKey  string
 }
 
 // holds trading behavior settings
@@ -249,6 +250,7 @@ func Load() (*Config, error) {
 		},
 		MLService: MLServiceConfig{
 			BaseURL: viper.GetString("ml_service.base_url"),
+			APIKey:  viper.GetString("ml_service.api_key"),
 		},
 		Trading: TradingConfig{
 			DefaultConfidenceThreshold: viper.GetInt("trading.default_confidence_threshold"),

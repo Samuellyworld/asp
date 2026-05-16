@@ -9,7 +9,10 @@ import (
 	"strings"
 )
 
-const supportedLiveSpotExchange = "binance"
+const (
+	supportedLiveSpotExchange  = "binance"
+	supportedLiveSpotExchanges = "binance, bybit"
+)
 
 // formats a live trade execution notification with order ids
 func FormatTradeExecuted(pos *LivePosition) string {
@@ -24,7 +27,11 @@ func FormatTradeExecuted(pos *LivePosition) string {
 
 	b.WriteString(fmt.Sprintf("%s LIVE: %s %s %s @ $%s\n",
 		emoji, action, formatQty(pos.Quantity), pos.Symbol, formatPrice(pos.EntryPrice)))
-	b.WriteString(fmt.Sprintf("   Binance Order ID: %d\n", pos.MainOrderID))
+	exchangeName := pos.Exchange
+	if exchangeName == "" {
+		exchangeName = supportedLiveSpotExchange
+	}
+	b.WriteString(fmt.Sprintf("   %s Order ID: %d\n", strings.Title(exchangeName), pos.MainOrderID))
 
 	slStatus := "✓"
 	if pos.SLOrderID == 0 {
@@ -145,10 +152,9 @@ func FormatUnsupportedSpotExchange(exchangeName string) string {
 		exchangeName = "this exchange"
 	}
 	return fmt.Sprintf(
-		"real %s live spot trading is disabled right now. the live runtime still assumes %s routing and quantity sizing. use paper trading or connect %s spot credentials before enabling live mode.",
+		"real %s live spot trading is disabled right now. supported live spot exchanges: %s. use paper trading or connect supported spot credentials before enabling live mode.",
 		exchangeName,
-		supportedLiveSpotExchange,
-		supportedLiveSpotExchange,
+		supportedLiveSpotExchanges,
 	)
 }
 

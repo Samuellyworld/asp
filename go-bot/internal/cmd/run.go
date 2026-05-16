@@ -150,6 +150,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 	var mlClient *mlclient.Client
 	if cfg.MLService.BaseURL != "" {
 		mlClient = mlclient.NewClient(cfg.MLService.BaseURL)
+		mlClient.SetAPIKey(cfg.MLService.APIKey)
 		mlProvider = mlClient
 		log.Printf("ml service configured at %s", cfg.MLService.BaseURL)
 	}
@@ -280,7 +281,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 	// live trading adapters
 	credRepo := &credRepoAdapter{repo: userRepo}
 	keyDecryptor := livetrading.NewKeyDecryptorAdapter(credRepo, encryptor, auditLogger)
-	balanceProvider := livetrading.NewBalanceProviderAdapter(keyDecryptor, binanceClient)
+	balanceProvider := &liveBalanceProvider{repo: userRepo, keys: keyDecryptor, registry: exchangeRegistry}
 
 	// live trading safety
 	safetyConfig := livetrading.DefaultSafetyConfig()
@@ -293,6 +294,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 	// live trading executor and monitor
 	liveExecutor := livetrading.NewExecutor(orderClient, keyDecryptor, safetyChecker, lossTracker)
 	liveExecutor.SetPrimaryExchangeResolver(&liveSpotExchangeResolver{repo: userRepo})
+	liveExecutor.SetOrderRouter(&liveSpotOrderRouter{repo: userRepo, registry: exchangeRegistry})
 	liveExecutor.SetStore(&livePositionStoreAdapter{repo: posRepo})
 	liveExecutor.SetTradeLogger(&liveTradeLoggerAdapter{trades: tradeRepo, daily: dailyStatsRepo})
 	liveExecutor.SetSlippageTracker(slippageTracker)
@@ -350,7 +352,11 @@ func runBot(cmd *cobra.Command, args []string) error {
 	levMonitorConfig := leverage.DefaultMonitorConfig()
 	levPaperMonitor := leverage.NewMonitor(levPaperExecutor, levPaperExecutor, markPrices, fundingTracker, levMonitorConfig, leverage.WithMarkPriceUpdater(levPaperExecutor))
 
-	levLiveMonitor := leverage.NewMonitor(levLiveExecutor, levLiveExecutor, markPrices, fundingTracker, levMonitorConfig, leverage.WithMarkPriceUpdater(levLiveExecutor))
+	levLiveMonitor := leverage.NewMonitor(
+		levLiveExecutor, levLiveExecutor, markPrices, fundingTracker, levMonitorConfig,
+		leverage.WithMarkPriceUpdater(levLiveExecutor),
+		leverage.WithFuturesOrderStatus(futuresClient, keyDecryptor),
+	)
 
 	// --- portfolio circuit breaker (shared across all executors) ---
 	cbConfig := circuitbreaker.DefaultConfig()

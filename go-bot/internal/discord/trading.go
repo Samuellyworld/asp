@@ -295,7 +295,8 @@ func (h *Handler) componentOppApprove(ctx context.Context, interaction *Interact
 		return
 	}
 
-	if !h.trading.OppManager.Approve(oppID, userID) {
+	opp, ok = h.trading.OppManager.BeginExecution(oppID, userID)
+	if !ok {
 		h.updateMessage(interaction, "opportunity already resolved.", nil, nil)
 		return
 	}
@@ -304,22 +305,27 @@ func (h *Handler) componentOppApprove(ctx context.Context, interaction *Interact
 	if h.trading.Confirm != nil && h.trading.Confirm.IsConfirmed(userID) && h.trading.LiveExecutor != nil {
 		pos, err := h.trading.LiveExecutor.Execute(opp)
 		if err != nil {
-			h.updateMessage(interaction, opportunity.FormatApprovedMessage(opp), nil, nil)
+			if !strings.Contains(err.Error(), "CRITICAL") {
+				h.trading.OppManager.FailExecution(oppID, userID)
+			}
 			h.bot.SendMessage(interaction.ChannelID, fmt.Sprintf("live execution failed: %v", err))
 			return
 		}
+		h.trading.OppManager.CompleteExecution(oppID, userID)
 		h.updateMessage(interaction, opportunity.FormatApprovedMessage(opp), nil, nil)
 		h.bot.SendMessage(interaction.ChannelID, livetrading.FormatTradeExecuted(pos))
 	} else if h.trading.PaperExecutor != nil {
 		pos, err := h.trading.PaperExecutor.Execute(opp)
 		if err != nil {
-			h.updateMessage(interaction, opportunity.FormatApprovedMessage(opp), nil, nil)
+			h.trading.OppManager.FailExecution(oppID, userID)
 			h.bot.SendMessage(interaction.ChannelID, fmt.Sprintf("paper execution failed: %v", err))
 			return
 		}
+		h.trading.OppManager.CompleteExecution(oppID, userID)
 		h.updateMessage(interaction, opportunity.FormatApprovedMessage(opp), nil, nil)
 		h.bot.SendMessage(interaction.ChannelID, papertrading.FormatTradeExecuted(pos))
 	} else {
+		h.trading.OppManager.CompleteExecution(oppID, userID)
 		h.updateMessage(interaction, opportunity.FormatApprovedMessage(opp), nil, nil)
 	}
 }

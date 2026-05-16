@@ -2,7 +2,8 @@
 ml service - lstm price predictions + sentiment analysis + ensemble + patterns + drift + RL
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from app.schemas import (
     PricePredictionRequest,
@@ -34,6 +35,7 @@ from app.rl_agent import TradingRLAgent
 
 import logging
 import json
+import os
 import sys
 import numpy as np
 
@@ -63,6 +65,16 @@ app = FastAPI(
     description="LSTM price predictions, sentiment analysis, ensemble models, chart patterns, drift detection, and RL agent",
     version="0.2.0",
 )
+
+API_KEY = os.getenv("ML_SERVICE_API_KEY", "")
+
+
+@app.middleware("http")
+async def api_key_auth(request: Request, call_next):
+    if API_KEY and request.url.path not in {"/", "/health"}:
+        if request.headers.get("X-API-Key") != API_KEY:
+            return JSONResponse(status_code=401, content={"detail": "invalid or missing API key"})
+    return await call_next(request)
 
 # initialize models on startup
 predictor = PricePredictor()

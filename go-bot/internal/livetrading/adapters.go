@@ -61,9 +61,19 @@ func (a *KeyDecryptorAdapter) SetExchange(exchange string) {
 // decrypts the api key and secret for a user.
 // logs every decrypt attempt to the audit trail.
 func (a *KeyDecryptorAdapter) DecryptKeys(userID int) (apiKey, apiSecret string, err error) {
-	ctx := context.Background()
+	return a.DecryptKeysForExchange(userID, a.exchange)
+}
 
-	cred, err := a.repo.GetCredentials(ctx, userID, a.exchange)
+// DecryptKeysForExchange decrypts the api key and secret for a specific exchange.
+// It does not mutate the adapter's default exchange, so concurrent users can be
+// routed independently.
+func (a *KeyDecryptorAdapter) DecryptKeysForExchange(userID int, exchangeName string) (apiKey, apiSecret string, err error) {
+	ctx := context.Background()
+	if exchangeName == "" {
+		exchangeName = a.exchange
+	}
+
+	cred, err := a.repo.GetCredentials(ctx, userID, exchangeName)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to get credentials: %w", err)
 	}

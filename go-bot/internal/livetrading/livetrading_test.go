@@ -27,6 +27,7 @@ type mockOrders struct {
 	placedCount  int
 	cancelCount  int
 	lastQuantity float64
+	lastQuoteQty float64
 }
 
 func newMockOrders() *mockOrders {
@@ -49,10 +50,17 @@ func (m *mockOrders) PlaceOrder(symbol string, side exchange.OrderSide, orderTyp
 	m.nextID++
 	m.placedCount++
 	m.lastQuantity = quantity
+	if orderType == exchange.OrderTypeMarket && quantity == 0 && price > 0 {
+		m.lastQuoteQty = price
+	}
 
 	avgPrice := price
-	if avgPrice == 0 {
+	if orderType == exchange.OrderTypeMarket {
 		avgPrice = 42450 // default fill price
+	}
+	executedQty := quantity
+	if executedQty <= 0 && price > 0 && avgPrice > 0 {
+		executedQty = price / avgPrice
 	}
 
 	order := &exchange.Order{
@@ -62,7 +70,7 @@ func (m *mockOrders) PlaceOrder(symbol string, side exchange.OrderSide, orderTyp
 		Type:        orderType,
 		Status:      exchange.OrderStatusFilled,
 		Quantity:    quantity,
-		ExecutedQty: quantity,
+		ExecutedQty: executedQty,
 		AvgPrice:    avgPrice,
 		CreatedAt:   time.Now(),
 	}
@@ -219,6 +227,19 @@ func (m *mockExchangeResolver) PrimaryExchange(userID int) (string, error) {
 		return "", m.err
 	}
 	return m.exchange, nil
+}
+
+type mockOrderRouter struct {
+	exchange string
+	orders   exchange.OrderExecutor
+	err      error
+}
+
+func (m *mockOrderRouter) OrderExecutorFor(userID int) (string, exchange.OrderExecutor, error) {
+	if m.err != nil {
+		return "", nil, m.err
+	}
+	return m.exchange, m.orders, nil
 }
 
 // helper to create a test opportunity
@@ -578,6 +599,32 @@ func TestExecutor_Execute(t *testing.T) {
 	// 3 orders: market + sl + tp
 	if orders.placedCount != 3 {
 		t.Fatalf("expected 3 orders placed, got %d", orders.placedCount)
+	}
+	if orders.lastQuoteQty != 500 {
+		t.Fatalf("expected Binance market buy to use quoteOrderQty 500, got %.2f", orders.lastQuoteQty)
+	}
+}
+
+func TestExecutor_Execute_BybitRouterUsesBaseQuantity(t *testing.T) {
+	orders := newMockOrders()
+	keys := newMockKeys()
+
+	exec := NewExecutor(nil, keys, nil, nil)
+	exec.SetOrderRouter(&mockOrderRouter{exchange: "bybit", orders: orders})
+
+	pos, err := exec.Execute(testOpp("BTCUSDT", claude.ActionBuy, 41800, 44200, 500))
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if pos.Exchange != "bybit" {
+		t.Fatalf("expected bybit exchange, got %s", pos.Exchange)
+	}
+	if orders.lastQuoteQty != 0 {
+		t.Fatalf("bybit should not use quoteOrderQty, got %.2f", orders.lastQuoteQty)
+	}
+	wantQty := 500.0 / 42450.0
+	if diff := orders.lastQuantity - wantQty; diff < -1e-9 || diff > 1e-9 {
+		t.Fatalf("bybit base quantity = %.12f, want %.12f", orders.lastQuantity, wantQty)
 	}
 }
 

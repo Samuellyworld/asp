@@ -59,16 +59,16 @@ type recentNotification struct {
 
 // per-user daily notification count and recent history
 type userState struct {
-	dailyCount    int
-	recentNotifs  []recentNotification
+	dailyCount   int
+	recentNotifs []recentNotification
 }
 
 // configuration for the scanner
 type Config struct {
-	Interval              time.Duration
-	DefaultMaxDaily       int
-	DefaultMinConfidence  int
-	DuplicateWindowMins   int
+	Interval             time.Duration
+	DefaultMaxDaily      int
+	DefaultMinConfidence int
+	DuplicateWindowMins  int
 }
 
 // returns sensible defaults
@@ -83,13 +83,13 @@ func DefaultConfig() Config {
 
 // background scanner that monitors markets for all users
 type Scanner struct {
-	users       UserProvider
-	watchlists  WatchlistProvider
-	prefs       PreferencesProvider
-	analyzer    Analyzer
-	notifier    Notifier
-	logger      DecisionLogger // nil = no logging
-	config      Config
+	users      UserProvider
+	watchlists WatchlistProvider
+	prefs      PreferencesProvider
+	analyzer   Analyzer
+	notifier   Notifier
+	logger     DecisionLogger // nil = no logging
+	config     Config
 
 	mu          sync.RWMutex
 	states      map[int]*userState // keyed by user id
@@ -166,6 +166,13 @@ func (s *Scanner) CycleCount() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.cycleCount
+}
+
+// LastCycleAt returns when the last scan cycle completed.
+func (s *Scanner) LastCycleAt() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lastCycleAt
 }
 
 // returns daily notification count for a user

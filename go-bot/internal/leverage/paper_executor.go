@@ -12,10 +12,9 @@ import (
 	"github.com/trading-bot/go-bot/internal/circuitbreaker"
 )
 
-// dbCtx returns a context with a 5-second timeout for best-effort DB operations
-func dbCtx() context.Context {
-	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
-	return ctx
+// dbCtx returns a context with a 5-second timeout for best-effort DB operations.
+func dbCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 5*time.Second)
 }
 
 // provides current market prices for position management
@@ -45,7 +44,7 @@ type PaperExecutor struct {
 	safety    *SafetyChecker
 	funding   *FundingTracker
 	store     LeveragePositionStore
-	trades    LeverageTradeLogger // nil if no logging configured
+	trades    LeverageTradeLogger     // nil if no logging configured
 	breaker   *circuitbreaker.Breaker // nil if no circuit breaker configured
 	nextID    int
 }
@@ -161,16 +160,20 @@ func (e *PaperExecutor) OpenPosition(
 
 	// persist to database (best-effort)
 	if e.store != nil {
-		if err := e.store.SavePosition(dbCtx(), pos); err != nil {
+		ctx, cancel := dbCtx()
+		if err := e.store.SavePosition(ctx, pos); err != nil {
 			slog.Error("failed to persist leverage paper position", "id", id, "error", err)
 		}
+		cancel()
 	}
 
 	// log trade record (best-effort)
 	if e.trades != nil {
-		if err := e.trades.LogOpen(dbCtx(), pos); err != nil {
+		ctx, cancel := dbCtx()
+		if err := e.trades.LogOpen(ctx, pos); err != nil {
 			slog.Error("failed to log leverage trade open", "id", id, "error", err)
 		}
+		cancel()
 	}
 
 	return pos, nil
@@ -246,16 +249,20 @@ func (e *PaperExecutor) Close(posID string, reason string) (*LeveragePosition, e
 
 	// persist to database (best-effort)
 	if e.store != nil {
-		if err := e.store.ClosePosition(dbCtx(), pos); err != nil {
+		ctx, cancel := dbCtx()
+		if err := e.store.ClosePosition(ctx, pos); err != nil {
 			slog.Error("failed to persist leverage position close", "id", posID, "error", err)
 		}
+		cancel()
 	}
 
 	// log trade close record (best-effort)
 	if e.trades != nil {
-		if err := e.trades.LogClose(dbCtx(), pos); err != nil {
+		ctx, cancel := dbCtx()
+		if err := e.trades.LogClose(ctx, pos); err != nil {
 			slog.Error("failed to log leverage trade close", "id", posID, "error", err)
 		}
+		cancel()
 	}
 
 	return pos, nil
@@ -286,9 +293,11 @@ func (e *PaperExecutor) Adjust(posID string, field string, value float64) error 
 
 	// persist to database (best-effort)
 	if e.store != nil {
-		if err := e.store.AdjustPosition(dbCtx(), posID, sl, tp); err != nil {
+		ctx, cancel := dbCtx()
+		if err := e.store.AdjustPosition(ctx, posID, sl, tp); err != nil {
 			slog.Error("failed to persist leverage position adjust", "id", posID, "error", err)
 		}
+		cancel()
 	}
 
 	return nil

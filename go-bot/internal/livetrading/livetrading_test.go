@@ -11,6 +11,7 @@ import (
 	"github.com/trading-bot/go-bot/internal/claude"
 	"github.com/trading-bot/go-bot/internal/exchange"
 	"github.com/trading-bot/go-bot/internal/opportunity"
+	"github.com/trading-bot/go-bot/internal/opsalert"
 	"github.com/trading-bot/go-bot/internal/pipeline"
 )
 
@@ -214,6 +215,15 @@ type mockFailedRecorder struct {
 func (m *mockFailedRecorder) RecordFailedOrder(ctx context.Context, userID int, positionID, symbol, side, orderType string, quantity, price, stopPrice float64, tradeType, errorMsg string) error {
 	m.count++
 	m.lastErr = errorMsg
+	return nil
+}
+
+type mockAlerter struct {
+	alerts []opsalert.Alert
+}
+
+func (m *mockAlerter) Notify(_ context.Context, alert opsalert.Alert) error {
+	m.alerts = append(m.alerts, alert)
 	return nil
 }
 
@@ -690,11 +700,19 @@ func TestExecutor_Execute_OrderPlaceError(t *testing.T) {
 	orders := newMockOrders()
 	orders.placeErr = fmt.Errorf("exchange down")
 	exec := NewExecutor(orders, newMockKeys(), nil, nil)
+	alerter := &mockAlerter{}
+	exec.SetAlerter(alerter)
 
 	opp := testOpp("BTCUSDT", claude.ActionBuy, 41800, 44200, 500)
 	_, err := exec.Execute(opp)
 	if err == nil || !strings.Contains(err.Error(), "failed to place") {
 		t.Fatalf("expected order error, got: %v", err)
+	}
+	if len(alerter.alerts) != 1 {
+		t.Fatalf("expected failed order alert, got %d", len(alerter.alerts))
+	}
+	if alerter.alerts[0].Severity != opsalert.SeverityCritical {
+		t.Fatalf("expected critical alert, got %s", alerter.alerts[0].Severity)
 	}
 }
 
@@ -747,6 +765,8 @@ func TestExecutor_Execute_NilResult(t *testing.T) {
 func TestExecutor_Execute_NoSLTP(t *testing.T) {
 	orders := newMockOrders()
 	exec := NewExecutor(orders, newMockKeys(), nil, nil)
+	alerter := &mockAlerter{}
+	exec.SetAlerter(alerter)
 	opp := testOpp("BTCUSDT", claude.ActionBuy, 0, 0, 500) // no sl/tp
 
 	pos, err := exec.Execute(opp)
@@ -762,6 +782,12 @@ func TestExecutor_Execute_NoSLTP(t *testing.T) {
 	// only 1 market order
 	if orders.placedCount != 1 {
 		t.Fatalf("expected 1 order (market only), got %d", orders.placedCount)
+	}
+	if len(alerter.alerts) != 2 {
+		t.Fatalf("expected missing SL and TP alerts, got %d", len(alerter.alerts))
+	}
+	if alerter.alerts[0].Severity != opsalert.SeverityCritical {
+		t.Fatalf("expected missing SL to be critical, got %s", alerter.alerts[0].Severity)
 	}
 }
 
@@ -1659,8 +1685,68 @@ func TestExecutor_RestorePosition(t *testing.T) {
 	}
 }
 
+func TestDisasterRecovery_RestoredLivePositionMonitorsFilledSL(t *testing.T) {
+	orders := newMockOrders()
+	keys := newMockKeys()
+
+	beforeRestart := NewExecutor(orders, keys, nil, nil)
+	opened, err := beforeRestart.Execute(testOpp("BTCUSDT", claude.ActionBuy, 41800, 44200, 500))
+	if err != nil {
+		t.Fatalf("initial execute failed: %v", err)
+	}
+	placedBeforeRestart := orders.placedCount
+
+	afterRestart := NewExecutor(orders, keys, nil, nil)
+	afterRestart.RestorePosition(&LivePosition{
+		ID:           opened.ID,
+		UserID:       opened.UserID,
+		Exchange:     opened.Exchange,
+		Symbol:       opened.Symbol,
+		Side:         opened.Side,
+		EntryPrice:   opened.EntryPrice,
+		Quantity:     opened.Quantity,
+		PositionSize: opened.PositionSize,
+		StopLoss:     opened.StopLoss,
+		TakeProfit:   opened.TakeProfit,
+		MainOrderID:  opened.MainOrderID,
+		SLOrderID:    opened.SLOrderID,
+		TPOrderID:    opened.TPOrderID,
+		Status:       "open",
+		OpenedAt:     opened.OpenedAt,
+		Platform:     opened.Platform,
+	})
+
+	orders.mu.Lock()
+	orders.orders[opened.SLOrderID].Status = exchange.OrderStatusFilled
+	orders.orders[opened.SLOrderID].AvgPrice = opened.StopLoss
+	orders.mu.Unlock()
+
+	var events []Event
+	monitor := NewMonitor(afterRestart, orders, keys, nil, DefaultMonitorConfig())
+	monitor.OnEvent = func(e Event) { events = append(events, e) }
+	monitor.CheckPositions()
+
+	if afterRestart.Count() != 0 {
+		t.Fatalf("restored position should be closed after filled SL, open count=%d", afterRestart.Count())
+	}
+	closed := afterRestart.Get(opened.ID)
+	if closed == nil || closed.Status != "closed" || closed.CloseReason != "stop_loss" {
+		t.Fatalf("restored position close state = %+v", closed)
+	}
+	if orders.placedCount != placedBeforeRestart {
+		t.Fatalf("monitor should not place a second market close after exchange SL fill: placed before=%d after=%d", placedBeforeRestart, orders.placedCount)
+	}
+	if orders.cancelCount != 1 {
+		t.Fatalf("expected sibling TP cancel after SL fill, got %d", orders.cancelCount)
+	}
+	if len(events) != 1 || events[0].Type != EventSLHit {
+		t.Fatalf("expected one SL event, got %+v", events)
+	}
+}
+
 func TestDbCtx_HasTimeout(t *testing.T) {
-	ctx := dbCtx()
+	ctx, cancel := dbCtx()
+	defer cancel()
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		t.Fatal("dbCtx should have a deadline")

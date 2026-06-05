@@ -121,9 +121,13 @@ func (c *Client) sendWithRetry(ctx context.Context, reqBody responsesRequest) (*
 		}
 
 		respBytes, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		closeErr := resp.Body.Close()
 		if err != nil {
 			lastErr = fmt.Errorf("failed to read response: %w", err)
+			continue
+		}
+		if closeErr != nil {
+			lastErr = fmt.Errorf("failed to close response body: %w", closeErr)
 			continue
 		}
 

@@ -145,7 +145,7 @@ func FormatText(alert Alert) string {
 		b.WriteString(alert.Summary)
 	}
 	if alert.UserID > 0 {
-		b.WriteString(fmt.Sprintf("\nUser ID: %d", alert.UserID))
+		fmt.Fprintf(&b, "\nUser ID: %d", alert.UserID)
 	}
 	if alert.Symbol != "" {
 		b.WriteString("\nSymbol: ")

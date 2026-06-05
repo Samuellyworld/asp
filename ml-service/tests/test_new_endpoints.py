@@ -3,6 +3,10 @@
 import pytest
 from httpx import AsyncClient, ASGITransport
 from app.main import app
+import app.main as main
+
+
+ADMIN_HEADERS = {"X-API-Key": "test-admin-key"}
 
 
 @pytest.fixture
@@ -131,52 +135,80 @@ async def test_drift_check(candles):
 
 
 @pytest.mark.asyncio
-async def test_retrain(large_candles):
+async def test_retrain(large_candles, monkeypatch):
+    monkeypatch.setattr(main, "API_KEY", "test-admin-key")
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/retrain", json={
+            "candles": large_candles,
+            "epochs": 2,
+        }, headers=ADMIN_HEADERS)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "success" in data
+
+
+@pytest.mark.asyncio
+async def test_retrain_requires_admin_key(large_candles, monkeypatch):
+    monkeypatch.setattr(main, "API_KEY", "")
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post("/retrain", json={
             "candles": large_candles,
             "epochs": 2,
         })
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "success" in data
+    assert resp.status_code == 503
 
 
 @pytest.mark.asyncio
-async def test_retrain_insufficient_candles():
+async def test_retrain_rejects_missing_admin_header(large_candles, monkeypatch):
+    monkeypatch.setattr(main, "API_KEY", "test-admin-key")
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/retrain", json={
+            "candles": large_candles,
+            "epochs": 2,
+        })
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_retrain_insufficient_candles(monkeypatch):
+    monkeypatch.setattr(main, "API_KEY", "test-admin-key")
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post("/retrain", json={
             "candles": [{"open": 100, "high": 105, "low": 95,
                          "close": 102, "volume": 1000, "timestamp": i}
                         for i in range(20)],
-        })
+        }, headers=ADMIN_HEADERS)
     assert resp.status_code == 422  # min 60 candles
 
 
 @pytest.mark.asyncio
-async def test_walk_forward(large_candles):
+async def test_walk_forward(large_candles, monkeypatch):
+    monkeypatch.setattr(main, "API_KEY", "test-admin-key")
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post("/walk-forward", json={
             "candles": large_candles,
             "n_splits": 3,
-        })
+        }, headers=ADMIN_HEADERS)
     assert resp.status_code == 200
     data = resp.json()
     assert "success" in data
 
 
 @pytest.mark.asyncio
-async def test_rl_train(candles):
+async def test_rl_train(candles, monkeypatch):
+    monkeypatch.setattr(main, "API_KEY", "test-admin-key")
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post("/rl/train", json={
             "candles": candles,
             "episodes": 2,
             "initial_balance": 10000,
-        })
+        }, headers=ADMIN_HEADERS)
     assert resp.status_code == 200
     data = resp.json()
     assert "success" in data

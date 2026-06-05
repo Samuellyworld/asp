@@ -86,15 +86,11 @@ var dbMigrateCmd = &cobra.Command{
 			return fmt.Errorf("failed to create migrations table: %w", err)
 		}
 
-		// collect migration files from local, repo-root, and container-mounted paths.
+		// collect migration files from the repo-root migration directory.
 		migrationDirs := []string{
 			"../migrations",
-			"../go-bot/migrations",
 			"root-migrations",
-			"migrations",
-			"go-bot/migrations",
 			"/app/root-migrations",
-			"/app/migrations",
 		}
 		var files []string
 		seen := make(map[string]bool)

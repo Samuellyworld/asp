@@ -395,7 +395,7 @@ func setDefaults() {
 	viper.SetDefault("claude.max_tokens", 4096)
 
 	// openai
-	viper.SetDefault("openai.model", "gpt-5.4")
+	viper.SetDefault("openai.model", "")
 	viper.SetDefault("openai.max_output_tokens", 1024)
 	viper.SetDefault("openai.base_url", "https://api.openai.com/v1")
 	viper.SetDefault("ai.consensus_enabled", false)
@@ -427,6 +427,10 @@ func setDefaults() {
 	viper.SetDefault("leverage.liquidation_critical_pct", 5)
 	viper.SetDefault("leverage.liquidation_auto_close_pct", 2)
 	viper.SetDefault("leverage.monitor_interval_seconds", 30)
+
+	// analytics API
+	viper.SetDefault("api.enabled", false)
+	viper.SetDefault("api.port", 0)
 
 	// logging
 	viper.SetDefault("log_level", "info")
@@ -493,6 +497,9 @@ func Validate(cfg *Config) error {
 	}
 	if cfg.Alerting.StaleScannerMinutes <= 0 {
 		return fmt.Errorf("alerting.stale_scanner_minutes must be positive")
+	}
+	if cfg.API.Enabled && cfg.API.Key == "" {
+		return fmt.Errorf("api.key is required when api.enabled is true")
 	}
 	if cfg.Alerting.Email.Enabled {
 		if cfg.Alerting.Email.SMTPHost == "" {

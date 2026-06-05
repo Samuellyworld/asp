@@ -67,11 +67,14 @@ app = FastAPI(
 )
 
 API_KEY = os.getenv("ML_SERVICE_API_KEY", "")
+ADMIN_PATHS = {"/retrain", "/walk-forward", "/rl/train"}
 
 
 @app.middleware("http")
 async def api_key_auth(request: Request, call_next):
-    if API_KEY and request.url.path not in {"/", "/health"}:
+    if request.url.path in ADMIN_PATHS and not API_KEY:
+        return JSONResponse(status_code=503, content={"detail": "admin API key is not configured"})
+    if (API_KEY or request.url.path in ADMIN_PATHS) and request.url.path not in {"/", "/health"}:
         if request.headers.get("X-API-Key") != API_KEY:
             return JSONResponse(status_code=401, content={"detail": "invalid or missing API key"})
     return await call_next(request)

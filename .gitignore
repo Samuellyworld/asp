@@ -32,6 +32,7 @@ ml-service/*$py.class
 ml-service/.Python
 ml-service/venv/
 ml-service/.venv/
+ml-service/.venv*/
 ml-service/env/
 ml-service/.env/
 ml-service/ENV/
@@ -122,5 +123,4 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-
 

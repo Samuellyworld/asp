@@ -62,12 +62,10 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		if s.apiKey != "" {
-			key := r.Header.Get("X-API-Key")
-			if subtle.ConstantTimeCompare([]byte(key), []byte(s.apiKey)) != 1 {
-				writeError(w, http.StatusUnauthorized, "invalid or missing API key")
-				return
-			}
+		key := r.Header.Get("X-API-Key")
+		if s.apiKey == "" || subtle.ConstantTimeCompare([]byte(key), []byte(s.apiKey)) != 1 {
+			writeError(w, http.StatusUnauthorized, "invalid or missing API key")
+			return
 		}
 
 		next(w, r)

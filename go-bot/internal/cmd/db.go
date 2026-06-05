@@ -89,6 +89,7 @@ var dbMigrateCmd = &cobra.Command{
 		// collect migration files from the repo-root migration directory.
 		migrationDirs := []string{
 			"../migrations",
+			"migrations",
 			"root-migrations",
 			"/app/root-migrations",
 		}

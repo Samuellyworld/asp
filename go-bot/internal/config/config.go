@@ -75,7 +75,7 @@ type SecurityConfig struct {
 // holds analytics REST API settings
 type APIConfig struct {
 	Enabled bool
-	Key     string // API key for authentication (empty = no auth)
+	Key     string // API key for authentication; required when enabled
 	Port    int    // port for the API server (0 = same as health on :8080)
 }
 

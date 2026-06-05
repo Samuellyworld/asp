@@ -195,6 +195,23 @@ func TestValidate(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "api enabled requires api key",
+			modify: func(cfg *Config) {
+				cfg.API.Enabled = true
+				cfg.API.Key = ""
+			},
+			wantErr: true,
+			errMsg:  "api.key is required when api.enabled is true",
+		},
+		{
+			name: "api enabled with key",
+			modify: func(cfg *Config) {
+				cfg.API.Enabled = true
+				cfg.API.Key = "test-api-key"
+			},
+			wantErr: false,
+		},
+		{
 			name:    "leverage too high",
 			modify:  func(cfg *Config) { cfg.Leverage.HardMaxLeverage = 200 },
 			wantErr: true,
@@ -313,8 +330,8 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.Trading.ScannerIntervalMinutes != 5 {
 		t.Errorf("trading.scanner_interval_minutes = %d, want %d", cfg.Trading.ScannerIntervalMinutes, 5)
 	}
-	if cfg.OpenAI.Model != "gpt-5.4" {
-		t.Errorf("openai.model = %q, want gpt-5.4", cfg.OpenAI.Model)
+	if cfg.OpenAI.Model != "" {
+		t.Errorf("openai.model = %q, want empty default", cfg.OpenAI.Model)
 	}
 	if cfg.Alerting.DedupMinutes != 30 {
 		t.Errorf("alerting.dedup_minutes = %d, want 30", cfg.Alerting.DedupMinutes)

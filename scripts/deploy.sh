@@ -73,19 +73,6 @@ for f in migrations/*.sql; do
 	    --quiet
 done
 
-for f in go-bot/migrations/*.sql; do
-  if [ -f "$f" ]; then
-    echo "Applying migration: $f"
-    docker compose cp "$f" postgres:/tmp/
-	    docker compose exec -T postgres psql \
-	      -U "${POSTGRES_USER:-trading_bot}" \
-	      -d "${POSTGRES_DB:-trading_bot}" \
-	      -f "/tmp/$(basename "$f")" \
-	      --set ON_ERROR_STOP=1 \
-	      --quiet
-  fi
-done
-
 # 4. build and deploy
 echo ""
 echo "--- Building and deploying services ---"

@@ -15,6 +15,10 @@ func newTestServer(apiKey string) *Server {
 	return &Server{apiKey: apiKey}
 }
 
+func authHeaders() map[string]string {
+	return map[string]string{"X-API-Key": "secret123"}
+}
+
 func serve(srv *Server, method, url string, headers map[string]string) *httptest.ResponseRecorder {
 	mux := http.NewServeMux()
 	srv.RegisterRoutes(mux)
@@ -71,10 +75,9 @@ func TestAuth_WrongKey(t *testing.T) {
 }
 
 func TestAuth_NoKey_ConfiguredEmpty(t *testing.T) {
-	// empty apiKey disables auth
 	rr := serve(newTestServer(""), http.MethodGet, "/api/positions?user_id=1", nil)
-	if rr.Code == http.StatusUnauthorized {
-		t.Error("should not require auth when api key is empty")
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rr.Code)
 	}
 }
 
@@ -102,14 +105,14 @@ func TestMethodNotAllowed_DELETE(t *testing.T) {
 // ==================== parameter validation ====================
 
 func TestPositions_MissingUserID(t *testing.T) {
-	rr := serve(newTestServer(""), http.MethodGet, "/api/positions", nil)
+	rr := serve(newTestServer("secret123"), http.MethodGet, "/api/positions", authHeaders())
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rr.Code)
 	}
 }
 
 func TestPositions_InvalidStatus(t *testing.T) {
-	rr := serve(newTestServer(""), http.MethodGet, "/api/positions?user_id=1&status=INVALID", nil)
+	rr := serve(newTestServer("secret123"), http.MethodGet, "/api/positions?user_id=1&status=INVALID", authHeaders())
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rr.Code)
 	}
@@ -117,7 +120,7 @@ func TestPositions_InvalidStatus(t *testing.T) {
 
 func TestPositions_ValidStatuses(t *testing.T) {
 	for _, status := range []string{"OPEN", "CLOSED", "LIQUIDATED", "open", "closed"} {
-		rr := serve(newTestServer(""), http.MethodGet, "/api/positions?user_id=1&status="+status, nil)
+		rr := serve(newTestServer("secret123"), http.MethodGet, "/api/positions?user_id=1&status="+status, authHeaders())
 		if rr.Code == http.StatusBadRequest {
 			t.Errorf("status=%s should be valid, got 400", status)
 		}
@@ -125,63 +128,63 @@ func TestPositions_ValidStatuses(t *testing.T) {
 }
 
 func TestTrades_MissingUserID(t *testing.T) {
-	rr := serve(newTestServer(""), http.MethodGet, "/api/trades", nil)
+	rr := serve(newTestServer("secret123"), http.MethodGet, "/api/trades", authHeaders())
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rr.Code)
 	}
 }
 
 func TestDecisions_MissingUserID(t *testing.T) {
-	rr := serve(newTestServer(""), http.MethodGet, "/api/decisions", nil)
+	rr := serve(newTestServer("secret123"), http.MethodGet, "/api/decisions", authHeaders())
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rr.Code)
 	}
 }
 
 func TestDecisions_MissingSymbol(t *testing.T) {
-	rr := serve(newTestServer(""), http.MethodGet, "/api/decisions?user_id=1", nil)
+	rr := serve(newTestServer("secret123"), http.MethodGet, "/api/decisions?user_id=1", authHeaders())
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rr.Code)
 	}
 }
 
 func TestDailyStats_MissingUserID(t *testing.T) {
-	rr := serve(newTestServer(""), http.MethodGet, "/api/stats/daily", nil)
+	rr := serve(newTestServer("secret123"), http.MethodGet, "/api/stats/daily", authHeaders())
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rr.Code)
 	}
 }
 
 func TestSummary_MissingUserID(t *testing.T) {
-	rr := serve(newTestServer(""), http.MethodGet, "/api/stats/summary", nil)
+	rr := serve(newTestServer("secret123"), http.MethodGet, "/api/stats/summary", authHeaders())
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rr.Code)
 	}
 }
 
 func TestCandles_MissingSymbol(t *testing.T) {
-	rr := serve(newTestServer(""), http.MethodGet, "/api/candles", nil)
+	rr := serve(newTestServer("secret123"), http.MethodGet, "/api/candles", authHeaders())
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rr.Code)
 	}
 }
 
 func TestPositionByID_InvalidID(t *testing.T) {
-	rr := serve(newTestServer(""), http.MethodGet, "/api/positions/abc", nil)
+	rr := serve(newTestServer("secret123"), http.MethodGet, "/api/positions/abc", authHeaders())
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rr.Code)
 	}
 }
 
 func TestPositionByID_NegativeID(t *testing.T) {
-	rr := serve(newTestServer(""), http.MethodGet, "/api/positions/-1", nil)
+	rr := serve(newTestServer("secret123"), http.MethodGet, "/api/positions/-1", authHeaders())
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rr.Code)
 	}
 }
 
 func TestPositionByID_ZeroID(t *testing.T) {
-	rr := serve(newTestServer(""), http.MethodGet, "/api/positions/0", nil)
+	rr := serve(newTestServer("secret123"), http.MethodGet, "/api/positions/0", authHeaders())
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rr.Code)
 	}

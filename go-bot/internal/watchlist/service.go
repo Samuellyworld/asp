@@ -28,12 +28,12 @@ func NewService(repo repository) *Service {
 	return &Service{repo: repo}
 }
 
-//  returns all active watchlist symbols for a user
+// returns all active watchlist symbols for a user
 func (s *Service) List(ctx context.Context, userID int) ([]Item, error) {
 	return s.repo.GetByUserID(ctx, userID)
 }
 
-//  adds a symbol to the user's watchlist after validation
+// adds a symbol to the user's watchlist after validation
 func (s *Service) Add(ctx context.Context, userID int, symbol string) error {
 	symbol = normalizeSymbol(symbol)
 
@@ -68,12 +68,12 @@ func (s *Service) Remove(ctx context.Context, userID int, symbol string) error {
 	return s.repo.Remove(ctx, userID, symbol)
 }
 
-//  restores the default top-10 watchlist
+// restores the default watchlist
 func (s *Service) Reset(ctx context.Context, userID int) error {
 	return s.repo.Reset(ctx, userID)
 }
 
-//  converts user input to the standard format
+// converts user input to the standard format
 func normalizeSymbol(symbol string) string {
 	symbol = strings.ToUpper(strings.TrimSpace(symbol))
 
@@ -93,7 +93,7 @@ func normalizeSymbol(symbol string) string {
 	return symbol
 }
 
-//  checks if a symbol follows the expected format
+// checks if a symbol follows the expected format
 func isValidSymbol(symbol string) bool {
 	parts := strings.Split(symbol, "/")
 	if len(parts) != 2 {

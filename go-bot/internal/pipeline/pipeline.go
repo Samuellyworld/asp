@@ -15,6 +15,8 @@ import (
 	"github.com/trading-bot/go-bot/internal/regime"
 )
 
+const minMLPredictionCandles = 30
+
 // provides market data
 type ExchangeProvider interface {
 	GetPrice(ctx context.Context, symbol string) (*exchange.Ticker, error)
@@ -149,6 +151,10 @@ func (p *Pipeline) Analyze(ctx context.Context, symbol string) (*Result, error) 
 	go func() {
 		defer wg.Done()
 		if p.ml != nil && p.ml.IsAvailable(ctx) {
+			if len(mlCandles) < minMLPredictionCandles {
+				predErr = fmt.Errorf("insufficient candles for ML prediction: got %d, need at least %d", len(mlCandles), minMLPredictionCandles)
+				return
+			}
 			prediction, predErr = p.ml.PredictPrice(ctx, &mlclient.PricePredictionRequest{
 				Symbol:    symbol,
 				Candles:   mlCandles,

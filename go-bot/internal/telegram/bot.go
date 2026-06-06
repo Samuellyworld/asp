@@ -12,7 +12,10 @@ import (
 	"strings"
 )
 
-const apiBase = "https://api.telegram.org/bot"
+const (
+	apiBase               = "https://api.telegram.org/bot"
+	maxTelegramMessageLen = 4096
+)
 
 // update represents an incoming telegram update
 type Update struct {
@@ -80,6 +83,16 @@ func NewBot(token string) *Bot {
 // sendMessage sends a text message to a chat.
 // Tries Markdown first; falls back to plain text if Telegram can't parse entities.
 func (b *Bot) SendMessage(chatID int64, text string) error {
+	parts := splitTelegramMessage(text, maxTelegramMessageLen)
+	for _, part := range parts {
+		if err := b.sendSingleMessage(chatID, part); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *Bot) sendSingleMessage(chatID int64, text string) error {
 	endpoint := fmt.Sprintf("%s%s/sendMessage", apiBase, b.token)
 
 	data := url.Values{}
@@ -122,6 +135,7 @@ func (b *Bot) SendMessage(chatID int64, text string) error {
 
 // sends a message with an inline keyboard attached
 func (b *Bot) SendMessageWithKeyboard(chatID int64, text string, keyboard *InlineKeyboardMarkup) error {
+	text = truncateTelegramMessage(text, maxTelegramMessageLen)
 	endpoint := fmt.Sprintf("%s%s/sendMessage", apiBase, b.token)
 
 	payload := map[string]interface{}{
@@ -148,6 +162,36 @@ func (b *Bot) SendMessageWithKeyboard(chatID int64, text string, keyboard *Inlin
 	}
 
 	return nil
+}
+
+func truncateTelegramMessage(text string, maxLen int) string {
+	if len(text) <= maxLen {
+		return text
+	}
+	const suffix = "\n\n[truncated]"
+	if maxLen <= len(suffix) {
+		return text[:maxLen]
+	}
+	return text[:maxLen-len(suffix)] + suffix
+}
+
+func splitTelegramMessage(text string, maxLen int) []string {
+	if text == "" {
+		return []string{""}
+	}
+
+	var parts []string
+	remaining := text
+	for len(remaining) > maxLen {
+		cut := strings.LastIndex(remaining[:maxLen], "\n")
+		if cut <= 0 {
+			cut = maxLen
+		}
+		parts = append(parts, remaining[:cut])
+		remaining = strings.TrimLeft(remaining[cut:], "\n")
+	}
+	parts = append(parts, remaining)
+	return parts
 }
 
 // edits the text (and optionally keyboard) of an existing message

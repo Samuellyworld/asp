@@ -47,9 +47,11 @@ type mockML struct {
 	available  bool
 	predErr    error
 	sentErr    error
+	predCalls  int
 }
 
 func (m *mockML) PredictPrice(_ context.Context, _ *mlclient.PricePredictionRequest) (*mlclient.PricePredictionResponse, error) {
+	m.predCalls++
 	return m.prediction, m.predErr
 }
 
@@ -216,6 +218,32 @@ func TestPipelineWithoutML(t *testing.T) {
 	}
 	if result.Decision == nil {
 		t.Fatal("expected decision even without ml")
+	}
+}
+
+func TestPipelineSkipsMLPredictionWhenCandlesShort(t *testing.T) {
+	ex := &mockExchange{ticker: testTicker(), candles: testCandles(10)}
+	ind := &mockIndicators{result: testIndicators()}
+	ml := &mockML{prediction: testPrediction(), sentiment: testSentiment(), available: true}
+	ai := &mockAI{decision: testDecision()}
+
+	p := New(ex, ind, ml, ai)
+	result, err := p.Analyze(context.Background(), "BTC/USDT")
+	if err != nil {
+		t.Fatalf("pipeline failed: %v", err)
+	}
+
+	if ml.predCalls != 0 {
+		t.Fatalf("expected prediction call to be skipped, got %d calls", ml.predCalls)
+	}
+	if result.Prediction != nil {
+		t.Fatal("expected nil prediction for short candle history")
+	}
+	if len(result.Errors) == 0 || !strings.Contains(result.Errors[0], "insufficient candles for ML prediction") {
+		t.Fatalf("expected insufficient candle error, got %v", result.Errors)
+	}
+	if result.Sentiment == nil {
+		t.Fatal("expected sentiment analysis to still run")
 	}
 }
 
@@ -696,7 +724,7 @@ func TestPipelineWithAltData(t *testing.T) {
 	ai := &mockAI{decision: testDecision()}
 
 	alt := &mockAltData{data: &claude.AltData{
-		OrderFlow: &claude.OrderFlowData{BuySellRatio: 1.3, DepthImbalance: 0.2},
+		OrderFlow:   &claude.OrderFlowData{BuySellRatio: 1.3, DepthImbalance: 0.2},
 		FundingRate: &claude.FundingData{Rate: 0.0001, Annualized: 10.95},
 	}}
 

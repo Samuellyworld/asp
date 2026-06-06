@@ -395,7 +395,7 @@ func (h *Handler) handleWizardInput(ctx context.Context, msg *Message, telegramI
 				"%s\n"+
 				"your api keys have been encrypted and stored securely.\n"+
 				"your account is now active.\n\n"+
-				"your default watchlist (top 10 coins) and preferences have been set up.\n\n"+
+				"your default watchlist and preferences have been set up.\n\n"+
 				"type /help to see what you can do next.",
 			exchangeName, permsMsg,
 		))
@@ -451,7 +451,7 @@ func (h *Handler) handleHelp(chatID int64) {
 			"/watchlist - view your watchlist\n"+
 			"/watchadd <symbol> - add a symbol (e.g. /watchadd BTCUSDT)\n"+
 			"/watchremove <symbol> - remove a symbol\n"+
-			"/watchreset - reset to default top-10\n\n"+
+			"/watchreset - reset to default symbols\n\n"+
 			"*preferences*\n"+
 			"/settings - view all your preferences\n"+
 			"/set <key> <value> - change a preference\n\n"+
@@ -526,7 +526,7 @@ func (h *Handler) handleWatchlist(ctx context.Context, telegramID int64, chatID 
 	}
 
 	if len(items) == 0 {
-		h.send(chatID, "your watchlist is empty.\n\nuse /watchadd <symbol> to add one, or /watchreset for the default top-10.")
+		h.send(chatID, "your watchlist is empty.\n\nuse /watchadd <symbol> to add one, or /watchreset for the default symbols.")
 		return
 	}
 
@@ -621,7 +621,7 @@ func (h *Handler) handleWatchReset(ctx context.Context, telegramID int64, chatID
 	}
 
 	h.sendWithKeyboard(chatID,
-		"⚠️ *are you sure?*\n\nthis will replace your current watchlist with the default top-10 symbols.",
+		"⚠️ *are you sure?*\n\nthis will replace your current watchlist with the default symbols.",
 		keyboard,
 	)
 }
@@ -1241,7 +1241,7 @@ func (h *Handler) callbackWatchResetConfirm(ctx context.Context, queryID string,
 	}
 
 	h.answerCallback(queryID, "watchlist reset")
-	h.editMessage(chatID, messageID, "✅ watchlist reset to default top-10 symbols.\n\nuse /watchlist to see them.", nil)
+	h.editMessage(chatID, messageID, "✅ watchlist reset to default symbols.\n\nuse /watchlist to see them.", nil)
 }
 
 // formats a complete ticker message

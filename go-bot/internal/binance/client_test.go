@@ -130,7 +130,7 @@ func TestValidateKeys_WithFutures(t *testing.T) {
 	}
 }
 
-func TestValidateKeys_WithWithdraw(t *testing.T) {
+func TestValidateKeys_TestnetIgnoresAccountCanWithdraw(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := accountResponse{
 			CanTrade:    true,
@@ -148,8 +148,48 @@ func TestValidateKeys_WithWithdraw(t *testing.T) {
 		t.Fatalf("ValidateKeys() error: %v", err)
 	}
 
+	if perms.Withdraw {
+		t.Error("expected withdraw=false on testnet")
+	}
+}
+
+func TestValidateKeys_MainnetUsesAPIRestrictionsForWithdraw(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v3/account":
+			resp := accountResponse{
+				CanTrade:    true,
+				CanWithdraw: false,
+				Permissions: []string{"SPOT"},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(resp); err != nil {
+				t.Fatalf("failed to encode account response: %v", err)
+			}
+		case "/sapi/v1/account/apiRestrictions":
+			resp := apiRestrictionsResponse{
+				EnableWithdrawals:          true,
+				EnableSpotAndMarginTrading: true,
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(resp); err != nil {
+				t.Fatalf("failed to encode api restrictions response: %v", err)
+			}
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, false)
+	perms, err := client.ValidateKeys(context.Background(), "test-key", "test-secret")
+	if err != nil {
+		t.Fatalf("ValidateKeys() error: %v", err)
+	}
+
 	if !perms.Withdraw {
-		t.Error("expected withdraw=true")
+		t.Error("expected withdraw=true from api restrictions")
 	}
 }
 

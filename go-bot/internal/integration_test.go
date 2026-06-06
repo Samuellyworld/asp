@@ -217,7 +217,8 @@ func (m *mockWatchlistRepo) Reset(_ context.Context, userID int) error {
 		{UserID: userID, Symbol: "DOGE/USDT"},
 		{UserID: userID, Symbol: "AVAX/USDT"},
 		{UserID: userID, Symbol: "DOT/USDT"},
-		{UserID: userID, Symbol: "MATIC/USDT"},
+		{UserID: userID, Symbol: "POL/USDT"},
+		{UserID: userID, Symbol: "ZEC/USDT"},
 	}
 	return nil
 }
@@ -471,18 +472,18 @@ func TestIntegration_TelegramWatchlist(t *testing.T) {
 	}
 
 	items, _ := watchSvc.List(ctx, userID)
-	if len(items) != 10 {
-		t.Fatalf("expected 10 default symbols, got %d", len(items))
+	if len(items) != 11 {
+		t.Fatalf("expected 11 default symbols, got %d", len(items))
 	}
 
-	// add LINK/USDT (not in default 10)
+	// add LINK/USDT (not in defaults)
 	if err := watchSvc.Add(ctx, userID, "LINK/USDT"); err != nil {
 		t.Fatalf("add failed: %v", err)
 	}
 
 	items, _ = watchSvc.List(ctx, userID)
-	if len(items) != 11 {
-		t.Fatalf("expected 11 symbols after add, got %d", len(items))
+	if len(items) != 12 {
+		t.Fatalf("expected 12 symbols after add, got %d", len(items))
 	}
 
 	// verify LINK/USDT is in the list
@@ -571,8 +572,8 @@ func TestIntegration_WatchlistSyncAcrossPlatforms(t *testing.T) {
 	watchSvc.Add(ctx, userID, "LINK/USDT")
 
 	telegramItems, _ := watchSvc.List(ctx, userID)
-	if len(telegramItems) != 11 {
-		t.Fatalf("expected 11 symbols from telegram, got %d", len(telegramItems))
+	if len(telegramItems) != 12 {
+		t.Fatalf("expected 12 symbols from telegram, got %d", len(telegramItems))
 	}
 
 	// step 3: link discord
@@ -618,8 +619,8 @@ func TestIntegration_WatchlistSyncAcrossPlatforms(t *testing.T) {
 		t.Error("UNI/USDT added on discord not visible on telegram")
 	}
 
-	if len(telegramItems2) != 12 {
-		t.Errorf("expected 12 symbols total, got %d", len(telegramItems2))
+	if len(telegramItems2) != 13 {
+		t.Errorf("expected 13 symbols total, got %d", len(telegramItems2))
 	}
 }
 
@@ -703,7 +704,7 @@ func TestIntegration_DiscordLink_ThenWatchlist(t *testing.T) {
 		t.Errorf("unexpected embed title: %s", bot.embeds[0].Title)
 	}
 
-	// step 4: discord user calls /watchlist — should see all 11 symbols
+	// step 4: discord user calls /watchlist — should see all 12 symbols
 	bot2 := &mockDiscordBot{}
 	discordHandler2 := discord.NewHandler(bot2, userSvc, watchSvc, prefsSvc, exch)
 
@@ -718,8 +719,8 @@ func TestIntegration_DiscordLink_ThenWatchlist(t *testing.T) {
 
 	// verify the user id is the same by checking watchlist count
 	items, _ := watchSvc.List(ctx, userID)
-	if len(items) != 11 {
-		t.Errorf("expected 11 watchlist items, got %d", len(items))
+	if len(items) != 12 {
+		t.Errorf("expected 12 watchlist items, got %d", len(items))
 	}
 
 	// verify LINK/USDT visible in discord-side watchlist

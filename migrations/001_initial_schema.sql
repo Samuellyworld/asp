@@ -432,7 +432,7 @@ BEGIN
     END IF;
 END $$;
 
--- insert default top 10 watchlist symbols (reusable function)
+-- insert default watchlist symbols (reusable function)
 CREATE OR REPLACE FUNCTION populate_default_watchlist(p_user_id INTEGER)
 RETURNS void AS $$
 BEGIN
@@ -446,8 +446,11 @@ BEGIN
         (p_user_id, 'DOGE/USDT', 7),
         (p_user_id, 'AVAX/USDT', 8),
         (p_user_id, 'DOT/USDT', 9),
-        (p_user_id, 'MATIC/USDT', 10)
-    ON CONFLICT (user_id, symbol) DO NOTHING;
+        (p_user_id, 'POL/USDT', 10),
+        (p_user_id, 'ZEC/USDT', 11)
+    ON CONFLICT (user_id, symbol) DO UPDATE SET
+        is_active = TRUE,
+        priority = EXCLUDED.priority;
 END;
 $$ LANGUAGE plpgsql;
 

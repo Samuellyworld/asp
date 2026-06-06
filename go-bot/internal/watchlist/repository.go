@@ -20,7 +20,7 @@ type Item struct {
 	AddedAt  time.Time
 }
 
-//  handles watchlist database operations
+// handles watchlist database operations
 type Repository struct {
 	pool *pgxpool.Pool
 }
@@ -56,7 +56,7 @@ func (r *Repository) GetByUserID(ctx context.Context, userID int) ([]Item, error
 	return items, rows.Err()
 }
 
-//  adds a symbol to the user's watchlist
+// adds a symbol to the user's watchlist
 func (r *Repository) Add(ctx context.Context, userID int, symbol string) error {
 	// get the next priority number
 	var maxPriority int
@@ -122,7 +122,7 @@ func (r *Repository) Count(ctx context.Context, userID int) (int, error) {
 	return count, nil
 }
 
-//  removes all items and repopulates with the default top-10 watchlist
+// removes all items and repopulates with the default watchlist
 func (r *Repository) Reset(ctx context.Context, userID int) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {

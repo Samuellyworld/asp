@@ -97,7 +97,7 @@ func SlashCommands() []ApplicationCommand {
 		{Name: "watchremove", Description: "remove a symbol from your watchlist", Type: 1, Options: []ApplicationCommandOptionDef{
 			{Name: "symbol", Description: "symbol to remove (e.g. BTCUSDT)", Type: OptionString, Required: true},
 		}},
-		{Name: "watchreset", Description: "reset watchlist to default top-10", Type: 1},
+		{Name: "watchreset", Description: "reset watchlist to default symbols", Type: 1},
 		{Name: "settings", Description: "view all your preferences", Type: 1},
 		{Name: "set", Description: "change a preference", Type: 1, Options: []ApplicationCommandOptionDef{
 			{Name: "key", Description: "preference key (e.g. confidence, stoploss)", Type: OptionString, Required: true},
@@ -341,7 +341,7 @@ func (h *Handler) handleHelp(interaction *Interaction) {
 		Fields: []EmbedField{
 			{Name: "Account", Value: "`/start` - register or check in\n`/setup` - connect binance or bybit api keys\n`/status` - check your account status"},
 			{Name: "Exchange", Value: "`/price` - get current price\n`/balance` - show your balances\n`/portfolio` - portfolio overview\n`/orderbook` - show order book"},
-			{Name: "Watchlist", Value: "`/watchlist` - view your watchlist\n`/watchadd` - add a symbol\n`/watchremove` - remove a symbol\n`/watchreset` - reset to default top-10"},
+			{Name: "Watchlist", Value: "`/watchlist` - view your watchlist\n`/watchadd` - add a symbol\n`/watchremove` - remove a symbol\n`/watchreset` - reset to default symbols"},
 			{Name: "Preferences", Value: "`/settings` - view all preferences\n`/set` - change a preference"},
 		},
 	}
@@ -488,7 +488,7 @@ func (h *Handler) handleWatchlist(ctx context.Context, interaction *Interaction)
 	}
 
 	if len(items) == 0 {
-		h.respond(interaction, "your watchlist is empty.\n\nuse `/watchadd` to add one, or `/watchreset` for the default top-10.", nil, nil)
+		h.respond(interaction, "your watchlist is empty.\n\nuse `/watchadd` to add one, or `/watchreset` for the default symbols.", nil, nil)
 		return
 	}
 
@@ -580,7 +580,7 @@ func (h *Handler) handleWatchReset(interaction *Interaction) {
 		),
 	}
 
-	h.respond(interaction, "⚠️ **are you sure?**\n\nthis will replace your current watchlist with the default top-10 symbols.", nil, buttons)
+	h.respond(interaction, "⚠️ **are you sure?**\n\nthis will replace your current watchlist with the default symbols.", nil, buttons)
 }
 
 func (h *Handler) handleSettings(ctx context.Context, interaction *Interaction) {
@@ -931,7 +931,7 @@ func (h *Handler) componentWatchResetConfirm(ctx context.Context, interaction *I
 		return
 	}
 
-	h.updateMessage(interaction, "✅ watchlist reset to default top-10 symbols.\n\nuse `/watchlist` to see them.", nil, nil)
+	h.updateMessage(interaction, "✅ watchlist reset to default symbols.\n\nuse `/watchlist` to see them.", nil, nil)
 }
 
 // --- response helpers ---

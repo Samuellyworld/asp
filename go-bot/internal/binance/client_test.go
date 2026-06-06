@@ -163,14 +163,18 @@ func TestValidateKeys_MainnetUsesAPIRestrictionsForWithdraw(t *testing.T) {
 				Permissions: []string{"SPOT"},
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
+			if err := json.NewEncoder(w).Encode(resp); err != nil {
+				t.Fatalf("failed to encode account response: %v", err)
+			}
 		case "/sapi/v1/account/apiRestrictions":
 			resp := apiRestrictionsResponse{
 				EnableWithdrawals:          true,
 				EnableSpotAndMarginTrading: true,
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(resp)
+			if err := json.NewEncoder(w).Encode(resp); err != nil {
+				t.Fatalf("failed to encode api restrictions response: %v", err)
+			}
 		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)

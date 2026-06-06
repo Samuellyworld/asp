@@ -128,6 +128,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set lowercase image repository
+        run: echo "IMAGE_REPO=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
       - name: Build & Push Go Bot
         uses: docker/build-push-action@v5
         with:
@@ -135,8 +138,8 @@ jobs:
           file: ./go-bot/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/go-bot:${{ github.sha }}
-            ghcr.io/${{ github.repository }}/go-bot:latest
+            ${{ env.IMAGE_REPO }}/go-bot:${{ github.sha }}
+            ${{ env.IMAGE_REPO }}/go-bot:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -147,8 +150,8 @@ jobs:
           file: ./rust-engine/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/rust-engine:${{ github.sha }}
-            ghcr.io/${{ github.repository }}/rust-engine:latest
+            ${{ env.IMAGE_REPO }}/rust-engine:${{ github.sha }}
+            ${{ env.IMAGE_REPO }}/rust-engine:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -159,8 +162,8 @@ jobs:
           file: ./ml-service/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}/ml-service:${{ github.sha }}
-            ghcr.io/${{ github.repository }}/ml-service:latest
+            ${{ env.IMAGE_REPO }}/ml-service:${{ github.sha }}
+            ${{ env.IMAGE_REPO }}/ml-service:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

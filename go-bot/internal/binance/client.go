@@ -35,6 +35,14 @@ type accountResponse struct {
 	Permissions []string `json:"permissions"`
 }
 
+// describes the API-key-specific permissions returned
+// by Binance's wallet API on mainnet.
+type apiRestrictionsResponse struct {
+	EnableWithdrawals          bool `json:"enableWithdrawals"`
+	EnableFutures              bool `json:"enableFutures"`
+	EnableSpotAndMarginTrading bool `json:"enableSpotAndMarginTrading"`
+}
+
 // error response from binance api
 type apiError struct {
 	Code    int    `json:"code"`
@@ -73,11 +81,60 @@ func (c *Client) ValidateKeys(ctx context.Context, apiKey, apiSecret string) (*A
 		return nil, fmt.Errorf("rate limit: %w", err)
 	}
 
+	body, err := c.signedGET(ctx, apiKey, apiSecret, "/api/v3/account")
+	if err != nil {
+		return nil, err
+	}
+
+	var account accountResponse
+	if err := json.Unmarshal(body, &account); err != nil {
+		return nil, fmt.Errorf("failed to parse account response: %w", err)
+	}
+
+	perms := &APIPermissions{
+		Spot: account.CanTrade,
+	}
+
+	// check for futures permission in the permissions array
+	for _, p := range account.Permissions {
+		if p == "FUTURES" {
+			perms.Futures = true
+			break
+		}
+	}
+
+	if !c.testnet {
+		restrictions, err := c.getAPIRestrictions(ctx, apiKey, apiSecret)
+		if err != nil {
+			return nil, err
+		}
+		perms.Withdraw = restrictions.EnableWithdrawals
+		perms.Futures = perms.Futures || restrictions.EnableFutures
+		perms.Spot = perms.Spot || restrictions.EnableSpotAndMarginTrading
+	}
+
+	return perms, nil
+}
+
+func (c *Client) getAPIRestrictions(ctx context.Context, apiKey, apiSecret string) (*apiRestrictionsResponse, error) {
+	body, err := c.signedGET(ctx, apiKey, apiSecret, "/sapi/v1/account/apiRestrictions")
+	if err != nil {
+		return nil, fmt.Errorf("failed to verify api key permissions: %w", err)
+	}
+
+	var restrictions apiRestrictionsResponse
+	if err := json.Unmarshal(body, &restrictions); err != nil {
+		return nil, fmt.Errorf("failed to parse api key permissions response: %w", err)
+	}
+	return &restrictions, nil
+}
+
+func (c *Client) signedGET(ctx context.Context, apiKey, apiSecret, path string) ([]byte, error) {
 	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
 	queryString := "timestamp=" + timestamp
 	signature := sign(queryString, apiSecret)
 
-	url := fmt.Sprintf("%s/api/v3/account?%s&signature=%s", c.baseURL, queryString, signature)
+	url := fmt.Sprintf("%s%s?%s&signature=%s", c.baseURL, path, queryString, signature)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -106,23 +163,5 @@ func (c *Client) ValidateKeys(ctx context.Context, apiKey, apiSecret string) (*A
 		return nil, fmt.Errorf("binance api returned status %d", resp.StatusCode)
 	}
 
-	var account accountResponse
-	if err := json.Unmarshal(body, &account); err != nil {
-		return nil, fmt.Errorf("failed to parse account response: %w", err)
-	}
-
-	perms := &APIPermissions{
-		Spot:     account.CanTrade,
-		Withdraw: account.CanWithdraw,
-	}
-
-	// check for futures permission in the permissions array
-	for _, p := range account.Permissions {
-		if p == "FUTURES" {
-			perms.Futures = true
-			break
-		}
-	}
-
-	return perms, nil
+	return body, nil
 }

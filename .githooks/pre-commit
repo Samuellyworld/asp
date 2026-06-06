@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if git diff --cached --name-only --diff-filter=ACMR | grep -q '^go-bot/.*\.go$'; then
+  echo "Running Go lint for staged Go changes..."
+  ./scripts/lint_go_ci.sh
+fi

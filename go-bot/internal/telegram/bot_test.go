@@ -3,6 +3,7 @@ package telegram
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestParseCommand(t *testing.T) {
@@ -152,10 +153,45 @@ func TestSplitTelegramMessage(t *testing.T) {
 	}
 }
 
+func TestSplitTelegramMessagePreservesUTF8(t *testing.T) {
+	text := strings.Repeat("✅", maxTelegramMessageLen/3+10)
+	parts := splitTelegramMessage(text, maxTelegramMessageLen)
+
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 parts, got %d", len(parts))
+	}
+	for i, part := range parts {
+		if !utf8.ValidString(part) {
+			t.Fatalf("part %d is invalid utf-8", i)
+		}
+		if len(part) > maxTelegramMessageLen {
+			t.Fatalf("part %d length = %d, want <= %d", i, len(part), maxTelegramMessageLen)
+		}
+	}
+	if strings.Join(parts, "") != text {
+		t.Fatal("split parts did not preserve utf-8 message text")
+	}
+}
+
 func TestTruncateTelegramMessage(t *testing.T) {
 	text := strings.Repeat("a", maxTelegramMessageLen+10)
 	got := truncateTelegramMessage(text, maxTelegramMessageLen)
 
+	if len(got) > maxTelegramMessageLen {
+		t.Fatalf("length = %d, want <= %d", len(got), maxTelegramMessageLen)
+	}
+	if !strings.HasSuffix(got, "[truncated]") {
+		t.Fatalf("expected truncation marker, got %q", got[len(got)-20:])
+	}
+}
+
+func TestTruncateTelegramMessagePreservesUTF8(t *testing.T) {
+	text := strings.Repeat("🚀", maxTelegramMessageLen/4+10)
+	got := truncateTelegramMessage(text, maxTelegramMessageLen)
+
+	if !utf8.ValidString(got) {
+		t.Fatal("truncated message is invalid utf-8")
+	}
 	if len(got) > maxTelegramMessageLen {
 		t.Fatalf("length = %d, want <= %d", len(got), maxTelegramMessageLen)
 	}

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -170,9 +171,9 @@ func truncateTelegramMessage(text string, maxLen int) string {
 	}
 	const suffix = "\n\n[truncated]"
 	if maxLen <= len(suffix) {
-		return text[:maxLen]
+		return text[:utf8SafeCut(text, maxLen)]
 	}
-	return text[:maxLen-len(suffix)] + suffix
+	return text[:utf8SafeCut(text, maxLen-len(suffix))] + suffix
 }
 
 func splitTelegramMessage(text string, maxLen int) []string {
@@ -187,11 +188,25 @@ func splitTelegramMessage(text string, maxLen int) []string {
 		if cut <= 0 {
 			cut = maxLen
 		}
+		cut = utf8SafeCut(remaining, cut)
 		parts = append(parts, remaining[:cut])
 		remaining = strings.TrimLeft(remaining[cut:], "\n")
 	}
 	parts = append(parts, remaining)
 	return parts
+}
+
+func utf8SafeCut(text string, cut int) int {
+	if cut >= len(text) {
+		return len(text)
+	}
+	if cut <= 0 {
+		return 0
+	}
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return cut
 }
 
 // edits the text (and optionally keyboard) of an existing message

@@ -16,7 +16,9 @@ BEGIN
         (p_user_id, 'DOT/USDT', 9),
         (p_user_id, 'POL/USDT', 10),
         (p_user_id, 'ZEC/USDT', 11)
-    ON CONFLICT (user_id, symbol) DO NOTHING;
+    ON CONFLICT (user_id, symbol) DO UPDATE SET
+        is_active = TRUE,
+        priority = EXCLUDED.priority;
 END;
 $$ LANGUAGE plpgsql;
 

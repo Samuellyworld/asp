@@ -1,4 +1,4 @@
--- Add ZEC/USDT to the default watchlist for new and existing active users.
+-- Ensure /watchreset reactivates existing default rows instead of leaving them inactive.
 
 CREATE OR REPLACE FUNCTION populate_default_watchlist(p_user_id INTEGER)
 RETURNS void AS $$
@@ -20,11 +20,3 @@ BEGIN
         priority = EXCLUDED.priority;
 END;
 $$ LANGUAGE plpgsql;
-
-INSERT INTO watchlists (user_id, symbol, priority, is_active)
-SELECT id, 'ZEC/USDT', 11, TRUE
-FROM users
-WHERE is_active = TRUE
-ON CONFLICT (user_id, symbol) DO UPDATE SET
-    is_active = TRUE,
-    priority = EXCLUDED.priority;

@@ -143,8 +143,8 @@ func (h *Handler) handlePositions(ctx context.Context, interaction *Interaction)
 				if pnl < 0 {
 					sign = "-"
 				}
-				text.WriteString(fmt.Sprintf("• %s: %s$%.2f (%s%.2f%%)\n",
-					pos.Symbol, sign, abs(pnl), sign, abs(pct)))
+				fmt.Fprintf(&text, "• %s: %s$%.2f (%s%.2f%%)\n",
+					pos.Symbol, sign, abs(pnl), sign, abs(pct))
 			}
 			text.WriteString("\n")
 		}
@@ -156,10 +156,10 @@ func (h *Handler) handlePositions(ctx context.Context, interaction *Interaction)
 			hasPositions = true
 			text.WriteString("**Live Positions**\n\n")
 			for _, pos := range positions {
-				text.WriteString(fmt.Sprintf("• %s | Entry: $%.2f | Size: $%.2f\n",
-					pos.Symbol, pos.EntryPrice, pos.PositionSize))
-				text.WriteString(fmt.Sprintf("  SL: $%.2f | TP: $%.2f\n",
-					pos.StopLoss, pos.TakeProfit))
+				fmt.Fprintf(&text, "• %s | Entry: $%.2f | Size: $%.2f\n",
+					pos.Symbol, pos.EntryPrice, pos.PositionSize)
+				fmt.Fprintf(&text, "  SL: $%.2f | TP: $%.2f\n",
+					pos.StopLoss, pos.TakeProfit)
 			}
 		}
 	}
@@ -308,22 +308,22 @@ func (h *Handler) componentOppApprove(ctx context.Context, interaction *Interact
 			if !strings.Contains(err.Error(), "CRITICAL") {
 				h.trading.OppManager.FailExecution(oppID, userID)
 			}
-			h.bot.SendMessage(interaction.ChannelID, fmt.Sprintf("live execution failed: %v", err))
+			_ = h.bot.SendMessage(interaction.ChannelID, fmt.Sprintf("live execution failed: %v", err))
 			return
 		}
 		h.trading.OppManager.CompleteExecution(oppID, userID)
 		h.updateMessage(interaction, opportunity.FormatApprovedMessage(opp), nil, nil)
-		h.bot.SendMessage(interaction.ChannelID, livetrading.FormatTradeExecuted(pos))
+		_ = h.bot.SendMessage(interaction.ChannelID, livetrading.FormatTradeExecuted(pos))
 	} else if h.trading.PaperExecutor != nil {
 		pos, err := h.trading.PaperExecutor.Execute(opp)
 		if err != nil {
 			h.trading.OppManager.FailExecution(oppID, userID)
-			h.bot.SendMessage(interaction.ChannelID, fmt.Sprintf("paper execution failed: %v", err))
+			_ = h.bot.SendMessage(interaction.ChannelID, fmt.Sprintf("paper execution failed: %v", err))
 			return
 		}
 		h.trading.OppManager.CompleteExecution(oppID, userID)
 		h.updateMessage(interaction, opportunity.FormatApprovedMessage(opp), nil, nil)
-		h.bot.SendMessage(interaction.ChannelID, papertrading.FormatTradeExecuted(pos))
+		_ = h.bot.SendMessage(interaction.ChannelID, papertrading.FormatTradeExecuted(pos))
 	} else {
 		h.trading.OppManager.CompleteExecution(oppID, userID)
 		h.updateMessage(interaction, opportunity.FormatApprovedMessage(opp), nil, nil)

@@ -113,7 +113,9 @@ func SlashCommands() []ApplicationCommand {
 func (h *Handler) HandleInteraction(ctx context.Context, interaction *Interaction) {
 	switch interaction.Type {
 	case InteractionPing:
-		h.bot.RespondInteraction(interaction.ID, interaction.Token, &InteractionResponse{Type: ResponsePong})
+		if err := h.bot.RespondInteraction(interaction.ID, interaction.Token, &InteractionResponse{Type: ResponsePong}); err != nil {
+			return
+		}
 	case InteractionCommand:
 		h.handleCommand(ctx, interaction)
 	case InteractionComponent:

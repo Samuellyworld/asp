@@ -139,3 +139,13 @@ class TestPricePredictor:
         result = self.predictor._statistical_predict(candles, "4h")
         assert "direction" in result
         assert 0.4 <= result["confidence"] <= 0.75
+
+    def test_explicit_model_dir_overrides_env(self, monkeypatch):
+        monkeypatch.setenv("MODEL_PATH", "env_models")
+        predictor = PricePredictor(model_dir="test_models")
+        assert predictor.model_dir == "test_models"
+
+    def test_default_model_dir_uses_env(self, monkeypatch):
+        monkeypatch.setenv("MODEL_PATH", "env_models")
+        predictor = PricePredictor()
+        assert predictor.model_dir == "env_models"

@@ -164,6 +164,10 @@ func (h *Handler) HandleUpdate(ctx context.Context, update Update) {
 		return
 	}
 
+	if h.handleLeverageConfirmationText(ctx, telegramID, chatID, msg.Text) {
+		return
+	}
+
 	// check for commands
 	command, args := ParseCommand(msg.Text)
 	switch command {
@@ -581,7 +585,7 @@ func (h *Handler) handleWatchAdd(ctx context.Context, msg *Message, telegramID i
 		return
 	}
 
-	h.send(chatID, fmt.Sprintf("✅ added to watchlist. use /watchlist to see your list."))
+	h.send(chatID, "✅ added to watchlist. use /watchlist to see your list.")
 }
 
 func (h *Handler) handleWatchRemove(ctx context.Context, msg *Message, telegramID int64, chatID int64) {

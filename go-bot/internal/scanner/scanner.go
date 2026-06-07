@@ -399,6 +399,9 @@ func (s *Scanner) sendNotifications(u *user.User, result *pipeline.Result) {
 			oppID := oppManager.Create(u.ID, result.Symbol, result, "telegram")
 			header += "\n\n⏰ Limited-time opportunity"
 			buttons := opportunity.TelegramButtons(oppID)
+			if u.LeverageEnabled {
+				buttons = opportunity.TelegramLeverageButtons(oppID)
+			}
 			if err := s.notifier.NotifyTelegramWithButtons(*u.TelegramID, header, buttons); err != nil {
 				slog.Error("scanner: telegram notify failed", "user_id", u.ID, "error", err)
 			}
@@ -415,6 +418,9 @@ func (s *Scanner) sendNotifications(u *user.User, result *pipeline.Result) {
 		if oppManager != nil {
 			oppID := oppManager.Create(u.ID, result.Symbol, result, "discord")
 			buttons := opportunity.DiscordButtons(oppID)
+			if u.LeverageEnabled {
+				buttons = opportunity.DiscordLeverageButtons(oppID)
+			}
 			if err := s.notifier.NotifyDiscordWithButtons(channelID, title, desc, fields, color, buttons); err != nil {
 				slog.Error("scanner: discord notify failed", "user_id", u.ID, "error", err)
 			}

@@ -62,11 +62,15 @@ def generate_training_data(n_samples=5000, seq_length=30):
 
 def db_connect_kwargs():
     """returns postgres connection settings from compose-compatible env vars"""
+    password = os.getenv("DATABASE_PASSWORD")
+    if not password:
+        raise RuntimeError("DATABASE_PASSWORD must be set to load candles from the database")
+
     return {
         "host": os.getenv("DATABASE_HOST", "postgres"),
         "port": int(os.getenv("DATABASE_PORT", "5432")),
         "user": os.getenv("DATABASE_USER", "trading_bot"),
-        "password": os.getenv("DATABASE_PASSWORD", "trading_bot_secret"),
+        "password": password,
         "dbname": os.getenv("DATABASE_NAME", "trading_bot"),
     }
 
@@ -141,10 +145,15 @@ def feature_engineer(candles):
 
 
 # %% create sequences for lstm
-def create_sequences(features, closes, seq_length=30, pred_horizon=1):
+def create_sequences(features, closes, seq_length=30, pred_horizon=1, min_target_index=None, max_target_index=None):
     """creates input sequences and target labels for training"""
     X, y = [], []
     for i in range(seq_length, len(features) - pred_horizon):
+        if min_target_index is not None and i < min_target_index:
+            continue
+        if max_target_index is not None and i >= max_target_index:
+            continue
+
         X.append(features[i - seq_length:i])
         # target: direction and magnitude of next candle
         future_return = (closes[i + pred_horizon] - closes[i]) / closes[i] * 100
@@ -155,38 +164,73 @@ def create_sequences(features, closes, seq_length=30, pred_horizon=1):
     return np.array(X), np.array(y)
 
 
-def prepare_dataset(candles_by_symbol, seq_length=30, pred_horizon=1):
-    """engineers, normalizes, and sequences candle groups without crossing symbols"""
+def prepare_dataset(candles_by_symbol, seq_length=30, pred_horizon=1, train_ratio=0.8):
+    """engineers, normalizes, and sequences candle groups without crossing symbols.
+
+    The chronological train/validation split is done per symbol before computing
+    scaler stats so validation candles do not leak into training normalization.
+    """
     engineered = {}
-    all_features = []
+    train_features = []
+    split_by_symbol = {}
 
     for symbol, candles in candles_by_symbol.items():
+        split = int(len(candles) * train_ratio)
+        split = min(max(split, seq_length + pred_horizon), len(candles) - pred_horizon)
+        if split <= seq_length or split >= len(candles):
+            continue
+
         features, closes = feature_engineer(candles)
         engineered[symbol] = (features, closes)
-        all_features.append(features)
 
-    if not all_features:
+        scaler_features, _ = feature_engineer(candles[:split])
+        split_by_symbol[symbol] = split
+        train_features.append(scaler_features)
+
+    if not train_features:
         raise ValueError("no candle groups available for training")
 
-    stacked = np.vstack(all_features)
+    stacked = np.vstack(train_features)
     mean = stacked.mean(axis=0)
     std = stacked.std(axis=0)
     std[std == 0] = 1
 
-    X_parts, y_parts = [], []
-    for features, closes in engineered.values():
+    X_train_parts, y_train_parts, X_val_parts, y_val_parts = [], [], [], []
+    for symbol, (features, closes) in engineered.items():
+        split = split_by_symbol.get(symbol)
+        if split is None:
+            continue
+
         normalized = (features - mean) / std
-        X_sym, y_sym = create_sequences(normalized, closes, seq_length, pred_horizon)
-        if len(X_sym) > 0:
-            X_parts.append(X_sym)
-            y_parts.append(y_sym)
+        X_train_sym, y_train_sym = create_sequences(
+            normalized,
+            closes,
+            seq_length,
+            pred_horizon,
+            max_target_index=split - pred_horizon,
+        )
+        X_val_sym, y_val_sym = create_sequences(
+            normalized,
+            closes,
+            seq_length,
+            pred_horizon,
+            min_target_index=split,
+        )
+        if len(X_train_sym) > 0:
+            X_train_parts.append(X_train_sym)
+            y_train_parts.append(y_train_sym)
+        if len(X_val_sym) > 0:
+            X_val_parts.append(X_val_sym)
+            y_val_parts.append(y_val_sym)
 
-    if not X_parts:
-        raise ValueError("not enough candles to create training sequences")
+    if not X_train_parts or not X_val_parts:
+        raise ValueError("not enough candles to create training and validation sequences")
 
-    X = np.concatenate(X_parts, axis=0)
-    y = np.concatenate(y_parts, axis=0)
-    return X, y, mean, std
+    X_train = np.concatenate(X_train_parts, axis=0)
+    y_train = np.concatenate(y_train_parts, axis=0)
+    X_val = np.concatenate(X_val_parts, axis=0)
+    y_val = np.concatenate(y_val_parts, axis=0)
+    return X_train, y_train, X_val, y_val, mean, std
 
 
 # %% train the model
@@ -289,16 +333,7 @@ def main():
         candles_by_symbol = {"SYNTH/USDT": generate_training_data(n_samples=5000)}
 
     print("engineering features and creating sequences...")
-    X, y, mean, std = prepare_dataset(candles_by_symbol)
-
-    # train/val split (80/20)
-    rng = np.random.default_rng(42)
-    order = rng.permutation(len(X))
-    X = X[order]
-    y = y[order]
-    split = int(len(X) * 0.8)
-    X_train, X_val = X[:split], X[split:]
-    y_train, y_val = y[:split], y[split:]
+    X_train, y_train, X_val, y_val, mean, std = prepare_dataset(candles_by_symbol)
 
     print(f"training set: {len(X_train)} samples")
     print(f"validation set: {len(X_val)} samples")

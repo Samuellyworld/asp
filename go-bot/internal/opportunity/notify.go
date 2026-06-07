@@ -75,6 +75,28 @@ func DiscordButtons(oppID string) []ButtonData {
 	}
 }
 
+// returns telegram buttons for choosing a futures leverage trade.
+func TelegramLeverageButtons(oppID string) [][]ButtonData {
+	buttons := LeverageButtons(oppID)
+	buttons = append(buttons, []ButtonData{
+		{Text: "❌ Reject", Data: "opp_reject:" + oppID},
+	})
+	return buttons
+}
+
+// returns discord buttons for choosing a futures leverage trade.
+func DiscordLeverageButtons(oppID string) []ButtonData {
+	return []ButtonData{
+		{Text: "3x Long", Data: fmt.Sprintf("lev_long_3:%s", oppID), Style: ButtonStyleSuccess},
+		{Text: "5x Long", Data: fmt.Sprintf("lev_long_5:%s", oppID), Style: ButtonStyleSuccess},
+		{Text: "10x Long", Data: fmt.Sprintf("lev_long_10:%s", oppID), Style: ButtonStyleSuccess},
+		{Text: "3x Short", Data: fmt.Sprintf("lev_short_3:%s", oppID), Style: ButtonStyleDanger},
+		{Text: "5x Short", Data: fmt.Sprintf("lev_short_5:%s", oppID), Style: ButtonStyleDanger},
+		{Text: "10x Short", Data: fmt.Sprintf("lev_short_10:%s", oppID), Style: ButtonStyleDanger},
+		{Text: "❌ Reject", Data: "opp_reject:" + oppID, Style: ButtonStyleSecondary},
+	}
+}
+
 // generic button data for both platforms
 type ButtonData struct {
 	Text  string

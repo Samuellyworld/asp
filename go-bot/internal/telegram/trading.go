@@ -27,9 +27,10 @@ type TradingDeps struct {
 	SafetyConfig  livetrading.SafetyConfig
 
 	// leverage trading
-	LevPaperExecutor *leverage.PaperExecutor
-	LevLiveExecutor  *leverage.LiveExecutor
-	LevMonitor       *leverage.Monitor
+	LevPaperExecutor       *leverage.PaperExecutor
+	LevLiveExecutor        *leverage.LiveExecutor
+	LevMonitor             *leverage.Monitor
+	FuturesBalanceProvider leverage.FuturesBalanceProvider
 
 	// DCA execution
 	DCAExecutor *dca.Executor
@@ -55,6 +56,8 @@ func (h *Handler) handleTradingCommand(ctx context.Context, command, args string
 		h.handleScan(chatID)
 	case "leverage":
 		return h.handleLeverageCommand(ctx, args, telegramID, chatID)
+	case "futuresbalance", "fbal":
+		h.handleFuturesBalance(ctx, telegramID, chatID)
 	case "dca":
 		h.handleDCA(ctx, args, telegramID, chatID)
 	default:
@@ -152,8 +155,8 @@ func (h *Handler) handlePositions(ctx context.Context, telegramID int64, chatID 
 				if pnl < 0 {
 					sign = "-"
 				}
-				text.WriteString(fmt.Sprintf("• %s: %s$%.2f (%s%.2f%%)\n",
-					pos.Symbol, sign, math.Abs(pnl), sign, math.Abs(pct)))
+				fmt.Fprintf(&text, "• %s: %s$%.2f (%s%.2f%%)\n",
+					pos.Symbol, sign, math.Abs(pnl), sign, math.Abs(pct))
 			}
 			text.WriteString("\n")
 		}
@@ -166,10 +169,10 @@ func (h *Handler) handlePositions(ctx context.Context, telegramID int64, chatID 
 			hasPositions = true
 			text.WriteString("🔴 *Live Positions*\n\n")
 			for _, pos := range positions {
-				text.WriteString(fmt.Sprintf("• %s | Entry: $%.2f | Size: $%.2f\n",
-					pos.Symbol, pos.EntryPrice, pos.PositionSize))
-				text.WriteString(fmt.Sprintf("  SL: $%.2f | TP: $%.2f\n",
-					pos.StopLoss, pos.TakeProfit))
+				fmt.Fprintf(&text, "• %s | Entry: $%.2f | Size: $%.2f\n",
+					pos.Symbol, pos.EntryPrice, pos.PositionSize)
+				fmt.Fprintf(&text, "  SL: $%.2f | TP: $%.2f\n",
+					pos.StopLoss, pos.TakeProfit)
 			}
 		}
 	}
@@ -294,6 +297,28 @@ func (h *Handler) handleEmergencyStop(ctx context.Context, telegramID int64, cha
 // shows scanner status
 func (h *Handler) handleScan(chatID int64) {
 	h.send(chatID, "🔍 scanner is running. opportunities will be sent when detected.")
+}
+
+// shows the user's Binance USD-M futures USDT balance.
+func (h *Handler) handleFuturesBalance(ctx context.Context, telegramID int64, chatID int64) {
+	if h.trading == nil || h.trading.FuturesBalanceProvider == nil {
+		h.send(chatID, "futures balance is not available.")
+		return
+	}
+
+	result, err := h.userSvc.Register(ctx, telegramID, "")
+	if err != nil {
+		h.send(chatID, "account error.")
+		return
+	}
+
+	balance, err := h.trading.FuturesBalanceProvider.GetFuturesBalance(ctx, result.User.ID, "USDT")
+	if err != nil {
+		h.send(chatID, fmt.Sprintf("❌ failed to get futures balance: %v", err))
+		return
+	}
+
+	h.send(chatID, fmt.Sprintf("⚡ *Futures Balance*\n\n• *USDT available*: `%s`", formatBalance(balance)))
 }
 
 // --- callback handlers ---

@@ -51,7 +51,9 @@ func (g *Gateway) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to connect to gateway: %w", err)
 	}
 	g.conn = conn
-	defer g.conn.Close()
+	defer func() {
+		_ = g.conn.Close()
+	}()
 
 	// read hello
 	hello, err := g.readHello()
@@ -77,9 +79,9 @@ func (g *Gateway) Close() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.conn != nil {
-		g.conn.WriteMessage(websocket.CloseMessage,
+		_ = g.conn.WriteMessage(websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-		g.conn.Close()
+		_ = g.conn.Close()
 	}
 }
 

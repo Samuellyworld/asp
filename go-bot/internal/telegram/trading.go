@@ -276,6 +276,38 @@ func (h *Handler) handleLiveMode(ctx context.Context, args string, telegramID in
 	}
 }
 
+// handles the explicit live trading risk acknowledgement phrase.
+func (h *Handler) handleLiveConfirmationText(ctx context.Context, telegramID int64, chatID int64, text string) bool {
+	if h.trading == nil || h.trading.Confirm == nil {
+		return false
+	}
+
+	input := strings.TrimSpace(text)
+	if input != h.trading.Confirm.Phrase() {
+		return false
+	}
+
+	result, err := h.userSvc.Register(ctx, telegramID, "")
+	if err != nil {
+		h.send(chatID, "account error.")
+		return true
+	}
+	userID := result.User.ID
+
+	exchangeName, err := h.userSvc.GetPrimaryCredentialExchange(ctx, userID)
+	if err == nil && exchangeName != "binance" {
+		h.send(chatID, livetrading.FormatUnsupportedSpotExchange(exchangeName))
+		return true
+	}
+
+	if h.trading.Confirm.Confirm(userID, input) {
+		h.send(chatID, livetrading.FormatConfirmSuccess(h.trading.SafetyConfig))
+	} else {
+		h.send(chatID, fmt.Sprintf("incorrect phrase. type exactly: %s", h.trading.Confirm.Phrase()))
+	}
+	return true
+}
+
 // closes all live positions for the user
 func (h *Handler) handleEmergencyStop(ctx context.Context, telegramID int64, chatID int64) {
 	if h.trading == nil || h.trading.Emergency == nil {

@@ -167,6 +167,9 @@ func (h *Handler) HandleUpdate(ctx context.Context, update Update) {
 	if h.handleLeverageConfirmationText(ctx, telegramID, chatID, msg.Text) {
 		return
 	}
+	if h.handleLiveConfirmationText(ctx, telegramID, chatID, msg.Text) {
+		return
+	}
 
 	// check for commands
 	command, args := ParseCommand(msg.Text)

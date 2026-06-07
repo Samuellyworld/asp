@@ -32,6 +32,10 @@ type FuturesOrderClient interface {
 	GetPositions(ctx context.Context, apiKey, apiSecret string) ([]binance.FuturesPosition, error)
 }
 
+type oneWayPositionModeSetter interface {
+	SetOneWayPositionMode(ctx context.Context, apiKey, apiSecret string) error
+}
+
 // executes real leveraged futures trades on binance
 type LiveExecutor struct {
 	mu        sync.RWMutex
@@ -125,6 +129,9 @@ func (e *LiveExecutor) OpenPosition(
 	if markPrice <= 0 {
 		return nil, fmt.Errorf("invalid mark price %.8f for %s", markPrice, symbol)
 	}
+	if err := validateProtectionPrices(side, markPrice, stopLoss, takeProfit); err != nil {
+		return nil, err
+	}
 
 	// check circuit breaker before executing
 	if e.breaker != nil {
@@ -145,6 +152,12 @@ func (e *LiveExecutor) OpenPosition(
 	apiKey, apiSecret, err := e.keys.DecryptKeys(userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt keys: %w", err)
+	}
+
+	if setter, ok := e.futures.(oneWayPositionModeSetter); ok {
+		if err := setter.SetOneWayPositionMode(ctx, apiKey, apiSecret); err != nil {
+			return nil, fmt.Errorf("failed to set one-way futures mode: %w", err)
+		}
 	}
 
 	// configure leverage on exchange
@@ -408,6 +421,28 @@ func (e *LiveExecutor) notifyAlert(alert opsalert.Alert) {
 	if err := e.alerter.Notify(context.Background(), alert); err != nil {
 		slog.Warn("failed to send leverage alert", "key", alert.Key, "error", err)
 	}
+}
+
+func validateProtectionPrices(side PositionSide, markPrice, stopLoss, takeProfit float64) error {
+	switch side {
+	case SideLong:
+		if stopLoss > 0 && stopLoss >= markPrice {
+			return fmt.Errorf("invalid long stop loss %.8f: must be below mark price %.8f", stopLoss, markPrice)
+		}
+		if takeProfit > 0 && takeProfit <= markPrice {
+			return fmt.Errorf("invalid long take profit %.8f: must be above mark price %.8f", takeProfit, markPrice)
+		}
+	case SideShort:
+		if stopLoss > 0 && stopLoss <= markPrice {
+			return fmt.Errorf("invalid short stop loss %.8f: must be above mark price %.8f", stopLoss, markPrice)
+		}
+		if takeProfit > 0 && takeProfit >= markPrice {
+			return fmt.Errorf("invalid short take profit %.8f: must be below mark price %.8f", takeProfit, markPrice)
+		}
+	default:
+		return fmt.Errorf("invalid futures side %q", side)
+	}
+	return nil
 }
 
 // closes a live leveraged position by canceling sl/tp and placing a closing order.

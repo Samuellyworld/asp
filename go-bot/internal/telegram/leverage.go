@@ -156,8 +156,12 @@ func (h *Handler) handleLeverageSelection(ctx context.Context, cb *CallbackQuery
 				h.send(cb.Message.Chat.ID, "❌ live futures execution failed: no available USDT futures balance")
 				return true
 			}
-			if margin > balance {
-				margin = balance
+			margin = leverage.CapMarginToAvailableBalance(margin, balance)
+			if margin <= 0 {
+				h.trading.OppManager.FailExecution(oppID, result.User.ID)
+				h.answerCallback(cb.ID, "insufficient futures balance")
+				h.send(cb.Message.Chat.ID, "❌ live futures execution failed: no usable USDT futures balance after exchange buffer")
+				return true
 			}
 		}
 

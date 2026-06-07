@@ -21,19 +21,21 @@ const (
 
 // known endpoint weights (binance assigns different weights to different endpoints)
 var endpointWeights = map[string]int{
-	"/api/v3/account":       20,
-	"/api/v3/order":         1,
-	"/api/v3/openOrders":    6,
-	"/api/v3/ticker/24hr":   2,
-	"/api/v3/depth":         5,
-	"/api/v3/klines":        2,
-	"/fapi/v1/order":        1,
-	"/fapi/v1/leverage":     1,
-	"/fapi/v1/marginType":   1,
-	"/fapi/v2/positionRisk": 5,
-	"/fapi/v2/balance":      5,
-	"/fapi/v1/premiumIndex": 1,
-	"/fapi/v1/fundingRate":  1,
+	"/api/v3/account":            20,
+	"/api/v3/order":              1,
+	"/api/v3/openOrders":         6,
+	"/api/v3/ticker/24hr":        2,
+	"/api/v3/depth":              5,
+	"/api/v3/klines":             2,
+	"/fapi/v1/order":             1,
+	"/fapi/v1/algoOrder":         1,
+	"/fapi/v1/leverage":          1,
+	"/fapi/v1/marginType":        1,
+	"/fapi/v1/positionSide/dual": 1,
+	"/fapi/v2/positionRisk":      5,
+	"/fapi/v2/balance":           5,
+	"/fapi/v1/premiumIndex":      1,
+	"/fapi/v1/fundingRate":       1,
 }
 
 // RateLimiter tracks consumed weight and blocks when the budget is exhausted

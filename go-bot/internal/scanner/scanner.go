@@ -136,7 +136,15 @@ func (s *Scanner) SetLogger(logger DecisionLogger) {
 
 // SetOpportunityManager enables actionable approval buttons for scanner alerts.
 func (s *Scanner) SetOpportunityManager(manager *opportunity.Manager) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.oppManager = manager
+}
+
+func (s *Scanner) opportunityManager() *opportunity.Manager {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.oppManager
 }
 
 // starts the scanner loop in a goroutine. returns immediately.
@@ -379,15 +387,17 @@ func (s *Scanner) logDecision(ctx context.Context, userID int, symbol string, re
 
 // sends formatted notifications to the user's connected platforms
 func (s *Scanner) sendNotifications(u *user.User, result *pipeline.Result) {
+	oppManager := s.opportunityManager()
+
 	switch opportunity.ResolveChannel(u) {
 	case "telegram":
 		if u.TelegramID == nil {
 			return
 		}
 		header := fmt.Sprintf("🎯 *Opportunity Detected*\n\n%s", pipeline.FormatTelegramMessage(result))
-		if s.oppManager != nil {
-			oppID := s.oppManager.Create(u.ID, result.Symbol, result, "telegram")
-			header += "\n\n⏰ Expires in 15 minutes"
+		if oppManager != nil {
+			oppID := oppManager.Create(u.ID, result.Symbol, result, "telegram")
+			header += "\n\n⏰ Limited-time opportunity"
 			buttons := opportunity.TelegramButtons(oppID)
 			if err := s.notifier.NotifyTelegramWithButtons(*u.TelegramID, header, buttons); err != nil {
 				slog.Error("scanner: telegram notify failed", "user_id", u.ID, "error", err)
@@ -402,8 +412,8 @@ func (s *Scanner) sendNotifications(u *user.User, result *pipeline.Result) {
 		}
 		title, desc, fields, color := pipeline.FormatDiscordFields(result)
 		channelID := fmt.Sprintf("%d", *u.DiscordID)
-		if s.oppManager != nil {
-			oppID := s.oppManager.Create(u.ID, result.Symbol, result, "discord")
+		if oppManager != nil {
+			oppID := oppManager.Create(u.ID, result.Symbol, result, "discord")
 			buttons := opportunity.DiscordButtons(oppID)
 			if err := s.notifier.NotifyDiscordWithButtons(channelID, title, desc, fields, color, buttons); err != nil {
 				slog.Error("scanner: discord notify failed", "user_id", u.ID, "error", err)

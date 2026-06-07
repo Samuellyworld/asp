@@ -205,7 +205,7 @@ func TestWSPriceCache_SubscribeAll_Integration(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		// send a batch of mini-tickers
 		tickers := []miniTickerMsg{
@@ -213,7 +213,10 @@ func TestWSPriceCache_SubscribeAll_Integration(t *testing.T) {
 			{EventType: "24hrMiniTicker", Symbol: "ETHUSDT", Close: "4000.00"},
 		}
 		data, _ := json.Marshal(tickers)
-		conn.WriteMessage(websocket.TextMessage, data)
+		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			t.Errorf("failed to write websocket message: %v", err)
+			return
+		}
 
 		// keep connection open until client disconnects
 		for {
@@ -276,7 +279,7 @@ func TestWSPriceCache_Stop_Idempotent(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		for {
 			_, _, err := conn.ReadMessage()
 			if err != nil {

@@ -49,6 +49,10 @@ type apiError struct {
 	Message string `json:"msg"`
 }
 
+func (e *apiError) Error() string {
+	return fmt.Sprintf("binance api error (code %d): %s", e.Code, e.Message)
+}
+
 func NewClient(baseURL string, testnet bool) *Client {
 	return &Client{
 		httpClient:  &http.Client{Timeout: 10 * time.Second},
@@ -147,7 +151,7 @@ func (c *Client) signedGET(ctx context.Context, apiKey, apiSecret, path string) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to binance: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	c.rateLimiter.RecordResponse(resp.StatusCode)
 
 	body, err := io.ReadAll(resp.Body)

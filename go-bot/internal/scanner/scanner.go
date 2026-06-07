@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/trading-bot/go-bot/internal/claude"
+	"github.com/trading-bot/go-bot/internal/opportunity"
 	"github.com/trading-bot/go-bot/internal/pipeline"
 	"github.com/trading-bot/go-bot/internal/preferences"
 	"github.com/trading-bot/go-bot/internal/user"
@@ -40,7 +41,9 @@ type Analyzer interface {
 // sends notifications to users
 type Notifier interface {
 	NotifyTelegram(chatID int64, message string) error
+	NotifyTelegramWithButtons(chatID int64, message string, buttons [][]opportunity.ButtonData) error
 	NotifyDiscord(channelID string, title, description string, fields []pipeline.DiscordField, color int) error
+	NotifyDiscordWithButtons(channelID string, title, description string, fields []pipeline.DiscordField, color int, buttons []opportunity.ButtonData) error
 	NotifyWhatsApp(recipientID string, message string) error
 }
 
@@ -89,6 +92,7 @@ type Scanner struct {
 	analyzer   Analyzer
 	notifier   Notifier
 	logger     DecisionLogger // nil = no logging
+	oppManager *opportunity.Manager
 	config     Config
 
 	mu          sync.RWMutex
@@ -128,6 +132,19 @@ func New(
 // SetLogger sets the decision logger for tracking AI decisions and stats.
 func (s *Scanner) SetLogger(logger DecisionLogger) {
 	s.logger = logger
+}
+
+// SetOpportunityManager enables actionable approval buttons for scanner alerts.
+func (s *Scanner) SetOpportunityManager(manager *opportunity.Manager) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.oppManager = manager
+}
+
+func (s *Scanner) opportunityManager() *opportunity.Manager {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.oppManager
 }
 
 // starts the scanner loop in a goroutine. returns immediately.
@@ -370,23 +387,45 @@ func (s *Scanner) logDecision(ctx context.Context, userID int, symbol string, re
 
 // sends formatted notifications to the user's connected platforms
 func (s *Scanner) sendNotifications(u *user.User, result *pipeline.Result) {
-	if u.TelegramID != nil {
-		msg := pipeline.FormatTelegramMessage(result)
-		header := fmt.Sprintf("🎯 *Opportunity Detected*\n\n%s", msg)
-		if err := s.notifier.NotifyTelegram(*u.TelegramID, header); err != nil {
+	oppManager := s.opportunityManager()
+
+	switch opportunity.ResolveChannel(u) {
+	case "telegram":
+		if u.TelegramID == nil {
+			return
+		}
+		header := fmt.Sprintf("🎯 *Opportunity Detected*\n\n%s", pipeline.FormatTelegramMessage(result))
+		if oppManager != nil {
+			oppID := oppManager.Create(u.ID, result.Symbol, result, "telegram")
+			header += "\n\n⏰ Limited-time opportunity"
+			buttons := opportunity.TelegramButtons(oppID)
+			if err := s.notifier.NotifyTelegramWithButtons(*u.TelegramID, header, buttons); err != nil {
+				slog.Error("scanner: telegram notify failed", "user_id", u.ID, "error", err)
+			}
+		} else if err := s.notifier.NotifyTelegram(*u.TelegramID, header); err != nil {
 			slog.Error("scanner: telegram notify failed", "user_id", u.ID, "error", err)
 		}
-	}
 
-	if u.DiscordID != nil {
+	case "discord":
+		if u.DiscordID == nil {
+			return
+		}
 		title, desc, fields, color := pipeline.FormatDiscordFields(result)
 		channelID := fmt.Sprintf("%d", *u.DiscordID)
-		if err := s.notifier.NotifyDiscord(channelID, title, desc, fields, color); err != nil {
+		if oppManager != nil {
+			oppID := oppManager.Create(u.ID, result.Symbol, result, "discord")
+			buttons := opportunity.DiscordButtons(oppID)
+			if err := s.notifier.NotifyDiscordWithButtons(channelID, title, desc, fields, color, buttons); err != nil {
+				slog.Error("scanner: discord notify failed", "user_id", u.ID, "error", err)
+			}
+		} else if err := s.notifier.NotifyDiscord(channelID, title, desc, fields, color); err != nil {
 			slog.Error("scanner: discord notify failed", "user_id", u.ID, "error", err)
 		}
-	}
 
-	if u.WhatsAppID != nil {
+	default:
+		if u.WhatsAppID == nil {
+			return
+		}
 		msg := pipeline.FormatTelegramMessage(result)
 		header := fmt.Sprintf("🎯 *Opportunity Detected*\n\n%s", msg)
 		if err := s.notifier.NotifyWhatsApp(*u.WhatsAppID, header); err != nil {

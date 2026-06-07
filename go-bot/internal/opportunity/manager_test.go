@@ -596,7 +596,7 @@ func TestFormatTelegramOpportunity(t *testing.T) {
 	opp := m.Get(id)
 
 	msg := FormatTelegramOpportunity(opp)
-	checks := []string{"Opportunity Detected", "BTC/USDT", "BUY", "15 minutes"}
+	checks := []string{"Opportunity Detected", "BTC/USDT", "BUY", "Limited-time opportunity"}
 	for _, check := range checks {
 		if !strings.Contains(msg, check) {
 			t.Errorf("expected %q in message, got:\n%s", check, msg)

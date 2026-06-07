@@ -49,7 +49,7 @@ func FormatTelegramOpportunity(opp *Opportunity) string {
 	msg := pipeline.FormatTelegramMessage(result)
 	b.WriteString("🎯 *Opportunity Detected*\n\n")
 	b.WriteString(msg)
-	b.WriteString(fmt.Sprintf("\n\n⏰ Expires in 15 minutes"))
+	b.WriteString("\n\n⏰ Limited-time opportunity")
 
 	return b.String()
 }
@@ -110,7 +110,7 @@ func ModifyButtons(oppID string) [][]ButtonData {
 
 // formats the expired message for a timed-out opportunity
 func FormatExpiredMessage(opp *Opportunity) string {
-	return fmt.Sprintf("⏰ *Opportunity Expired*\n\n%s %s opportunity for %s has expired (15 min timeout).",
+	return fmt.Sprintf("⏰ *Opportunity Expired*\n\n%s %s opportunity for %s has expired.",
 		statusEmoji(opp.Action), opp.Action, opp.Symbol)
 }
 

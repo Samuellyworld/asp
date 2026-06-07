@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/trading-bot/go-bot/internal/claude"
+	"github.com/trading-bot/go-bot/internal/opportunity"
 	"github.com/trading-bot/go-bot/internal/pipeline"
 	"github.com/trading-bot/go-bot/internal/preferences"
 	"github.com/trading-bot/go-bot/internal/user"
@@ -79,11 +80,19 @@ func (n *stressNotifier) NotifyTelegram(_ int64, _ string) error {
 	return nil
 }
 
+func (n *stressNotifier) NotifyTelegramWithButtons(_ int64, _ string, _ [][]opportunity.ButtonData) error {
+	return n.NotifyTelegram(0, "")
+}
+
 func (n *stressNotifier) NotifyDiscord(_ string, _, _ string, _ []pipeline.DiscordField, _ int) error {
 	n.mu.Lock()
 	n.count++
 	n.mu.Unlock()
 	return nil
+}
+
+func (n *stressNotifier) NotifyDiscordWithButtons(_ string, _, _ string, _ []pipeline.DiscordField, _ int, _ []opportunity.ButtonData) error {
+	return n.NotifyDiscord("", "", "", nil, 0)
 }
 
 func (n *stressNotifier) NotifyWhatsApp(_ string, _ string) error {

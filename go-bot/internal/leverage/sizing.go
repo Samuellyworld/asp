@@ -76,6 +76,17 @@ func CalculatePositionSizes(balance, riskPct, slDistPct float64, maxLeverage int
 	return recs, nil
 }
 
+// MarginForPositionSize converts desired notional exposure into required margin.
+func MarginForPositionSize(positionSize float64, leverage int) (float64, error) {
+	if positionSize <= 0 {
+		return 0, fmt.Errorf("position size must be positive")
+	}
+	if leverage <= 0 {
+		return 0, fmt.Errorf("leverage must be positive")
+	}
+	return positionSize / float64(leverage), nil
+}
+
 // formats position sizing recommendations as a readable string
 func FormatSizeRecommendations(recs []SizeRecommendation, symbol string, entry float64) string {
 	s := fmt.Sprintf("📐 Position Sizing for %s @ $%.2f\n", symbol, entry)

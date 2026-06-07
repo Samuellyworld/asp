@@ -22,6 +22,7 @@ type User struct {
 	IsActivated       bool
 	IsBanned          bool
 	TradingMode       string
+	LiveEnabled       bool
 	LeverageEnabled   bool
 	LastActiveChannel *string
 	LastActiveAt      *time.Time
@@ -57,7 +58,7 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 func (r *Repository) FindByTelegramID(ctx context.Context, telegramID int64) (*User, error) {
 	query := `
 		SELECT id, uuid, telegram_id, discord_id, whatsapp_id, username, is_activated, is_banned,
-			   trading_mode, leverage_enabled, last_active_channel, last_active_at,
+			   trading_mode, live_enabled, leverage_enabled, last_active_channel, last_active_at,
 			   created_at, updated_at
 		FROM users WHERE telegram_id = $1
 	`
@@ -65,7 +66,7 @@ func (r *Repository) FindByTelegramID(ctx context.Context, telegramID int64) (*U
 	u := &User{}
 	err := r.pool.QueryRow(ctx, query, telegramID).Scan(
 		&u.ID, &u.UUID, &u.TelegramID, &u.DiscordID, &u.WhatsAppID, &u.Username,
-		&u.IsActivated, &u.IsBanned, &u.TradingMode, &u.LeverageEnabled,
+		&u.IsActivated, &u.IsBanned, &u.TradingMode, &u.LiveEnabled, &u.LeverageEnabled,
 		&u.LastActiveChannel, &u.LastActiveAt, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if err == pgx.ErrNoRows {
@@ -83,14 +84,14 @@ func (r *Repository) Create(ctx context.Context, telegramID int64, username stri
 		INSERT INTO users (telegram_id, username, last_active_channel, last_active_at)
 		VALUES ($1, $2, 'telegram', NOW())
 		RETURNING id, uuid, telegram_id, username, is_activated, is_banned,
-				  trading_mode, leverage_enabled, last_active_channel, last_active_at,
+				  trading_mode, live_enabled, leverage_enabled, last_active_channel, last_active_at,
 				  created_at, updated_at
 	`
 
 	u := &User{}
 	err := r.pool.QueryRow(ctx, query, telegramID, username).Scan(
 		&u.ID, &u.UUID, &u.TelegramID, &u.Username, &u.IsActivated,
-		&u.IsBanned, &u.TradingMode, &u.LeverageEnabled,
+		&u.IsBanned, &u.TradingMode, &u.LiveEnabled, &u.LeverageEnabled,
 		&u.LastActiveChannel, &u.LastActiveAt, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
@@ -226,7 +227,7 @@ func (r *Repository) GetPrimaryCredentials(ctx context.Context, userID int) (*Cr
 func (r *Repository) FindByDiscordID(ctx context.Context, discordID int64) (*User, error) {
 	query := `
 		SELECT id, uuid, telegram_id, discord_id, whatsapp_id, username, is_activated, is_banned,
-			   trading_mode, leverage_enabled, last_active_channel, last_active_at,
+			   trading_mode, live_enabled, leverage_enabled, last_active_channel, last_active_at,
 			   created_at, updated_at
 		FROM users WHERE discord_id = $1
 	`
@@ -234,7 +235,7 @@ func (r *Repository) FindByDiscordID(ctx context.Context, discordID int64) (*Use
 	u := &User{}
 	err := r.pool.QueryRow(ctx, query, discordID).Scan(
 		&u.ID, &u.UUID, &u.TelegramID, &u.DiscordID, &u.WhatsAppID, &u.Username,
-		&u.IsActivated, &u.IsBanned, &u.TradingMode, &u.LeverageEnabled,
+		&u.IsActivated, &u.IsBanned, &u.TradingMode, &u.LiveEnabled, &u.LeverageEnabled,
 		&u.LastActiveChannel, &u.LastActiveAt, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if err == pgx.ErrNoRows {
@@ -252,14 +253,14 @@ func (r *Repository) CreateFromDiscord(ctx context.Context, discordID int64, use
 		INSERT INTO users (discord_id, username, last_active_channel, last_active_at)
 		VALUES ($1, $2, 'discord', NOW())
 		RETURNING id, uuid, discord_id, username, is_activated, is_banned,
-				  trading_mode, leverage_enabled, last_active_channel, last_active_at,
+				  trading_mode, live_enabled, leverage_enabled, last_active_channel, last_active_at,
 				  created_at, updated_at
 	`
 
 	u := &User{}
 	err := r.pool.QueryRow(ctx, query, discordID, username).Scan(
 		&u.ID, &u.UUID, &u.DiscordID, &u.Username, &u.IsActivated,
-		&u.IsBanned, &u.TradingMode, &u.LeverageEnabled,
+		&u.IsBanned, &u.TradingMode, &u.LiveEnabled, &u.LeverageEnabled,
 		&u.LastActiveChannel, &u.LastActiveAt, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
@@ -274,14 +275,14 @@ func (r *Repository) LinkDiscordToTelegram(ctx context.Context, telegramID, disc
 		UPDATE users SET discord_id = $2, last_active_channel = 'discord', updated_at = NOW()
 		WHERE telegram_id = $1
 		RETURNING id, uuid, telegram_id, discord_id, whatsapp_id, username, is_activated, is_banned,
-				  trading_mode, leverage_enabled, last_active_channel, last_active_at,
+				  trading_mode, live_enabled, leverage_enabled, last_active_channel, last_active_at,
 				  created_at, updated_at
 	`
 
 	u := &User{}
 	err := r.pool.QueryRow(ctx, query, telegramID, discordID).Scan(
 		&u.ID, &u.UUID, &u.TelegramID, &u.DiscordID, &u.WhatsAppID, &u.Username,
-		&u.IsActivated, &u.IsBanned, &u.TradingMode, &u.LeverageEnabled,
+		&u.IsActivated, &u.IsBanned, &u.TradingMode, &u.LiveEnabled, &u.LeverageEnabled,
 		&u.LastActiveChannel, &u.LastActiveAt, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if err == pgx.ErrNoRows {
@@ -297,7 +298,7 @@ func (r *Repository) LinkDiscordToTelegram(ctx context.Context, telegramID, disc
 func (r *Repository) ListActive(ctx context.Context) ([]*User, error) {
 	query := `
 		SELECT id, uuid, telegram_id, discord_id, whatsapp_id, username, is_activated, is_banned,
-			   trading_mode, leverage_enabled, last_active_channel, last_active_at,
+			   trading_mode, live_enabled, leverage_enabled, last_active_channel, last_active_at,
 			   created_at, updated_at
 		FROM users
 		WHERE is_activated = TRUE AND is_banned = FALSE
@@ -314,7 +315,7 @@ func (r *Repository) ListActive(ctx context.Context) ([]*User, error) {
 		u := &User{}
 		if err := rows.Scan(
 			&u.ID, &u.UUID, &u.TelegramID, &u.DiscordID, &u.WhatsAppID, &u.Username,
-			&u.IsActivated, &u.IsBanned, &u.TradingMode, &u.LeverageEnabled,
+			&u.IsActivated, &u.IsBanned, &u.TradingMode, &u.LiveEnabled, &u.LeverageEnabled,
 			&u.LastActiveChannel, &u.LastActiveAt, &u.CreatedAt, &u.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan user: %w", err)
@@ -322,6 +323,25 @@ func (r *Repository) ListActive(ctx context.Context) ([]*User, error) {
 		users = append(users, u)
 	}
 	return users, nil
+}
+
+// sets the live_enabled flag for a user
+func (r *Repository) SetLiveEnabled(ctx context.Context, userID int, enabled bool) error {
+	_, err := r.pool.Exec(ctx, "UPDATE users SET live_enabled = $2 WHERE id = $1", userID, enabled)
+	if err != nil {
+		return fmt.Errorf("failed to set live enabled: %w", err)
+	}
+	return nil
+}
+
+// returns whether live trading is enabled for a user
+func (r *Repository) IsLiveEnabled(ctx context.Context, userID int) (bool, error) {
+	var enabled bool
+	err := r.pool.QueryRow(ctx, "SELECT live_enabled FROM users WHERE id = $1", userID).Scan(&enabled)
+	if err != nil {
+		return false, fmt.Errorf("failed to check live enabled: %w", err)
+	}
+	return enabled, nil
 }
 
 // sets the leverage_enabled flag for a user

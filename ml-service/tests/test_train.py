@@ -70,6 +70,25 @@ def test_prepare_dataset_keeps_validation_targets_chronological():
     assert y_val[0][1] == pytest.approx(expected_first_val_return)
 
 
+def test_load_candles_from_csv_groups_and_filters_symbols(tmp_path):
+    dataset = tmp_path / "candles.csv"
+    dataset.write_text(
+        "timestamp,symbol,open,high,low,close,volume\n"
+        "2,BTC/USDT,101,103,100,102,20\n"
+        "1,BTC/USDT,100,102,99,101,10\n"
+        "1,ETH/USDT,200,205,198,204,30\n"
+    )
+
+    candles = train.load_candles_from_csv(
+        str(dataset),
+        symbols=["BTC/USDT"],
+        min_candles=2,
+    )
+
+    assert list(candles.keys()) == ["BTC/USDT"]
+    assert [c["close"] for c in candles["BTC/USDT"]] == [101.0, 102.0]
+
+
 def test_db_password_must_be_configured(monkeypatch):
     monkeypatch.delenv("DATABASE_PASSWORD", raising=False)
     with pytest.raises(RuntimeError, match="DATABASE_PASSWORD must be set"):

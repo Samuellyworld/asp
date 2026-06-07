@@ -190,6 +190,10 @@ func (e *Executor) Close(posID string, reason CloseReason, price float64) (*Posi
 
 	e.closed = append(e.closed, pos)
 	delete(e.positions, posID)
+	pnl := pos.ClosedPnL()
+	if e.breaker != nil {
+		e.breaker.RecordTrade(pos.UserID, pnl)
+	}
 	e.mu.Unlock()
 
 	// persist close to database

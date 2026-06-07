@@ -245,6 +245,9 @@ func (e *PaperExecutor) Close(posID string, reason string) (*LeveragePosition, e
 		e.closed = e.closed[len(e.closed)-1000:]
 	}
 	delete(e.positions, posID)
+	if e.breaker != nil {
+		e.breaker.RecordTrade(pos.UserID, pos.PnL)
+	}
 	e.mu.Unlock()
 
 	// persist to database (best-effort)

@@ -26,6 +26,8 @@ type userRepository interface {
 	GetCredentials(ctx context.Context, userID int, exchange string) (*Credentials, error)
 	GetPrimaryCredentials(ctx context.Context, userID int) (*Credentials, error)
 	ListActive(ctx context.Context) ([]*User, error)
+	SetLiveEnabled(ctx context.Context, userID int, enabled bool) error
+	IsLiveEnabled(ctx context.Context, userID int) (bool, error)
 	SetLeverageEnabled(ctx context.Context, userID int, enabled bool) error
 	IsLeverageEnabled(ctx context.Context, userID int) (bool, error)
 }
@@ -346,6 +348,21 @@ func (s *Service) LinkDiscordToTelegram(ctx context.Context, telegramID, discord
 // returns all activated, non-banned users for background scanning
 func (s *Service) ListActive(ctx context.Context) ([]*User, error) {
 	return s.repo.ListActive(ctx)
+}
+
+// enables live trading for a user
+func (s *Service) EnableLive(ctx context.Context, userID int) error {
+	return s.repo.SetLiveEnabled(ctx, userID, true)
+}
+
+// disables live trading for a user
+func (s *Service) DisableLive(ctx context.Context, userID int) error {
+	return s.repo.SetLiveEnabled(ctx, userID, false)
+}
+
+// checks if live trading is enabled for a user
+func (s *Service) IsLiveEnabled(ctx context.Context, userID int) (bool, error) {
+	return s.repo.IsLiveEnabled(ctx, userID)
 }
 
 // enables leverage trading for a user

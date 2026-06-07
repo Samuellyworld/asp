@@ -134,8 +134,14 @@ func (h *Handler) handleLeverageSelection(ctx context.Context, cb *CallbackQuery
 	}
 
 	positionSide := leverage.PositionSide(side)
-	if h.trading.Confirm != nil && h.trading.Confirm.IsConfirmed(result.User.ID) && h.trading.LevLiveExecutor != nil {
-		margin := plan.PositionSize
+	if h.isLiveEnabled(ctx, result.User.ID) && h.trading.LevLiveExecutor != nil {
+		margin, err := leverage.MarginForPositionSize(plan.PositionSize, lev)
+		if err != nil {
+			h.trading.OppManager.FailExecution(oppID, result.User.ID)
+			h.answerCallback(cb.ID, "invalid leverage sizing")
+			h.send(cb.Message.Chat.ID, fmt.Sprintf("❌ leverage execution failed: %v", err))
+			return true
+		}
 		if h.trading.FuturesBalanceProvider != nil {
 			balance, err := h.trading.FuturesBalanceProvider.GetFuturesBalance(ctx, result.User.ID, "USDT")
 			if err != nil {
@@ -176,20 +182,28 @@ func (h *Handler) handleLeverageSelection(ctx context.Context, cb *CallbackQuery
 		h.trading.OppManager.CompleteExecution(oppID, result.User.ID)
 		h.editMessage(cb.Message.Chat.ID, cb.Message.MessageID, opportunity.FormatApprovedMessage(opp)+opportunity.FormatLeverageSelected(opp), nil)
 		h.answerCallback(cb.ID, "live futures opened")
-		if margin < plan.PositionSize {
-			h.send(cb.Message.Chat.ID, fmt.Sprintf("ℹ️ Position margin capped to available futures balance: $%.2f (AI suggested $%.2f).", margin, plan.PositionSize))
+		plannedMargin := plan.PositionSize / float64(lev)
+		if margin < plannedMargin {
+			h.send(cb.Message.Chat.ID, fmt.Sprintf("ℹ️ Position margin capped to available futures balance: $%.2f (AI suggested $%.2f margin).", margin, plannedMargin))
 		}
 		h.send(cb.Message.Chat.ID, leverage.FormatLeverageOpened(pos))
 		return true
 	}
 
 	if h.trading.LevPaperExecutor != nil {
+		margin, err := leverage.MarginForPositionSize(plan.PositionSize, lev)
+		if err != nil {
+			h.trading.OppManager.FailExecution(oppID, result.User.ID)
+			h.answerCallback(cb.ID, "invalid leverage sizing")
+			h.send(cb.Message.Chat.ID, fmt.Sprintf("❌ leverage execution failed: %v", err))
+			return true
+		}
 		pos, err := h.trading.LevPaperExecutor.OpenPosition(
 			result.User.ID,
 			opp.Symbol,
 			positionSide,
 			lev,
-			plan.PositionSize,
+			margin,
 			plan.StopLoss,
 			plan.TakeProfit,
 			"telegram",

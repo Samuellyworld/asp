@@ -136,7 +136,7 @@ func (w *WSPriceCache) Stop() {
 	}
 
 	if w.conn != nil {
-		w.conn.Close()
+		_ = w.conn.Close()
 	}
 
 	// wait for read loop to finish

@@ -18,6 +18,20 @@ func newTestOrderServer(handler http.HandlerFunc) (*httptest.Server, *OrderClien
 	return server, client
 }
 
+func writeOrderTestResponse(t *testing.T, w http.ResponseWriter, data []byte) {
+	t.Helper()
+	if _, err := w.Write(data); err != nil {
+		t.Fatalf("failed to write response: %v", err)
+	}
+}
+
+func parseOrderTestForm(t *testing.T, r *http.Request) {
+	t.Helper()
+	if err := r.ParseForm(); err != nil {
+		t.Fatalf("failed to parse form: %v", err)
+	}
+}
+
 // helper to create a standard order response json
 func marketOrderJSON() string {
 	return `{
@@ -93,9 +107,7 @@ func TestPlaceOrder_MarketBuy(t *testing.T) {
 		}
 
 		// verify required params
-		if err := r.ParseForm(); err != nil {
-			t.Fatalf("failed to parse form: %v", err)
-		}
+		parseOrderTestForm(t, r)
 		if r.FormValue("symbol") != "BTCUSDT" {
 			t.Errorf("symbol = %s, want BTCUSDT", r.FormValue("symbol"))
 		}
@@ -116,7 +128,7 @@ func TestPlaceOrder_MarketBuy(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(marketOrderJSON()))
+		writeOrderTestResponse(t, w, []byte(marketOrderJSON()))
 	})
 	defer server.Close()
 
@@ -157,10 +169,10 @@ func TestPlaceOrder_MarketBuy(t *testing.T) {
 func TestPlaceOrder_MarketWithQuoteQty(t *testing.T) {
 	var gotQuoteQty string
 	server, client := newTestOrderServer(func(w http.ResponseWriter, r *http.Request) {
-		r.ParseForm()
+		parseOrderTestForm(t, r)
 		gotQuoteQty = r.FormValue("quoteOrderQty")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(marketOrderJSON()))
+		writeOrderTestResponse(t, w, []byte(marketOrderJSON()))
 	})
 	defer server.Close()
 
@@ -177,10 +189,10 @@ func TestPlaceOrder_MarketWithQuoteQty(t *testing.T) {
 func TestPlaceOrder_LimitOrder(t *testing.T) {
 	var gotTIF string
 	server, client := newTestOrderServer(func(w http.ResponseWriter, r *http.Request) {
-		r.ParseForm()
+		parseOrderTestForm(t, r)
 		gotTIF = r.FormValue("timeInForce")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(marketOrderJSON()))
+		writeOrderTestResponse(t, w, []byte(marketOrderJSON()))
 	})
 	defer server.Close()
 
@@ -196,7 +208,7 @@ func TestPlaceOrder_LimitOrder(t *testing.T) {
 func TestPlaceOrder_APIError(t *testing.T) {
 	server, client := newTestOrderServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"code":-1013,"msg":"Filter failure: MIN_NOTIONAL"}`))
+		writeOrderTestResponse(t, w, []byte(`{"code":-1013,"msg":"Filter failure: MIN_NOTIONAL"}`))
 	})
 	defer server.Close()
 
@@ -212,11 +224,11 @@ func TestPlaceOrder_APIError(t *testing.T) {
 func TestPlaceStopLoss(t *testing.T) {
 	var gotType, gotStopPrice string
 	server, client := newTestOrderServer(func(w http.ResponseWriter, r *http.Request) {
-		r.ParseForm()
+		parseOrderTestForm(t, r)
 		gotType = r.FormValue("type")
 		gotStopPrice = r.FormValue("stopPrice")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(stopLossOrderJSON()))
+		writeOrderTestResponse(t, w, []byte(stopLossOrderJSON()))
 	})
 	defer server.Close()
 
@@ -242,10 +254,10 @@ func TestPlaceStopLoss(t *testing.T) {
 func TestPlaceTakeProfit(t *testing.T) {
 	var gotType string
 	server, client := newTestOrderServer(func(w http.ResponseWriter, r *http.Request) {
-		r.ParseForm()
+		parseOrderTestForm(t, r)
 		gotType = r.FormValue("type")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(takeProfitOrderJSON()))
+		writeOrderTestResponse(t, w, []byte(takeProfitOrderJSON()))
 	})
 	defer server.Close()
 
@@ -268,7 +280,7 @@ func TestCancelOrder(t *testing.T) {
 		gotMethod = r.Method
 		gotOrderID = r.URL.Query().Get("orderId")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(marketOrderJSON()))
+		writeOrderTestResponse(t, w, []byte(marketOrderJSON()))
 	})
 	defer server.Close()
 
@@ -287,7 +299,7 @@ func TestCancelOrder(t *testing.T) {
 func TestCancelOrder_Error(t *testing.T) {
 	server, client := newTestOrderServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"code":-2011,"msg":"Unknown order sent."}`))
+		writeOrderTestResponse(t, w, []byte(`{"code":-2011,"msg":"Unknown order sent."}`))
 	})
 	defer server.Close()
 
@@ -306,7 +318,7 @@ func TestGetOrder(t *testing.T) {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(marketOrderJSON()))
+		writeOrderTestResponse(t, w, []byte(marketOrderJSON()))
 	})
 	defer server.Close()
 
@@ -330,7 +342,7 @@ func TestGetOpenOrders(t *testing.T) {
 		}
 		data, _ := json.Marshal(resp)
 		w.WriteHeader(http.StatusOK)
-		w.Write(data)
+		writeOrderTestResponse(t, w, data)
 	})
 	defer server.Close()
 
@@ -352,7 +364,7 @@ func TestGetOpenOrders(t *testing.T) {
 func TestGetOpenOrders_Empty(t *testing.T) {
 	server, client := newTestOrderServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`[]`))
+		writeOrderTestResponse(t, w, []byte(`[]`))
 	})
 	defer server.Close()
 
@@ -442,7 +454,7 @@ func TestPlaceOrder_NetworkError(t *testing.T) {
 func TestPlaceOrder_InvalidJSON(t *testing.T) {
 	server, client := newTestOrderServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`not json`))
+		writeOrderTestResponse(t, w, []byte(`not json`))
 	})
 	defer server.Close()
 
@@ -455,7 +467,7 @@ func TestPlaceOrder_InvalidJSON(t *testing.T) {
 func TestGetOpenOrders_APIError(t *testing.T) {
 	server, client := newTestOrderServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"code":-2015,"msg":"Invalid API-key, IP, or permissions for action."}`))
+		writeOrderTestResponse(t, w, []byte(`{"code":-2015,"msg":"Invalid API-key, IP, or permissions for action."}`))
 	})
 	defer server.Close()
 
@@ -473,7 +485,7 @@ func TestSignedRequest_SetsAPIKeyHeader(t *testing.T) {
 	server, client := newTestOrderServer(func(w http.ResponseWriter, r *http.Request) {
 		gotAPIKey = r.Header.Get("X-MBX-APIKEY")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(marketOrderJSON()))
+		writeOrderTestResponse(t, w, []byte(marketOrderJSON()))
 	})
 	defer server.Close()
 
@@ -488,7 +500,7 @@ func TestSignedRequest_IncludesSignature(t *testing.T) {
 	server, client := newTestOrderServer(func(w http.ResponseWriter, r *http.Request) {
 		hasSig = r.URL.Query().Get("signature") != ""
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(marketOrderJSON()))
+		writeOrderTestResponse(t, w, []byte(marketOrderJSON()))
 	})
 	defer server.Close()
 

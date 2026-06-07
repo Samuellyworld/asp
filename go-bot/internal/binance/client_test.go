@@ -8,6 +8,20 @@ import (
 	"testing"
 )
 
+func writeClientTestResponse(t *testing.T, w http.ResponseWriter, data []byte) {
+	t.Helper()
+	if _, err := w.Write(data); err != nil {
+		t.Fatalf("failed to write response: %v", err)
+	}
+}
+
+func encodeClientTestResponse(t *testing.T, w http.ResponseWriter, v any) {
+	t.Helper()
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		t.Fatalf("failed to encode response: %v", err)
+	}
+}
+
 func TestSign(t *testing.T) {
 	// known hmac-sha256 test vector
 	queryString := "timestamp=1234567890"
@@ -83,7 +97,7 @@ func TestValidateKeys_Success(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		encodeClientTestResponse(t, w, resp)
 	}))
 	defer server.Close()
 
@@ -112,7 +126,7 @@ func TestValidateKeys_WithFutures(t *testing.T) {
 			Permissions: []string{"SPOT", "FUTURES"},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		encodeClientTestResponse(t, w, resp)
 	}))
 	defer server.Close()
 
@@ -138,7 +152,7 @@ func TestValidateKeys_TestnetIgnoresAccountCanWithdraw(t *testing.T) {
 			Permissions: []string{"SPOT"},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		encodeClientTestResponse(t, w, resp)
 	}))
 	defer server.Close()
 
@@ -163,18 +177,14 @@ func TestValidateKeys_MainnetUsesAPIRestrictionsForWithdraw(t *testing.T) {
 				Permissions: []string{"SPOT"},
 			}
 			w.Header().Set("Content-Type", "application/json")
-			if err := json.NewEncoder(w).Encode(resp); err != nil {
-				t.Fatalf("failed to encode account response: %v", err)
-			}
+			encodeClientTestResponse(t, w, resp)
 		case "/sapi/v1/account/apiRestrictions":
 			resp := apiRestrictionsResponse{
 				EnableWithdrawals:          true,
 				EnableSpotAndMarginTrading: true,
 			}
 			w.Header().Set("Content-Type", "application/json")
-			if err := json.NewEncoder(w).Encode(resp); err != nil {
-				t.Fatalf("failed to encode api restrictions response: %v", err)
-			}
+			encodeClientTestResponse(t, w, resp)
 		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -196,7 +206,7 @@ func TestValidateKeys_MainnetUsesAPIRestrictionsForWithdraw(t *testing.T) {
 func TestValidateKeys_APIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(apiError{Code: -2015, Message: "Invalid API-key, IP, or permissions for action."})
+		encodeClientTestResponse(t, w, apiError{Code: -2015, Message: "Invalid API-key, IP, or permissions for action."})
 	}))
 	defer server.Close()
 
@@ -218,7 +228,7 @@ func TestValidateKeys_ServerDown(t *testing.T) {
 func TestValidateKeys_InvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("not json"))
+		writeClientTestResponse(t, w, []byte("not json"))
 	}))
 	defer server.Close()
 
@@ -232,7 +242,7 @@ func TestValidateKeys_InvalidJSON(t *testing.T) {
 func TestValidateKeys_NonJSONError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal server error"))
+		writeClientTestResponse(t, w, []byte("internal server error"))
 	}))
 	defer server.Close()
 

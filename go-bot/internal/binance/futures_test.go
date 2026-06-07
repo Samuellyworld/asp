@@ -13,10 +13,24 @@ import (
 )
 
 // helper to create a mock futures server with a handler
-func newTestFuturesServer(handler http.HandlerFunc) (*httptest.Server, *FuturesClient) {
-	server := httptest.NewServer(handler)
+func newTestFuturesServer(t *testing.T, handler http.HandlerFunc) (*httptest.Server, *FuturesClient) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/fapi/v1/exchangeInfo") {
+			w.WriteHeader(http.StatusOK)
+			writeTestResponse(t, w, []byte(`{"symbols":[{"symbol":"BTCUSDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.10"},{"filterType":"LOT_SIZE","minQty":"0.001","stepSize":"0.001"}]},{"symbol":"BNBUSDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.010"},{"filterType":"LOT_SIZE","minQty":"0.01","stepSize":"0.01"}]}]}`))
+			return
+		}
+		handler(w, r)
+	}))
 	client := NewFuturesClient(server.URL, true)
 	return server, client
+}
+
+func writeTestResponse(t *testing.T, w http.ResponseWriter, data []byte) {
+	t.Helper()
+	if _, err := w.Write(data); err != nil {
+		t.Fatalf("failed to write response: %v", err)
+	}
 }
 
 func futuresMarketOrderJSON() string {
@@ -89,7 +103,7 @@ func futuresTakeProfitMarketJSON() string {
 
 func TestSetLeverage(t *testing.T) {
 	var gotSymbol, gotLeverage string
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
@@ -111,7 +125,7 @@ func TestSetLeverage(t *testing.T) {
 			t.Errorf("api key = %s, want test_key", r.Header.Get("X-MBX-APIKEY"))
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"leverage":20,"maxNotionalValue":"1000000","symbol":"BTCUSDT"}`))
+		writeTestResponse(t, w, []byte(`{"leverage":20,"maxNotionalValue":"1000000","symbol":"BTCUSDT"}`))
 	})
 	defer server.Close()
 
@@ -128,9 +142,9 @@ func TestSetLeverage(t *testing.T) {
 }
 
 func TestSetLeverage_APIError(t *testing.T) {
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"code":-4028,"msg":"Leverage 200 is not valid"}`))
+		writeTestResponse(t, w, []byte(`{"code":-4028,"msg":"Leverage 200 is not valid"}`))
 	})
 	defer server.Close()
 
@@ -145,7 +159,7 @@ func TestSetLeverage_APIError(t *testing.T) {
 
 func TestSetMarginType(t *testing.T) {
 	var gotSymbol, gotMarginType string
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
@@ -158,7 +172,7 @@ func TestSetMarginType(t *testing.T) {
 		gotSymbol = r.FormValue("symbol")
 		gotMarginType = r.FormValue("marginType")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"code":200,"msg":"success"}`))
+		writeTestResponse(t, w, []byte(`{"code":200,"msg":"success"}`))
 	})
 	defer server.Close()
 
@@ -175,23 +189,20 @@ func TestSetMarginType(t *testing.T) {
 }
 
 func TestSetMarginType_APIError(t *testing.T) {
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"code":-4046,"msg":"No need to change margin type."}`))
+		writeTestResponse(t, w, []byte(`{"code":-4046,"msg":"No need to change margin type."}`))
 	})
 	defer server.Close()
 
 	err := client.SetMarginType(context.Background(), "BTC/USDT", "CROSSED", "key", "secret")
-	if err == nil {
-		t.Fatal("expected error for margin type already set")
-	}
-	if !strings.Contains(err.Error(), "No need to change margin type") {
-		t.Errorf("error should mention margin type, got: %v", err)
+	if err != nil {
+		t.Fatalf("SetMarginType() should ignore already-set margin type: %v", err)
 	}
 }
 
 func TestFuturesPlaceOrder_Market(t *testing.T) {
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
@@ -217,7 +228,7 @@ func TestFuturesPlaceOrder_Market(t *testing.T) {
 			t.Errorf("api key = %s, want test_key", r.Header.Get("X-MBX-APIKEY"))
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(futuresMarketOrderJSON()))
+		writeTestResponse(t, w, []byte(futuresMarketOrderJSON()))
 	})
 	defer server.Close()
 
@@ -251,16 +262,37 @@ func TestFuturesPlaceOrder_Market(t *testing.T) {
 	}
 }
 
+func TestFuturesPlaceOrder_FormatsQuantityToSymbolStep(t *testing.T) {
+	var gotQuantity string
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("failed to parse form: %v", err)
+		}
+		gotQuantity = r.FormValue("quantity")
+		w.WriteHeader(http.StatusOK)
+		writeTestResponse(t, w, []byte(futuresMarketOrderJSON()))
+	})
+	defer server.Close()
+
+	_, err := client.PlaceOrder(context.Background(), "BNB/USDT", exchange.SideSell, exchange.OrderTypeMarket, 0.084388123, 0, "key", "secret")
+	if err != nil {
+		t.Fatalf("PlaceOrder() error: %v", err)
+	}
+	if gotQuantity != "0.08" {
+		t.Errorf("quantity = %s, want 0.08", gotQuantity)
+	}
+}
+
 func TestFuturesPlaceOrder_Limit(t *testing.T) {
 	var gotTIF, gotPrice string
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Fatalf("failed to parse form: %v", err)
 		}
 		gotTIF = r.FormValue("timeInForce")
 		gotPrice = r.FormValue("price")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(futuresLimitOrderJSON()))
+		writeTestResponse(t, w, []byte(futuresLimitOrderJSON()))
 	})
 	defer server.Close()
 
@@ -284,14 +316,14 @@ func TestFuturesPlaceOrder_Limit(t *testing.T) {
 
 func TestPlaceStopMarket(t *testing.T) {
 	var gotType, gotStopPrice string
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Fatalf("failed to parse form: %v", err)
 		}
 		gotType = r.FormValue("type")
 		gotStopPrice = r.FormValue("stopPrice")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(futuresStopMarketOrderJSON()))
+		writeTestResponse(t, w, []byte(futuresStopMarketOrderJSON()))
 	})
 	defer server.Close()
 
@@ -316,16 +348,41 @@ func TestPlaceStopMarket(t *testing.T) {
 	}
 }
 
+func TestPlaceStopMarket_FormatsStopPriceToSymbolTick(t *testing.T) {
+	var gotQuantity, gotStopPrice string
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("failed to parse form: %v", err)
+		}
+		gotQuantity = r.FormValue("quantity")
+		gotStopPrice = r.FormValue("stopPrice")
+		w.WriteHeader(http.StatusOK)
+		writeTestResponse(t, w, []byte(futuresStopMarketOrderJSON()))
+	})
+	defer server.Close()
+
+	_, err := client.PlaceStopMarket(context.Background(), "BNB/USDT", exchange.SideBuy, 0.084388123, 609.5049, "key", "secret")
+	if err != nil {
+		t.Fatalf("PlaceStopMarket() error: %v", err)
+	}
+	if gotQuantity != "0.08" {
+		t.Errorf("quantity = %s, want 0.08", gotQuantity)
+	}
+	if gotStopPrice != "609.5" {
+		t.Errorf("stopPrice = %s, want 609.5", gotStopPrice)
+	}
+}
+
 func TestPlaceTakeProfitMarket(t *testing.T) {
 	var gotType, gotStopPrice string
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Fatalf("failed to parse form: %v", err)
 		}
 		gotType = r.FormValue("type")
 		gotStopPrice = r.FormValue("stopPrice")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(futuresTakeProfitMarketJSON()))
+		writeTestResponse(t, w, []byte(futuresTakeProfitMarketJSON()))
 	})
 	defer server.Close()
 
@@ -352,11 +409,11 @@ func TestPlaceTakeProfitMarket(t *testing.T) {
 
 func TestFuturesCancelOrder(t *testing.T) {
 	var gotMethod, gotOrderID string
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotOrderID = r.URL.Query().Get("orderId")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(futuresMarketOrderJSON()))
+		writeTestResponse(t, w, []byte(futuresMarketOrderJSON()))
 	})
 	defer server.Close()
 
@@ -373,9 +430,9 @@ func TestFuturesCancelOrder(t *testing.T) {
 }
 
 func TestFuturesCancelOrder_Error(t *testing.T) {
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"code":-2011,"msg":"Unknown order sent."}`))
+		writeTestResponse(t, w, []byte(`{"code":-2011,"msg":"Unknown order sent."}`))
 	})
 	defer server.Close()
 
@@ -389,7 +446,7 @@ func TestFuturesCancelOrder_Error(t *testing.T) {
 }
 
 func TestFuturesGetOrder(t *testing.T) {
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
@@ -397,7 +454,7 @@ func TestFuturesGetOrder(t *testing.T) {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(futuresMarketOrderJSON()))
+		writeTestResponse(t, w, []byte(futuresMarketOrderJSON()))
 	})
 	defer server.Close()
 
@@ -414,7 +471,7 @@ func TestFuturesGetOrder(t *testing.T) {
 }
 
 func TestGetPositions(t *testing.T) {
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
@@ -451,7 +508,7 @@ func TestGetPositions(t *testing.T) {
 		}
 		data, _ := json.Marshal(resp)
 		w.WriteHeader(http.StatusOK)
-		w.Write(data)
+		writeTestResponse(t, w, data)
 	})
 	defer server.Close()
 
@@ -514,7 +571,7 @@ func TestGetPositions(t *testing.T) {
 }
 
 func TestGetFuturesBalance(t *testing.T) {
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
@@ -537,7 +594,7 @@ func TestGetFuturesBalance(t *testing.T) {
 		}
 		data, _ := json.Marshal(resp)
 		w.WriteHeader(http.StatusOK)
-		w.Write(data)
+		writeTestResponse(t, w, data)
 	})
 	defer server.Close()
 
@@ -573,7 +630,7 @@ func TestGetFuturesBalance(t *testing.T) {
 }
 
 func TestGetMarkPrice(t *testing.T) {
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
@@ -588,7 +645,7 @@ func TestGetMarkPrice(t *testing.T) {
 			t.Error("public endpoint should not have api key header")
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{
+		writeTestResponse(t, w, []byte(`{
 			"symbol": "BTCUSDT",
 			"markPrice": "42750.50",
 			"indexPrice": "42748.00",
@@ -620,7 +677,7 @@ func TestGetMarkPrice(t *testing.T) {
 }
 
 func TestGetFundingRate(t *testing.T) {
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
@@ -634,7 +691,7 @@ func TestGetFundingRate(t *testing.T) {
 			t.Errorf("limit = %s, want 1", r.URL.Query().Get("limit"))
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`[{
+		writeTestResponse(t, w, []byte(`[{
 			"symbol": "ETHUSDT",
 			"fundingRate": "0.00015000",
 			"fundingTime": 1704067200000
@@ -658,9 +715,9 @@ func TestGetFundingRate(t *testing.T) {
 }
 
 func TestGetFundingRate_Empty(t *testing.T) {
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`[]`))
+		writeTestResponse(t, w, []byte(`[]`))
 	})
 	defer server.Close()
 
@@ -674,7 +731,7 @@ func TestGetFundingRate_Empty(t *testing.T) {
 }
 
 func TestFutures_NetworkError(t *testing.T) {
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {})
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {})
 	server.Close()
 
 	// signed endpoint
@@ -719,9 +776,9 @@ func TestFutures_APIErrorParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+			server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tt.statusCode)
-				w.Write([]byte(tt.body))
+				writeTestResponse(t, w, []byte(tt.body))
 			})
 			defer server.Close()
 
@@ -737,9 +794,9 @@ func TestFutures_APIErrorParsing(t *testing.T) {
 }
 
 func TestFutures_PublicEndpoint_APIError(t *testing.T) {
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"code":-1121,"msg":"Invalid symbol."}`))
+		writeTestResponse(t, w, []byte(`{"code":-1121,"msg":"Invalid symbol."}`))
 	})
 	defer server.Close()
 
@@ -841,10 +898,10 @@ func TestFuturesBalanceResponse_Conversion(t *testing.T) {
 
 func TestFuturesSignedRequest_IncludesSignature(t *testing.T) {
 	var hasSig bool
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		hasSig = r.URL.Query().Get("signature") != ""
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(futuresMarketOrderJSON()))
+		writeTestResponse(t, w, []byte(futuresMarketOrderJSON()))
 	})
 	defer server.Close()
 
@@ -856,10 +913,10 @@ func TestFuturesSignedRequest_IncludesSignature(t *testing.T) {
 
 func TestFuturesSignedRequest_SetsAPIKeyHeader(t *testing.T) {
 	var gotAPIKey string
-	server, client := newTestFuturesServer(func(w http.ResponseWriter, r *http.Request) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotAPIKey = r.Header.Get("X-MBX-APIKEY")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(futuresMarketOrderJSON()))
+		writeTestResponse(t, w, []byte(futuresMarketOrderJSON()))
 	})
 	defer server.Close()
 

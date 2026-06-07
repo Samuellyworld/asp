@@ -167,7 +167,7 @@ func (c *Client) doPublicGet(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	c.rateLimiter.RecordResponse(resp.StatusCode)
 
 	body, err := io.ReadAll(resp.Body)
@@ -178,7 +178,7 @@ func (c *Client) doPublicGet(ctx context.Context, url string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		var apiErr apiError
 		if json.Unmarshal(body, &apiErr) == nil {
-			return nil, fmt.Errorf("binance api error (code %d): %s", apiErr.Code, apiErr.Message)
+			return nil, &apiErr
 		}
 		return nil, fmt.Errorf("binance api returned status %d", resp.StatusCode)
 	}

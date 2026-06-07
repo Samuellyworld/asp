@@ -4,12 +4,15 @@ package binance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/trading-bot/go-bot/internal/exchange"
@@ -27,6 +30,30 @@ type FuturesClient struct {
 	baseURL     string
 	testnet     bool
 	rateLimiter *RateLimiter
+	filterMu    sync.RWMutex
+	filters     map[string]futuresSymbolFilter
+}
+
+type futuresSymbolFilter struct {
+	QuantityStep float64
+	PriceTick    float64
+	MinQuantity  float64
+}
+
+type futuresExchangeInfoResponse struct {
+	Symbols []futuresExchangeSymbol `json:"symbols"`
+}
+
+type futuresExchangeSymbol struct {
+	Symbol  string                `json:"symbol"`
+	Filters []futuresFilterObject `json:"filters"`
+}
+
+type futuresFilterObject struct {
+	FilterType string `json:"filterType"`
+	TickSize   string `json:"tickSize"`
+	StepSize   string `json:"stepSize"`
+	MinQty     string `json:"minQty"`
 }
 
 // creates a new futures client
@@ -36,6 +63,7 @@ func NewFuturesClient(baseURL string, testnet bool) *FuturesClient {
 		baseURL:     baseURL,
 		testnet:     testnet,
 		rateLimiter: NewRateLimiter(FuturesWeightLimit),
+		filters:     make(map[string]futuresSymbolFilter),
 	}
 }
 
@@ -61,11 +89,26 @@ func (c *FuturesClient) SetMarginType(ctx context.Context, symbol string, margin
 	params.Set("marginType", marginType)
 
 	_, err := c.signedRawRequest(ctx, http.MethodPost, "/fapi/v1/marginType", params, apiKey, apiSecret)
+	var apiErr *apiError
+	if err != nil && errors.As(err, &apiErr) && apiErr.Code == -4046 {
+		return nil
+	}
 	return err
 }
 
 // places a futures order (market or limit)
 func (c *FuturesClient) PlaceOrder(ctx context.Context, symbol string, side exchange.OrderSide, orderType exchange.OrderType, quantity, price float64, apiKey, apiSecret string) (*FuturesOrder, error) {
+	filter, hasFilter := c.getSymbolFilter(ctx, symbol)
+	if hasFilter {
+		quantity = floorToStep(quantity, filter.QuantityStep)
+		if price > 0 {
+			price = roundToStep(price, filter.PriceTick)
+		}
+		if filter.MinQuantity > 0 && quantity < filter.MinQuantity {
+			return nil, fmt.Errorf("quantity %.8f below futures minimum %.8f for %s", quantity, filter.MinQuantity, symbol)
+		}
+	}
+
 	params := url.Values{}
 	params.Set("symbol", toBinanceSymbol(symbol))
 	params.Set("side", string(side))
@@ -82,6 +125,15 @@ func (c *FuturesClient) PlaceOrder(ctx context.Context, symbol string, side exch
 
 // places a stop market order for futures
 func (c *FuturesClient) PlaceStopMarket(ctx context.Context, symbol string, side exchange.OrderSide, quantity, stopPrice float64, apiKey, apiSecret string) (*FuturesOrder, error) {
+	filter, hasFilter := c.getSymbolFilter(ctx, symbol)
+	if hasFilter {
+		quantity = floorToStep(quantity, filter.QuantityStep)
+		stopPrice = roundToStep(stopPrice, filter.PriceTick)
+		if filter.MinQuantity > 0 && quantity < filter.MinQuantity {
+			return nil, fmt.Errorf("quantity %.8f below futures minimum %.8f for %s", quantity, filter.MinQuantity, symbol)
+		}
+	}
+
 	params := url.Values{}
 	params.Set("symbol", toBinanceSymbol(symbol))
 	params.Set("side", string(side))
@@ -94,6 +146,15 @@ func (c *FuturesClient) PlaceStopMarket(ctx context.Context, symbol string, side
 
 // places a take profit market order for futures
 func (c *FuturesClient) PlaceTakeProfitMarket(ctx context.Context, symbol string, side exchange.OrderSide, quantity, stopPrice float64, apiKey, apiSecret string) (*FuturesOrder, error) {
+	filter, hasFilter := c.getSymbolFilter(ctx, symbol)
+	if hasFilter {
+		quantity = floorToStep(quantity, filter.QuantityStep)
+		stopPrice = roundToStep(stopPrice, filter.PriceTick)
+		if filter.MinQuantity > 0 && quantity < filter.MinQuantity {
+			return nil, fmt.Errorf("quantity %.8f below futures minimum %.8f for %s", quantity, filter.MinQuantity, symbol)
+		}
+	}
+
 	params := url.Values{}
 	params.Set("symbol", toBinanceSymbol(symbol))
 	params.Set("side", string(side))
@@ -209,6 +270,67 @@ func (c *FuturesClient) GetFundingRate(ctx context.Context, symbol string) (*Fun
 	return raw[0].toFundingRate(), nil
 }
 
+func (c *FuturesClient) getSymbolFilter(ctx context.Context, symbol string) (futuresSymbolFilter, bool) {
+	binanceSymbol := toBinanceSymbol(symbol)
+
+	c.filterMu.RLock()
+	filter, ok := c.filters[binanceSymbol]
+	c.filterMu.RUnlock()
+	if ok {
+		return filter, true
+	}
+
+	reqURL := fmt.Sprintf("%s/fapi/v1/exchangeInfo?symbol=%s", c.baseURL, binanceSymbol)
+	body, err := c.publicGet(ctx, reqURL)
+	if err != nil {
+		return futuresSymbolFilter{}, false
+	}
+
+	var raw futuresExchangeInfoResponse
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return futuresSymbolFilter{}, false
+	}
+
+	for _, s := range raw.Symbols {
+		if s.Symbol != binanceSymbol {
+			continue
+		}
+		var parsed futuresSymbolFilter
+		for _, f := range s.Filters {
+			switch f.FilterType {
+			case "LOT_SIZE":
+				parsed.QuantityStep, _ = strconv.ParseFloat(f.StepSize, 64)
+				parsed.MinQuantity, _ = strconv.ParseFloat(f.MinQty, 64)
+			case "PRICE_FILTER":
+				parsed.PriceTick, _ = strconv.ParseFloat(f.TickSize, 64)
+			}
+		}
+		if parsed.QuantityStep <= 0 && parsed.PriceTick <= 0 {
+			return futuresSymbolFilter{}, false
+		}
+		c.filterMu.Lock()
+		c.filters[binanceSymbol] = parsed
+		c.filterMu.Unlock()
+		return parsed, true
+	}
+
+	return futuresSymbolFilter{}, false
+}
+
+func floorToStep(value, step float64) float64 {
+	if value <= 0 || step <= 0 {
+		return value
+	}
+	return math.Floor((value/step)+1e-9) * step
+}
+
+func roundToStep(value, step float64) float64 {
+	if value <= 0 || step <= 0 {
+		return value
+	}
+	return math.Round(value/step) * step
+}
+
 // posts a futures order and returns the parsed response
 func (c *FuturesClient) postFuturesOrder(ctx context.Context, params url.Values, apiKey, apiSecret string) (*FuturesOrder, error) {
 	body, err := c.signedRawRequest(ctx, http.MethodPost, "/fapi/v1/order", params, apiKey, apiSecret)
@@ -260,7 +382,7 @@ func (c *FuturesClient) signedRawRequest(ctx context.Context, method, path strin
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	c.rateLimiter.RecordResponse(resp.StatusCode)
 
 	body, err := io.ReadAll(resp.Body)
@@ -271,7 +393,7 @@ func (c *FuturesClient) signedRawRequest(ctx context.Context, method, path strin
 	if resp.StatusCode != http.StatusOK {
 		var apiErr apiError
 		if json.Unmarshal(body, &apiErr) == nil {
-			return nil, fmt.Errorf("binance api error (code %d): %s", apiErr.Code, apiErr.Message)
+			return nil, &apiErr
 		}
 		return nil, fmt.Errorf("binance api returned status %d", resp.StatusCode)
 	}
@@ -290,7 +412,7 @@ func (c *FuturesClient) publicGet(ctx context.Context, reqURL string) ([]byte, e
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	c.rateLimiter.RecordResponse(resp.StatusCode)
 
 	body, err := io.ReadAll(resp.Body)
@@ -301,7 +423,7 @@ func (c *FuturesClient) publicGet(ctx context.Context, reqURL string) ([]byte, e
 	if resp.StatusCode != http.StatusOK {
 		var apiErr apiError
 		if json.Unmarshal(body, &apiErr) == nil {
-			return nil, fmt.Errorf("binance api error (code %d): %s", apiErr.Code, apiErr.Message)
+			return nil, &apiErr
 		}
 		return nil, fmt.Errorf("binance api returned status %d", resp.StatusCode)
 	}

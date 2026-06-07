@@ -47,7 +47,7 @@ func (c *Client) GetBalance(ctx context.Context, apiKey, apiSecret string) ([]ex
 	if err != nil {
 		return nil, fmt.Errorf("failed to get balance: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	c.rateLimiter.RecordResponse(resp.StatusCode)
 
 	body, err := io.ReadAll(resp.Body)

@@ -66,7 +66,9 @@ func (b *Bot) RespondInteraction(interactionID, interactionToken string, resp *I
 	if err != nil {
 		return fmt.Errorf("failed to respond to interaction: %w", err)
 	}
-	defer httpResp.Body.Close()
+	defer func() {
+		_ = httpResp.Body.Close()
+	}()
 
 	if httpResp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(httpResp.Body)
@@ -107,7 +109,9 @@ func (b *Bot) GetGatewayURL() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to get gateway url: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
@@ -139,7 +143,9 @@ func (b *Bot) sendJSON(method, path string, payload interface{}) error {
 	if err != nil {
 		return fmt.Errorf("discord api request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)

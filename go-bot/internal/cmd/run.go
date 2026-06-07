@@ -443,18 +443,19 @@ func runBot(cmd *cobra.Command, args []string) error {
 		addTelegramOpsAlerts(opsAlerts, telegramBot, cfg.Telegram.AdminChatID)
 
 		handler.SetTradingDeps(&telegram.TradingDeps{
-			OppManager:       oppManager,
-			PaperExecutor:    paperExecutor,
-			PaperMonitor:     paperMonitor,
-			LiveExecutor:     liveExecutor,
-			LiveMonitor:      liveMonitor,
-			Emergency:        emergencyStop,
-			Confirm:          confirmMgr,
-			SafetyConfig:     safetyConfig,
-			LevPaperExecutor: levPaperExecutor,
-			LevLiveExecutor:  levLiveExecutor,
-			LevMonitor:       levPaperMonitor,
-			DCAExecutor:      dcaExecutor,
+			OppManager:             oppManager,
+			PaperExecutor:          paperExecutor,
+			PaperMonitor:           paperMonitor,
+			LiveExecutor:           liveExecutor,
+			LiveMonitor:            liveMonitor,
+			Emergency:              emergencyStop,
+			Confirm:                confirmMgr,
+			SafetyConfig:           safetyConfig,
+			LevPaperExecutor:       levPaperExecutor,
+			LevLiveExecutor:        levLiveExecutor,
+			LevMonitor:             levPaperMonitor,
+			FuturesBalanceProvider: levBalanceProvider,
+			DCAExecutor:            dcaExecutor,
 		})
 
 		notifier.telegramBot = telegramBot

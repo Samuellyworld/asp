@@ -10,6 +10,7 @@ import (
 
 	"github.com/trading-bot/go-bot/internal/claude"
 	"github.com/trading-bot/go-bot/internal/exchange"
+	"github.com/trading-bot/go-bot/internal/opportunity"
 	"github.com/trading-bot/go-bot/internal/pipeline"
 	"github.com/trading-bot/go-bot/internal/preferences"
 	"github.com/trading-bot/go-bot/internal/user"
@@ -85,6 +86,7 @@ type notification struct {
 	platform string
 	target   string
 	message  string
+	buttons  bool
 }
 
 type mockNotifier struct {
@@ -106,6 +108,18 @@ func (m *mockNotifier) NotifyTelegram(chatID int64, message string) error {
 	return m.telegramErr
 }
 
+func (m *mockNotifier) NotifyTelegramWithButtons(chatID int64, message string, buttons [][]opportunity.ButtonData) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.notifications = append(m.notifications, notification{
+		platform: "telegram",
+		target:   fmt.Sprintf("%d", chatID),
+		message:  message,
+		buttons:  len(buttons) > 0,
+	})
+	return m.telegramErr
+}
+
 func (m *mockNotifier) NotifyDiscord(channelID string, title, description string, fields []pipeline.DiscordField, color int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -113,6 +127,18 @@ func (m *mockNotifier) NotifyDiscord(channelID string, title, description string
 		platform: "discord",
 		target:   channelID,
 		message:  fmt.Sprintf("%s: %s", title, description),
+	})
+	return m.discordErr
+}
+
+func (m *mockNotifier) NotifyDiscordWithButtons(channelID string, title, description string, fields []pipeline.DiscordField, color int, buttons []opportunity.ButtonData) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.notifications = append(m.notifications, notification{
+		platform: "discord",
+		target:   channelID,
+		message:  fmt.Sprintf("%s: %s", title, description),
+		buttons:  len(buttons) > 0,
 	})
 	return m.discordErr
 }
@@ -132,6 +158,18 @@ func (m *mockNotifier) count() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.notifications)
+}
+
+func (m *mockNotifier) buttonCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	count := 0
+	for _, n := range m.notifications {
+		if n.buttons {
+			count++
+		}
+	}
+	return count
 }
 
 func (m *mockNotifier) telegramCount() int {
@@ -168,8 +206,8 @@ type loggedDecision struct {
 }
 
 type mockDecisionLogger struct {
-	mu           sync.Mutex
-	decisions    []loggedDecision
+	mu            sync.Mutex
+	decisions     []loggedDecision
 	notifications int
 }
 
@@ -348,7 +386,7 @@ func TestScanCycleNotifiesBuySignal(t *testing.T) {
 	}
 }
 
-func TestScanCycleNotifiesBothPlatforms(t *testing.T) {
+func TestScanCycleUsesSingleActiveChannel(t *testing.T) {
 	users := []*user.User{testUserBoth(1, 100, 200)}
 	items := map[int][]watchlist.Item{
 		1: {{Symbol: "BTC/USDT", IsActive: true}},
@@ -363,8 +401,76 @@ func TestScanCycleNotifiesBothPlatforms(t *testing.T) {
 	if notifier.telegramCount() != 1 {
 		t.Error("expected telegram notification")
 	}
+	if notifier.discordCount() != 0 {
+		t.Error("expected no duplicate discord notification")
+	}
+}
+
+func TestScanCycleRespectsDiscordLastActiveChannel(t *testing.T) {
+	discord := "discord"
+	users := []*user.User{testUserBoth(1, 100, 200)}
+	users[0].LastActiveChannel = &discord
+	items := map[int][]watchlist.Item{
+		1: {{Symbol: "BTC/USDT", IsActive: true}},
+	}
+	results := map[string]*pipeline.Result{
+		"BTC/USDT": buyResult("BTC/USDT", 90),
+	}
+
+	s, notifier, _ := testScanner(users, items, results)
+	s.runCycle(context.Background())
+
+	if notifier.telegramCount() != 0 {
+		t.Error("expected no duplicate telegram notification")
+	}
 	if notifier.discordCount() != 1 {
 		t.Error("expected discord notification")
+	}
+}
+
+func TestScanCycleAddsApprovalButtonsWhenOpportunityManagerConfigured(t *testing.T) {
+	users := []*user.User{testUser(1, 100)}
+	items := map[int][]watchlist.Item{
+		1: {{Symbol: "BTC/USDT", IsActive: true}},
+	}
+	results := map[string]*pipeline.Result{
+		"BTC/USDT": buyResult("BTC/USDT", 90),
+	}
+
+	s, notifier, _ := testScanner(users, items, results)
+	s.SetOpportunityManager(opportunity.NewManager(opportunity.DefaultConfig()))
+	s.runCycle(context.Background())
+
+	if notifier.telegramCount() != 1 {
+		t.Fatalf("expected telegram notification")
+	}
+	if notifier.buttonCount() != 1 {
+		t.Fatalf("expected approval buttons on scanner opportunity, got %d", notifier.buttonCount())
+	}
+}
+
+func TestScanCycleAddsDiscordApprovalButtonsWhenOpportunityManagerConfigured(t *testing.T) {
+	users := []*user.User{{
+		ID:          1,
+		DiscordID:   ptr(int64(200)),
+		IsActivated: true,
+	}}
+	items := map[int][]watchlist.Item{
+		1: {{Symbol: "BTC/USDT", IsActive: true}},
+	}
+	results := map[string]*pipeline.Result{
+		"BTC/USDT": buyResult("BTC/USDT", 90),
+	}
+
+	s, notifier, _ := testScanner(users, items, results)
+	s.SetOpportunityManager(opportunity.NewManager(opportunity.DefaultConfig()))
+	s.runCycle(context.Background())
+
+	if notifier.discordCount() != 1 {
+		t.Fatalf("expected discord notification")
+	}
+	if notifier.buttonCount() != 1 {
+		t.Fatalf("expected approval buttons on discord scanner opportunity, got %d", notifier.buttonCount())
 	}
 }
 

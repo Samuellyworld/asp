@@ -157,6 +157,28 @@ func (b *Bot) SendMessageWithKeyboard(chatID int64, text string, keyboard *Inlin
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusBadRequest {
+		respBody, _ := io.ReadAll(resp.Body)
+		if strings.Contains(string(respBody), "can't parse entities") {
+			delete(payload, "parse_mode")
+			body, err = json.Marshal(payload)
+			if err != nil {
+				return fmt.Errorf("failed to marshal plain keyboard payload: %w", err)
+			}
+			resp2, err2 := b.client.Post(endpoint, "application/json", bytes.NewReader(body))
+			if err2 != nil {
+				return fmt.Errorf("failed to send plain message with keyboard: %w", err2)
+			}
+			defer resp2.Body.Close()
+			if resp2.StatusCode != http.StatusOK {
+				respBody2, _ := io.ReadAll(resp2.Body)
+				return fmt.Errorf("telegram api error (status %d): %s", resp2.StatusCode, string(respBody2))
+			}
+			return nil
+		}
+		return fmt.Errorf("telegram api error (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("telegram api error (status %d): %s", resp.StatusCode, string(respBody))

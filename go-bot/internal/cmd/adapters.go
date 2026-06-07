@@ -14,9 +14,12 @@ import (
 	"github.com/trading-bot/go-bot/internal/claude"
 	"github.com/trading-bot/go-bot/internal/database"
 	"github.com/trading-bot/go-bot/internal/datasources"
+	discordpkg "github.com/trading-bot/go-bot/internal/discord"
 	"github.com/trading-bot/go-bot/internal/exchange"
 	"github.com/trading-bot/go-bot/internal/livetrading"
+	"github.com/trading-bot/go-bot/internal/opportunity"
 	"github.com/trading-bot/go-bot/internal/pipeline"
+	"github.com/trading-bot/go-bot/internal/telegram"
 	"github.com/trading-bot/go-bot/internal/user"
 	"github.com/trading-bot/go-bot/internal/watchlist"
 )
@@ -265,9 +268,11 @@ func (a *leverageStatusAdapter) IsLeverageEnabled(userID int) bool {
 type scannerNotifier struct {
 	telegramBot interface {
 		SendMessage(chatID int64, text string) error
+		SendMessageWithKeyboard(chatID int64, text string, keyboard *telegram.InlineKeyboardMarkup) error
 	}
 	discordBot interface {
 		SendMessage(channelID string, content string) error
+		SendEmbed(channelID string, content string, embeds []discordpkg.Embed, components []discordpkg.Component) error
 	}
 	whatsappBot interface {
 		SendMessage(recipientID string, text string) error
@@ -282,6 +287,29 @@ func (n *scannerNotifier) NotifyTelegram(chatID int64, message string) error {
 	return n.telegramBot.SendMessage(chatID, message)
 }
 
+func (n *scannerNotifier) NotifyTelegramWithButtons(chatID int64, message string, buttons [][]opportunity.ButtonData) error {
+	if n.telegramBot == nil {
+		log.Printf("telegram not configured, skipping notification for chat %d", chatID)
+		return nil
+	}
+
+	keyboard := make([][]telegram.InlineKeyboardButton, 0, len(buttons))
+	for _, row := range buttons {
+		kbRow := make([]telegram.InlineKeyboardButton, 0, len(row))
+		for _, btn := range row {
+			kbRow = append(kbRow, telegram.InlineKeyboardButton{
+				Text:         btn.Text,
+				CallbackData: btn.Data,
+			})
+		}
+		keyboard = append(keyboard, kbRow)
+	}
+
+	return n.telegramBot.SendMessageWithKeyboard(chatID, message, &telegram.InlineKeyboardMarkup{
+		InlineKeyboard: keyboard,
+	})
+}
+
 func (n *scannerNotifier) NotifyDiscord(channelID string, title, description string, fields []pipeline.DiscordField, color int) error {
 	if n.discordBot == nil {
 		log.Printf("discord not configured, skipping notification for channel %s", channelID)
@@ -290,6 +318,42 @@ func (n *scannerNotifier) NotifyDiscord(channelID string, title, description str
 	// format a simple text message from the discord fields
 	msg := "**" + title + "**\n" + description
 	return n.discordBot.SendMessage(channelID, msg)
+}
+
+func (n *scannerNotifier) NotifyDiscordWithButtons(channelID string, title, description string, fields []pipeline.DiscordField, color int, buttons []opportunity.ButtonData) error {
+	if n.discordBot == nil {
+		log.Printf("discord not configured, skipping notification for channel %s", channelID)
+		return nil
+	}
+
+	embedFields := make([]discordpkg.EmbedField, 0, len(fields))
+	for _, f := range fields {
+		embedFields = append(embedFields, discordpkg.EmbedField{
+			Name:   f.Name,
+			Value:  f.Value,
+			Inline: f.Inline,
+		})
+	}
+
+	components := make([]discordpkg.Component, 0, len(buttons))
+	for _, btn := range buttons {
+		components = append(components, discordpkg.Component{
+			Type:     discordpkg.ComponentButton,
+			Style:    btn.Style,
+			Label:    btn.Text,
+			CustomID: btn.Data,
+		})
+	}
+
+	return n.discordBot.SendEmbed(channelID, "", []discordpkg.Embed{{
+		Title:       title,
+		Description: description,
+		Color:       color,
+		Fields:      embedFields,
+	}}, []discordpkg.Component{{
+		Type:       discordpkg.ComponentActionRow,
+		Components: components,
+	}})
 }
 
 func (n *scannerNotifier) NotifyWhatsApp(recipientID string, message string) error {

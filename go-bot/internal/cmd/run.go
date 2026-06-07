@@ -561,6 +561,7 @@ func runBot(cmd *cobra.Command, args []string) error {
 	}
 
 	bgScanner := scanner.New(userSvc, watchSvc, prefsSvc, pipe, notifier, scannerCfg)
+	bgScanner.SetOpportunityManager(oppManager)
 
 	// wire decision logging to persist AI decisions and daily stats
 	decisionRepo := database.NewAIDecisionRepository(pg.Pool())

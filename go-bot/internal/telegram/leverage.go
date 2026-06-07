@@ -135,12 +135,32 @@ func (h *Handler) handleLeverageSelection(ctx context.Context, cb *CallbackQuery
 
 	positionSide := leverage.PositionSide(side)
 	if h.trading.Confirm != nil && h.trading.Confirm.IsConfirmed(result.User.ID) && h.trading.LevLiveExecutor != nil {
+		margin := plan.PositionSize
+		if h.trading.FuturesBalanceProvider != nil {
+			balance, err := h.trading.FuturesBalanceProvider.GetFuturesBalance(ctx, result.User.ID, "USDT")
+			if err != nil {
+				h.trading.OppManager.FailExecution(oppID, result.User.ID)
+				h.answerCallback(cb.ID, "futures balance check failed")
+				h.send(cb.Message.Chat.ID, fmt.Sprintf("❌ live futures execution failed: failed to check futures balance: %v", err))
+				return true
+			}
+			if balance <= 0 {
+				h.trading.OppManager.FailExecution(oppID, result.User.ID)
+				h.answerCallback(cb.ID, "insufficient futures balance")
+				h.send(cb.Message.Chat.ID, "❌ live futures execution failed: no available USDT futures balance")
+				return true
+			}
+			if margin > balance {
+				margin = balance
+			}
+		}
+
 		pos, err := h.trading.LevLiveExecutor.OpenPosition(
 			result.User.ID,
 			opp.Symbol,
 			positionSide,
 			lev,
-			plan.PositionSize,
+			margin,
 			plan.StopLoss,
 			plan.TakeProfit,
 			"telegram",
@@ -156,6 +176,9 @@ func (h *Handler) handleLeverageSelection(ctx context.Context, cb *CallbackQuery
 		h.trading.OppManager.CompleteExecution(oppID, result.User.ID)
 		h.editMessage(cb.Message.Chat.ID, cb.Message.MessageID, opportunity.FormatApprovedMessage(opp)+opportunity.FormatLeverageSelected(opp), nil)
 		h.answerCallback(cb.ID, "live futures opened")
+		if margin < plan.PositionSize {
+			h.send(cb.Message.Chat.ID, fmt.Sprintf("ℹ️ Position margin capped to available futures balance: $%.2f (AI suggested $%.2f).", margin, plan.PositionSize))
+		}
 		h.send(cb.Message.Chat.ID, leverage.FormatLeverageOpened(pos))
 		return true
 	}

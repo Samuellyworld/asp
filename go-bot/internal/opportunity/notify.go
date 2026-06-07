@@ -76,8 +76,8 @@ func DiscordButtons(oppID string) []ButtonData {
 }
 
 // returns telegram buttons for choosing a futures leverage trade.
-func TelegramLeverageButtons(oppID string) [][]ButtonData {
-	buttons := LeverageButtons(oppID)
+func TelegramLeverageButtons(oppID string, action claude.Action) [][]ButtonData {
+	buttons := leverageButtonsForAction(oppID, action, false)
 	buttons = append(buttons, []ButtonData{
 		{Text: "❌ Reject", Data: "opp_reject:" + oppID},
 	})
@@ -85,16 +85,16 @@ func TelegramLeverageButtons(oppID string) [][]ButtonData {
 }
 
 // returns discord buttons for choosing a futures leverage trade.
-func DiscordLeverageButtons(oppID string) []ButtonData {
-	return []ButtonData{
-		{Text: "3x Long", Data: fmt.Sprintf("lev_long_3:%s", oppID), Style: ButtonStyleSuccess},
-		{Text: "5x Long", Data: fmt.Sprintf("lev_long_5:%s", oppID), Style: ButtonStyleSuccess},
-		{Text: "10x Long", Data: fmt.Sprintf("lev_long_10:%s", oppID), Style: ButtonStyleSuccess},
-		{Text: "3x Short", Data: fmt.Sprintf("lev_short_3:%s", oppID), Style: ButtonStyleDanger},
-		{Text: "5x Short", Data: fmt.Sprintf("lev_short_5:%s", oppID), Style: ButtonStyleDanger},
-		{Text: "10x Short", Data: fmt.Sprintf("lev_short_10:%s", oppID), Style: ButtonStyleDanger},
-		{Text: "❌ Reject", Data: "opp_reject:" + oppID, Style: ButtonStyleSecondary},
+func DiscordLeverageButtons(oppID string, action claude.Action) []ButtonData {
+	rows := leverageButtonsForAction(oppID, action, true)
+	var buttons []ButtonData
+	for _, row := range rows {
+		buttons = append(buttons, row...)
 	}
+	buttons = append(buttons,
+		ButtonData{Text: "❌ Reject", Data: "opp_reject:" + oppID, Style: ButtonStyleSecondary},
+	)
+	return buttons
 }
 
 // generic button data for both platforms
@@ -164,20 +164,37 @@ func FormatModifiedMessage(opp *Opportunity) string {
 		plan.Entry, plan.StopLoss, plan.TakeProfit, plan.PositionSize, plan.RiskReward)
 }
 
-// returns leverage option buttons for an opportunity
+// returns leverage option buttons for an opportunity.
+// Kept for generic callers; scanner alerts use action-aware buttons.
 func LeverageButtons(oppID string) [][]ButtonData {
-	return [][]ButtonData{
-		{
-			{Text: "3x Long", Data: fmt.Sprintf("lev_long_3:%s", oppID)},
-			{Text: "5x Long", Data: fmt.Sprintf("lev_long_5:%s", oppID)},
-			{Text: "10x Long", Data: fmt.Sprintf("lev_long_10:%s", oppID)},
-		},
-		{
-			{Text: "3x Short", Data: fmt.Sprintf("lev_short_3:%s", oppID)},
-			{Text: "5x Short", Data: fmt.Sprintf("lev_short_5:%s", oppID)},
-			{Text: "10x Short", Data: fmt.Sprintf("lev_short_10:%s", oppID)},
-		},
+	rows := leverageButtonsForAction(oppID, claude.ActionBuy, false)
+	rows = append(rows, leverageButtonsForAction(oppID, claude.ActionSell, false)...)
+	return rows
+}
+
+func leverageButtonsForAction(oppID string, action claude.Action, withStyle bool) [][]ButtonData {
+	side := "long"
+	label := "Long"
+	style := ButtonStyleSuccess
+	if action == claude.ActionSell {
+		side = "short"
+		label = "Short"
+		style = ButtonStyleDanger
 	}
+
+	leverages := []int{2, 3, 5, 10}
+	row := make([]ButtonData, 0, len(leverages))
+	for _, lev := range leverages {
+		button := ButtonData{
+			Text: fmt.Sprintf("%dx %s", lev, label),
+			Data: fmt.Sprintf("lev_%s_%d:%s", side, lev, oppID),
+		}
+		if withStyle {
+			button.Style = style
+		}
+		row = append(row, button)
+	}
+	return [][]ButtonData{row}
 }
 
 // formats leverage selection confirmation

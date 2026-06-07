@@ -24,9 +24,10 @@ type TradingDeps struct {
 	SafetyConfig  livetrading.SafetyConfig
 
 	// leverage trading
-	LevPaperExecutor *leverage.PaperExecutor
-	LevLiveExecutor  *leverage.LiveExecutor
-	LevMonitor       *leverage.Monitor
+	LevPaperExecutor       *leverage.PaperExecutor
+	LevLiveExecutor        *leverage.LiveExecutor
+	LevMonitor             *leverage.Monitor
+	FuturesBalanceProvider leverage.FuturesBalanceProvider
 }
 
 // attaches trading dependencies to the handler

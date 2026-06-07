@@ -5,6 +5,8 @@ import (
 	"math"
 )
 
+const defaultExchangeMarginBufferPct = 0.95
+
 // recommended position size for a given leverage level
 type SizeRecommendation struct {
 	Leverage        int
@@ -85,6 +87,19 @@ func MarginForPositionSize(positionSize float64, leverage int) (float64, error) 
 		return 0, fmt.Errorf("leverage must be positive")
 	}
 	return positionSize / float64(leverage), nil
+}
+
+// CapMarginToAvailableBalance keeps a small futures wallet buffer for fees,
+// maintenance margin, and Binance-side rounding after exchange filters apply.
+func CapMarginToAvailableBalance(margin, availableBalance float64) float64 {
+	if margin <= 0 || availableBalance <= 0 {
+		return margin
+	}
+	maxUsable := availableBalance * defaultExchangeMarginBufferPct
+	if margin > maxUsable {
+		return maxUsable
+	}
+	return margin
 }
 
 // formats position sizing recommendations as a readable string

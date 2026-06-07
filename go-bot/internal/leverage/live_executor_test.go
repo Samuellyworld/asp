@@ -14,6 +14,8 @@ import (
 // --- mocks for live executor tests ---
 
 type mockFutures struct {
+	setOneWayCalls   int
+	setOneWayModeErr error
 	setLeverageCalls int
 	setLeverageErr   error
 	setMarginCalls   int
@@ -34,6 +36,11 @@ type mockFutures struct {
 	lastOrderQty     float64
 	lastStopPrice    float64
 	lastTPPrice      float64
+}
+
+func (m *mockFutures) SetOneWayPositionMode(ctx context.Context, apiKey, apiSecret string) error {
+	m.setOneWayCalls++
+	return m.setOneWayModeErr
 }
 
 func (m *mockFutures) SetLeverage(ctx context.Context, symbol string, leverage int, apiKey, apiSecret string) error {
@@ -320,6 +327,9 @@ func TestLiveExecutor_OpenLong(t *testing.T) {
 	if futures.setLeverageCalls != 1 || futures.setMarginCalls != 1 {
 		t.Errorf("SetLeverage/SetMarginType calls = (%d,%d), want (1,1)", futures.setLeverageCalls, futures.setMarginCalls)
 	}
+	if futures.setOneWayCalls != 1 {
+		t.Errorf("SetOneWayPositionMode calls = %d, want 1", futures.setOneWayCalls)
+	}
 	if futures.lastOrderSide != exchange.SideBuy {
 		t.Errorf("order side = %q, want BUY", futures.lastOrderSide)
 	}
@@ -502,6 +512,13 @@ func TestLiveExecutor_OpenErrors(t *testing.T) {
 			wantErr: "failed to decrypt keys",
 		},
 		{
+			name: "set one-way futures mode error",
+			setup: func(f *mockFutures, _ *mockLiveKeys, _ *mockMarkPrice) {
+				f.setOneWayModeErr = fmt.Errorf("hedge mode has open positions")
+			},
+			wantErr: "failed to set one-way futures mode",
+		},
+		{
 			name:    "set leverage error",
 			setup:   func(f *mockFutures, _ *mockLiveKeys, _ *mockMarkPrice) { f.setLeverageErr = fmt.Errorf("api error") },
 			wantErr: "failed to set leverage",
@@ -541,6 +558,65 @@ func TestLiveExecutor_OpenErrors(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.wantErr) {
 				t.Errorf("error = %q, want it to contain %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestLiveExecutor_OpenRejectsInvalidProtectionBeforeExchangeOrder(t *testing.T) {
+	tests := []struct {
+		name       string
+		side       PositionSide
+		stopLoss   float64
+		takeProfit float64
+		wantErr    string
+	}{
+		{
+			name:       "long stop loss above mark",
+			side:       SideLong,
+			stopLoss:   50100,
+			takeProfit: 55000,
+			wantErr:    "invalid long stop loss",
+		},
+		{
+			name:       "long take profit below mark",
+			side:       SideLong,
+			stopLoss:   48000,
+			takeProfit: 49900,
+			wantErr:    "invalid long take profit",
+		},
+		{
+			name:       "short stop loss below mark",
+			side:       SideShort,
+			stopLoss:   49900,
+			takeProfit: 47000,
+			wantErr:    "invalid short stop loss",
+		},
+		{
+			name:       "short take profit above mark",
+			side:       SideShort,
+			stopLoss:   52000,
+			takeProfit: 50100,
+			wantErr:    "invalid short take profit",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			exec, futures, _, _, _ := newTestLiveExecutor()
+
+			_, err := exec.OpenPosition(1, "BTCUSDT", tc.side, 10, 100, tc.stopLoss, tc.takeProfit, "telegram")
+			if err == nil {
+				t.Fatalf("expected error containing %q", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %q, want it to contain %q", err.Error(), tc.wantErr)
+			}
+			if futures.placeOrderCalls != 0 {
+				t.Fatalf("PlaceOrder calls = %d, want 0", futures.placeOrderCalls)
+			}
+			if futures.setOneWayCalls != 0 || futures.setLeverageCalls != 0 || futures.setMarginCalls != 0 {
+				t.Fatalf("exchange setup calls = (%d,%d,%d), want all 0", futures.setOneWayCalls, futures.setLeverageCalls, futures.setMarginCalls)
 			}
 		})
 	}

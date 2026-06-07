@@ -35,11 +35,15 @@ type FuturesClient struct {
 }
 
 type futuresSymbolFilter struct {
-	QuantityStep      float64
-	QuantityPrecision int
-	PriceTick         float64
-	PricePrecision    int
-	MinQuantity       float64
+	QuantityStep            float64
+	QuantityPrecision       int
+	MarketQuantityStep      float64
+	MarketQuantityPrecision int
+	MarketMinQuantity       float64
+	MinNotional             float64
+	PriceTick               float64
+	PricePrecision          int
+	MinQuantity             float64
 }
 
 type futuresExchangeInfoResponse struct {
@@ -52,10 +56,12 @@ type futuresExchangeSymbol struct {
 }
 
 type futuresFilterObject struct {
-	FilterType string `json:"filterType"`
-	TickSize   string `json:"tickSize"`
-	StepSize   string `json:"stepSize"`
-	MinQty     string `json:"minQty"`
+	FilterType  string `json:"filterType"`
+	TickSize    string `json:"tickSize"`
+	StepSize    string `json:"stepSize"`
+	MinQty      string `json:"minQty"`
+	Notional    string `json:"notional"`
+	MinNotional string `json:"minNotional"`
 }
 
 // creates a new futures client
@@ -72,6 +78,19 @@ func NewFuturesClient(baseURL string, testnet bool) *FuturesClient {
 // SetRateLimiter allows sharing a rate limiter across futures clients
 func (c *FuturesClient) SetRateLimiter(rl *RateLimiter) {
 	c.rateLimiter = rl
+}
+
+// sets the account to one-way position mode, which this executor expects.
+func (c *FuturesClient) SetOneWayPositionMode(ctx context.Context, apiKey, apiSecret string) error {
+	params := url.Values{}
+	params.Set("dualSidePosition", "false")
+
+	_, err := c.signedRawRequest(ctx, http.MethodPost, "/fapi/v1/positionSide/dual", params, apiKey, apiSecret)
+	var apiErr *apiError
+	if err != nil && errors.As(err, &apiErr) && (apiErr.Code == -4059 || strings.Contains(strings.ToLower(apiErr.Message), "no need to change")) {
+		return nil
+	}
+	return err
 }
 
 // sets the leverage for a symbol
@@ -102,13 +121,27 @@ func (c *FuturesClient) SetMarginType(ctx context.Context, symbol string, margin
 func (c *FuturesClient) PlaceOrder(ctx context.Context, symbol string, side exchange.OrderSide, orderType exchange.OrderType, quantity, price float64, apiKey, apiSecret string) (*FuturesOrder, error) {
 	filter, hasFilter := c.getSymbolFilter(ctx, symbol)
 	if hasFilter {
-		quantity = floorToStep(quantity, filter.QuantityStep)
+		quantityStep, quantityPrecision, minQuantity := filter.quantityRules(orderType == exchange.OrderTypeMarket)
+		quantity = floorToStep(quantity, quantityStep)
 		if price > 0 {
 			price = roundToStep(price, filter.PriceTick)
 		}
-		if filter.MinQuantity > 0 && quantity < filter.MinQuantity {
-			return nil, fmt.Errorf("quantity %.8f below futures minimum %.8f for %s", quantity, filter.MinQuantity, symbol)
+		if minQuantity > 0 && quantity < minQuantity {
+			return nil, fmt.Errorf("quantity %.8f below futures minimum %.8f for %s", quantity, minQuantity, symbol)
 		}
+		if filter.MinNotional > 0 {
+			notionalPrice := price
+			if orderType == exchange.OrderTypeMarket {
+				mark, err := c.GetMarkPrice(ctx, symbol)
+				if err == nil && mark != nil && mark.MarkPrice > 0 {
+					notionalPrice = mark.MarkPrice
+				}
+			}
+			if notionalPrice > 0 && quantity*notionalPrice < filter.MinNotional {
+				return nil, fmt.Errorf("notional %.8f below futures minimum %.8f for %s", quantity*notionalPrice, filter.MinNotional, symbol)
+			}
+		}
+		filter.QuantityPrecision = quantityPrecision
 	}
 
 	params := url.Values{}
@@ -137,52 +170,62 @@ func (c *FuturesClient) PlaceOrder(ctx context.Context, symbol string, side exch
 func (c *FuturesClient) PlaceStopMarket(ctx context.Context, symbol string, side exchange.OrderSide, quantity, stopPrice float64, apiKey, apiSecret string) (*FuturesOrder, error) {
 	filter, hasFilter := c.getSymbolFilter(ctx, symbol)
 	if hasFilter {
-		quantity = floorToStep(quantity, filter.QuantityStep)
+		quantityStep, quantityPrecision, minQuantity := filter.quantityRules(true)
+		quantity = floorToStep(quantity, quantityStep)
 		stopPrice = roundToStep(stopPrice, filter.PriceTick)
-		if filter.MinQuantity > 0 && quantity < filter.MinQuantity {
-			return nil, fmt.Errorf("quantity %.8f below futures minimum %.8f for %s", quantity, filter.MinQuantity, symbol)
+		if minQuantity > 0 && quantity < minQuantity {
+			return nil, fmt.Errorf("quantity %.8f below futures minimum %.8f for %s", quantity, minQuantity, symbol)
 		}
+		filter.QuantityPrecision = quantityPrecision
 	}
 
 	params := url.Values{}
 	params.Set("symbol", toBinanceSymbol(symbol))
 	params.Set("side", string(side))
+	params.Set("algoType", "CONDITIONAL")
 	params.Set("type", "STOP_MARKET")
+	params.Set("reduceOnly", "true")
+	params.Set("workingType", "MARK_PRICE")
 	if hasFilter {
 		params.Set("quantity", formatFloatWithMaxPrecision(quantity, filter.QuantityPrecision))
-		params.Set("stopPrice", formatFloatWithMaxPrecision(stopPrice, filter.PricePrecision))
+		params.Set("triggerPrice", formatFloatWithMaxPrecision(stopPrice, filter.PricePrecision))
 	} else {
 		params.Set("quantity", formatFloat(quantity))
-		params.Set("stopPrice", formatFloat(stopPrice))
+		params.Set("triggerPrice", formatFloat(stopPrice))
 	}
 
-	return c.postFuturesOrder(ctx, params, apiKey, apiSecret)
+	return c.postFuturesAlgoOrder(ctx, params, apiKey, apiSecret)
 }
 
 // places a take profit market order for futures
 func (c *FuturesClient) PlaceTakeProfitMarket(ctx context.Context, symbol string, side exchange.OrderSide, quantity, stopPrice float64, apiKey, apiSecret string) (*FuturesOrder, error) {
 	filter, hasFilter := c.getSymbolFilter(ctx, symbol)
 	if hasFilter {
-		quantity = floorToStep(quantity, filter.QuantityStep)
+		quantityStep, quantityPrecision, minQuantity := filter.quantityRules(true)
+		quantity = floorToStep(quantity, quantityStep)
 		stopPrice = roundToStep(stopPrice, filter.PriceTick)
-		if filter.MinQuantity > 0 && quantity < filter.MinQuantity {
-			return nil, fmt.Errorf("quantity %.8f below futures minimum %.8f for %s", quantity, filter.MinQuantity, symbol)
+		if minQuantity > 0 && quantity < minQuantity {
+			return nil, fmt.Errorf("quantity %.8f below futures minimum %.8f for %s", quantity, minQuantity, symbol)
 		}
+		filter.QuantityPrecision = quantityPrecision
 	}
 
 	params := url.Values{}
 	params.Set("symbol", toBinanceSymbol(symbol))
 	params.Set("side", string(side))
+	params.Set("algoType", "CONDITIONAL")
 	params.Set("type", "TAKE_PROFIT_MARKET")
+	params.Set("reduceOnly", "true")
+	params.Set("workingType", "MARK_PRICE")
 	if hasFilter {
 		params.Set("quantity", formatFloatWithMaxPrecision(quantity, filter.QuantityPrecision))
-		params.Set("stopPrice", formatFloatWithMaxPrecision(stopPrice, filter.PricePrecision))
+		params.Set("triggerPrice", formatFloatWithMaxPrecision(stopPrice, filter.PricePrecision))
 	} else {
 		params.Set("quantity", formatFloat(quantity))
-		params.Set("stopPrice", formatFloat(stopPrice))
+		params.Set("triggerPrice", formatFloat(stopPrice))
 	}
 
-	return c.postFuturesOrder(ctx, params, apiKey, apiSecret)
+	return c.postFuturesAlgoOrder(ctx, params, apiKey, apiSecret)
 }
 
 // cancels an existing futures order by id
@@ -192,6 +235,16 @@ func (c *FuturesClient) CancelOrder(ctx context.Context, symbol string, orderID 
 	params.Set("orderId", strconv.FormatInt(orderID, 10))
 
 	_, err := c.signedRawRequest(ctx, http.MethodDelete, "/fapi/v1/order", params, apiKey, apiSecret)
+	if err == nil {
+		return nil
+	}
+
+	algoParams := url.Values{}
+	algoParams.Set("algoId", strconv.FormatInt(orderID, 10))
+	_, algoErr := c.signedRawRequest(ctx, http.MethodDelete, "/fapi/v1/algoOrder", algoParams, apiKey, apiSecret)
+	if algoErr == nil {
+		return nil
+	}
 	return err
 }
 
@@ -203,7 +256,18 @@ func (c *FuturesClient) GetOrder(ctx context.Context, symbol string, orderID int
 
 	body, err := c.signedRawRequest(ctx, http.MethodGet, "/fapi/v1/order", params, apiKey, apiSecret)
 	if err != nil {
-		return nil, err
+		algoParams := url.Values{}
+		algoParams.Set("algoId", strconv.FormatInt(orderID, 10))
+		algoBody, algoErr := c.signedRawRequest(ctx, http.MethodGet, "/fapi/v1/algoOrder", algoParams, apiKey, apiSecret)
+		if algoErr != nil {
+			return nil, err
+		}
+
+		var rawAlgo futuresAlgoOrderResponse
+		if err := json.Unmarshal(algoBody, &rawAlgo); err != nil {
+			return nil, fmt.Errorf("failed to parse futures algo order: %w", err)
+		}
+		return rawAlgo.toFuturesOrder(), nil
 	}
 
 	var raw futuresOrderResponse
@@ -322,6 +386,14 @@ func (c *FuturesClient) getSymbolFilter(ctx context.Context, symbol string) (fut
 				parsed.QuantityStep, _ = strconv.ParseFloat(f.StepSize, 64)
 				parsed.QuantityPrecision = stepPrecision(f.StepSize)
 				parsed.MinQuantity, _ = strconv.ParseFloat(f.MinQty, 64)
+			case "MARKET_LOT_SIZE":
+				parsed.MarketQuantityStep, _ = strconv.ParseFloat(f.StepSize, 64)
+				parsed.MarketQuantityPrecision = stepPrecision(f.StepSize)
+				parsed.MarketMinQuantity, _ = strconv.ParseFloat(f.MinQty, 64)
+			case "MIN_NOTIONAL":
+				parsed.MinNotional, _ = strconv.ParseFloat(f.Notional, 64)
+			case "NOTIONAL":
+				parsed.MinNotional, _ = strconv.ParseFloat(f.MinNotional, 64)
 			case "PRICE_FILTER":
 				parsed.PriceTick, _ = strconv.ParseFloat(f.TickSize, 64)
 				parsed.PricePrecision = stepPrecision(f.TickSize)
@@ -337,6 +409,17 @@ func (c *FuturesClient) getSymbolFilter(ctx context.Context, symbol string) (fut
 	}
 
 	return futuresSymbolFilter{}, false
+}
+
+func (f futuresSymbolFilter) quantityRules(market bool) (step float64, precision int, minQuantity float64) {
+	if market && f.MarketQuantityStep > 0 {
+		minQuantity = f.MarketMinQuantity
+		if minQuantity <= 0 {
+			minQuantity = f.MinQuantity
+		}
+		return f.MarketQuantityStep, f.MarketQuantityPrecision, minQuantity
+	}
+	return f.QuantityStep, f.QuantityPrecision, f.MinQuantity
 }
 
 func floorToStep(value, step float64) float64 {
@@ -387,6 +470,19 @@ func (c *FuturesClient) postFuturesOrder(ctx context.Context, params url.Values,
 	var raw futuresOrderResponse
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("failed to parse futures order: %w", err)
+	}
+	return raw.toFuturesOrder(), nil
+}
+
+func (c *FuturesClient) postFuturesAlgoOrder(ctx context.Context, params url.Values, apiKey, apiSecret string) (*FuturesOrder, error) {
+	body, err := c.signedRawRequest(ctx, http.MethodPost, "/fapi/v1/algoOrder", params, apiKey, apiSecret)
+	if err != nil {
+		return nil, err
+	}
+
+	var raw futuresAlgoOrderResponse
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("failed to parse futures algo order: %w", err)
 	}
 	return raw.toFuturesOrder(), nil
 }

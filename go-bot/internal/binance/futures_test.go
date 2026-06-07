@@ -17,7 +17,7 @@ func newTestFuturesServer(t *testing.T, handler http.HandlerFunc) (*httptest.Ser
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/fapi/v1/exchangeInfo") {
 			w.WriteHeader(http.StatusOK)
-			writeTestResponse(t, w, []byte(`{"symbols":[{"symbol":"BTCUSDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.10"},{"filterType":"LOT_SIZE","minQty":"0.001","stepSize":"0.001"}]},{"symbol":"BNBUSDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.010"},{"filterType":"LOT_SIZE","minQty":"0.01","stepSize":"0.01"}]},{"symbol":"XRPUSDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.0001"},{"filterType":"LOT_SIZE","minQty":"0.1","stepSize":"0.1"}]}]}`))
+			writeTestResponse(t, w, []byte(`{"symbols":[{"symbol":"BTCUSDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.10"},{"filterType":"LOT_SIZE","minQty":"0.001","stepSize":"0.001"}]},{"symbol":"BNBUSDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.010"},{"filterType":"LOT_SIZE","minQty":"0.01","stepSize":"0.01"}]},{"symbol":"XRPUSDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.0001"},{"filterType":"LOT_SIZE","minQty":"0.1","stepSize":"0.1"}]},{"symbol":"ADAUSDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.0001"},{"filterType":"LOT_SIZE","minQty":"0.1","stepSize":"0.1"},{"filterType":"MARKET_LOT_SIZE","minQty":"1","stepSize":"1"}]}]}`))
 			return
 		}
 		handler(w, r)
@@ -69,34 +69,36 @@ func futuresLimitOrderJSON() string {
 
 func futuresStopMarketOrderJSON() string {
 	return `{
-		"orderId": 50003,
-		"clientOrderId": "sm_1",
+		"algoId": 50003,
+		"clientAlgoId": "sm_1",
+		"algoType": "CONDITIONAL",
 		"symbol": "BTCUSDT",
 		"side": "SELL",
-		"type": "STOP_MARKET",
-		"status": "NEW",
+		"orderType": "STOP_MARKET",
+		"algoStatus": "NEW",
 		"price": "0",
-		"stopPrice": "41000.00",
-		"origQty": "0.010",
-		"executedQty": "0",
-		"avgPrice": "0",
+		"triggerPrice": "41000.00",
+		"quantity": "0.010",
+		"actualQty": "0",
+		"actualPrice": "0",
 		"updateTime": 1704067200000
 	}`
 }
 
 func futuresTakeProfitMarketJSON() string {
 	return `{
-		"orderId": 50004,
-		"clientOrderId": "tpm_1",
+		"algoId": 50004,
+		"clientAlgoId": "tpm_1",
+		"algoType": "CONDITIONAL",
 		"symbol": "BTCUSDT",
 		"side": "SELL",
-		"type": "TAKE_PROFIT_MARKET",
-		"status": "NEW",
+		"orderType": "TAKE_PROFIT_MARKET",
+		"algoStatus": "NEW",
 		"price": "0",
-		"stopPrice": "45000.00",
-		"origQty": "0.010",
-		"executedQty": "0",
-		"avgPrice": "0",
+		"triggerPrice": "45000.00",
+		"quantity": "0.010",
+		"actualQty": "0",
+		"actualPrice": "0",
 		"updateTime": 1704067200000
 	}`
 }
@@ -198,6 +200,43 @@ func TestSetMarginType_APIError(t *testing.T) {
 	err := client.SetMarginType(context.Background(), "BTC/USDT", "CROSSED", "key", "secret")
 	if err != nil {
 		t.Fatalf("SetMarginType() should ignore already-set margin type: %v", err)
+	}
+}
+
+func TestSetOneWayPositionMode(t *testing.T) {
+	var gotDualSide string
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/fapi/v1/positionSide/dual") {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("failed to parse form: %v", err)
+		}
+		gotDualSide = r.FormValue("dualSidePosition")
+		w.WriteHeader(http.StatusOK)
+		writeTestResponse(t, w, []byte(`{"code":200,"msg":"success"}`))
+	})
+	defer server.Close()
+
+	err := client.SetOneWayPositionMode(context.Background(), "key", "secret")
+	if err != nil {
+		t.Fatalf("SetOneWayPositionMode() error: %v", err)
+	}
+	if gotDualSide != "false" {
+		t.Errorf("dualSidePosition = %s, want false", gotDualSide)
+	}
+}
+
+func TestSetOneWayPositionMode_AlreadySet(t *testing.T) {
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		writeTestResponse(t, w, []byte(`{"code":-4059,"msg":"No need to change position side."}`))
+	})
+	defer server.Close()
+
+	err := client.SetOneWayPositionMode(context.Background(), "key", "secret")
+	if err != nil {
+		t.Fatalf("SetOneWayPositionMode() should ignore already-set mode: %v", err)
 	}
 }
 
@@ -304,6 +343,54 @@ func TestFuturesPlaceOrder_FormatsQuantityWithoutFloatNoise(t *testing.T) {
 	}
 }
 
+func TestFuturesPlaceOrder_UsesMarketLotSizeForMarketOrders(t *testing.T) {
+	var gotQuantity string
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("failed to parse form: %v", err)
+		}
+		gotQuantity = r.FormValue("quantity")
+		w.WriteHeader(http.StatusOK)
+		writeTestResponse(t, w, []byte(futuresMarketOrderJSON()))
+	})
+	defer server.Close()
+
+	_, err := client.PlaceOrder(context.Background(), "ADA/USDT", exchange.SideBuy, exchange.OrderTypeMarket, 12.9, 0, "key", "secret")
+	if err != nil {
+		t.Fatalf("PlaceOrder() error: %v", err)
+	}
+	if gotQuantity != "12" {
+		t.Errorf("quantity = %s, want 12", gotQuantity)
+	}
+}
+
+func TestFuturesPlaceOrder_RejectsBelowMinNotionalBeforeOrder(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/fapi/v1/exchangeInfo":
+			w.WriteHeader(http.StatusOK)
+			writeTestResponse(t, w, []byte(`{"symbols":[{"symbol":"LOWUSDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.01"},{"filterType":"LOT_SIZE","minQty":"0.001","stepSize":"0.001"},{"filterType":"MIN_NOTIONAL","notional":"5"}]}]}`))
+		case "/fapi/v1/premiumIndex":
+			w.WriteHeader(http.StatusOK)
+			writeTestResponse(t, w, []byte(`{"symbol":"LOWUSDT","markPrice":"100","indexPrice":"100","lastFundingRate":"0.0001","nextFundingTime":1704067200000}`))
+		case "/fapi/v1/order":
+			t.Fatalf("PlaceOrder should not call /fapi/v1/order for below-min-notional order")
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client := NewFuturesClient(server.URL, true)
+
+	_, err := client.PlaceOrder(context.Background(), "LOW/USDT", exchange.SideBuy, exchange.OrderTypeMarket, 0.01, 0, "key", "secret")
+	if err == nil {
+		t.Fatal("expected min notional error")
+	}
+	if !strings.Contains(err.Error(), "below futures minimum") {
+		t.Fatalf("error = %v, want below futures minimum", err)
+	}
+}
+
 func TestFuturesPlaceOrder_Limit(t *testing.T) {
 	var gotTIF, gotPrice string
 	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -336,13 +423,15 @@ func TestFuturesPlaceOrder_Limit(t *testing.T) {
 }
 
 func TestPlaceStopMarket(t *testing.T) {
-	var gotType, gotStopPrice string
+	var gotType, gotTriggerPrice, gotAlgoType, gotReduceOnly string
 	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Fatalf("failed to parse form: %v", err)
 		}
 		gotType = r.FormValue("type")
-		gotStopPrice = r.FormValue("stopPrice")
+		gotTriggerPrice = r.FormValue("triggerPrice")
+		gotAlgoType = r.FormValue("algoType")
+		gotReduceOnly = r.FormValue("reduceOnly")
 		w.WriteHeader(http.StatusOK)
 		writeTestResponse(t, w, []byte(futuresStopMarketOrderJSON()))
 	})
@@ -355,8 +444,14 @@ func TestPlaceStopMarket(t *testing.T) {
 	if gotType != "STOP_MARKET" {
 		t.Errorf("type = %s, want STOP_MARKET", gotType)
 	}
-	if gotStopPrice != "41000" {
-		t.Errorf("stopPrice = %s, want 41000", gotStopPrice)
+	if gotTriggerPrice != "41000" {
+		t.Errorf("triggerPrice = %s, want 41000", gotTriggerPrice)
+	}
+	if gotAlgoType != "CONDITIONAL" {
+		t.Errorf("algoType = %s, want CONDITIONAL", gotAlgoType)
+	}
+	if gotReduceOnly != "true" {
+		t.Errorf("reduceOnly = %s, want true", gotReduceOnly)
 	}
 	if order.OrderID != 50003 {
 		t.Errorf("OrderID = %d, want 50003", order.OrderID)
@@ -370,13 +465,13 @@ func TestPlaceStopMarket(t *testing.T) {
 }
 
 func TestPlaceStopMarket_FormatsStopPriceToSymbolTick(t *testing.T) {
-	var gotQuantity, gotStopPrice string
+	var gotQuantity, gotTriggerPrice string
 	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Fatalf("failed to parse form: %v", err)
 		}
 		gotQuantity = r.FormValue("quantity")
-		gotStopPrice = r.FormValue("stopPrice")
+		gotTriggerPrice = r.FormValue("triggerPrice")
 		w.WriteHeader(http.StatusOK)
 		writeTestResponse(t, w, []byte(futuresStopMarketOrderJSON()))
 	})
@@ -389,19 +484,21 @@ func TestPlaceStopMarket_FormatsStopPriceToSymbolTick(t *testing.T) {
 	if gotQuantity != "0.08" {
 		t.Errorf("quantity = %s, want 0.08", gotQuantity)
 	}
-	if gotStopPrice != "609.5" {
-		t.Errorf("stopPrice = %s, want 609.5", gotStopPrice)
+	if gotTriggerPrice != "609.5" {
+		t.Errorf("triggerPrice = %s, want 609.5", gotTriggerPrice)
 	}
 }
 
 func TestPlaceTakeProfitMarket(t *testing.T) {
-	var gotType, gotStopPrice string
+	var gotType, gotTriggerPrice, gotAlgoType, gotReduceOnly string
 	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Fatalf("failed to parse form: %v", err)
 		}
 		gotType = r.FormValue("type")
-		gotStopPrice = r.FormValue("stopPrice")
+		gotTriggerPrice = r.FormValue("triggerPrice")
+		gotAlgoType = r.FormValue("algoType")
+		gotReduceOnly = r.FormValue("reduceOnly")
 		w.WriteHeader(http.StatusOK)
 		writeTestResponse(t, w, []byte(futuresTakeProfitMarketJSON()))
 	})
@@ -414,8 +511,14 @@ func TestPlaceTakeProfitMarket(t *testing.T) {
 	if gotType != "TAKE_PROFIT_MARKET" {
 		t.Errorf("type = %s, want TAKE_PROFIT_MARKET", gotType)
 	}
-	if gotStopPrice != "45000" {
-		t.Errorf("stopPrice = %s, want 45000", gotStopPrice)
+	if gotTriggerPrice != "45000" {
+		t.Errorf("triggerPrice = %s, want 45000", gotTriggerPrice)
+	}
+	if gotAlgoType != "CONDITIONAL" {
+		t.Errorf("algoType = %s, want CONDITIONAL", gotAlgoType)
+	}
+	if gotReduceOnly != "true" {
+		t.Errorf("reduceOnly = %s, want true", gotReduceOnly)
 	}
 	if order.OrderID != 50004 {
 		t.Errorf("OrderID = %d, want 50004", order.OrderID)
@@ -447,6 +550,32 @@ func TestFuturesCancelOrder(t *testing.T) {
 	}
 	if gotOrderID != "50001" {
 		t.Errorf("orderId = %s, want 50001", gotOrderID)
+	}
+}
+
+func TestFuturesCancelOrder_FallsBackToAlgoOrder(t *testing.T) {
+	var gotAlgoID string
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/fapi/v1/order":
+			w.WriteHeader(http.StatusBadRequest)
+			writeTestResponse(t, w, []byte(`{"code":-2013,"msg":"Order does not exist."}`))
+		case "/fapi/v1/algoOrder":
+			gotAlgoID = r.URL.Query().Get("algoId")
+			w.WriteHeader(http.StatusOK)
+			writeTestResponse(t, w, []byte(`{"algoId":50003,"code":"200","msg":"success"}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	})
+	defer server.Close()
+
+	err := client.CancelOrder(context.Background(), "BTC/USDT", 50003, "key", "secret")
+	if err != nil {
+		t.Fatalf("CancelOrder() error: %v", err)
+	}
+	if gotAlgoID != "50003" {
+		t.Errorf("algoId = %s, want 50003", gotAlgoID)
 	}
 }
 
@@ -488,6 +617,52 @@ func TestFuturesGetOrder(t *testing.T) {
 	}
 	if order.Symbol != "BTCUSDT" {
 		t.Errorf("Symbol = %s, want BTCUSDT", order.Symbol)
+	}
+}
+
+func TestFuturesGetOrder_FallsBackToAlgoOrder(t *testing.T) {
+	var gotAlgoID string
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/fapi/v1/order":
+			w.WriteHeader(http.StatusBadRequest)
+			writeTestResponse(t, w, []byte(`{"code":-2013,"msg":"Order does not exist."}`))
+		case "/fapi/v1/algoOrder":
+			gotAlgoID = r.URL.Query().Get("algoId")
+			w.WriteHeader(http.StatusOK)
+			writeTestResponse(t, w, []byte(`{
+				"algoId": 50003,
+				"clientAlgoId": "sm_1",
+				"algoType": "CONDITIONAL",
+				"orderType": "STOP_MARKET",
+				"symbol": "BTCUSDT",
+				"side": "SELL",
+				"quantity": "0.010",
+				"algoStatus": "TRIGGERED",
+				"actualOrderId": "70001",
+				"actualQty": "0.010",
+				"actualPrice": "41000.00",
+				"triggerPrice": "41000.00",
+				"updateTime": 1704067200000
+			}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	})
+	defer server.Close()
+
+	order, err := client.GetOrder(context.Background(), "BTC/USDT", 50003, "key", "secret")
+	if err != nil {
+		t.Fatalf("GetOrder() error: %v", err)
+	}
+	if gotAlgoID != "50003" {
+		t.Errorf("algoId = %s, want 50003", gotAlgoID)
+	}
+	if order.Status != exchange.OrderStatusFilled {
+		t.Errorf("Status = %s, want FILLED", order.Status)
+	}
+	if order.AvgPrice != 41000 || order.ExecutedQty != 0.01 {
+		t.Errorf("fill = (%v,%v), want (41000,0.01)", order.AvgPrice, order.ExecutedQty)
 	}
 }
 

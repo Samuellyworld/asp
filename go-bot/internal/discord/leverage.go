@@ -132,8 +132,11 @@ func (h *Handler) componentLeverageSelection(ctx context.Context, interaction *I
 				h.updateMessage(interaction, "live futures execution failed: no available USDT futures balance.", nil, nil)
 				return
 			}
-			if margin > balance {
-				margin = balance
+			margin = leverage.CapMarginToAvailableBalance(margin, balance)
+			if margin <= 0 {
+				h.trading.OppManager.FailExecution(oppID, userID)
+				h.updateMessage(interaction, "live futures execution failed: no usable USDT futures balance after exchange buffer.", nil, nil)
+				return
 			}
 		}
 

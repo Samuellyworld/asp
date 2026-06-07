@@ -79,6 +79,26 @@ type futuresOrderResponse struct {
 	UpdateTime    int64  `json:"updateTime"`
 }
 
+type futuresAlgoOrderResponse struct {
+	AlgoID        int64  `json:"algoId"`
+	ClientAlgoID  string `json:"clientAlgoId"`
+	AlgoType      string `json:"algoType"`
+	OrderType     string `json:"orderType"`
+	Symbol        string `json:"symbol"`
+	Side          string `json:"side"`
+	PositionSide  string `json:"positionSide"`
+	Quantity      string `json:"quantity"`
+	AlgoStatus    string `json:"algoStatus"`
+	ActualOrderID string `json:"actualOrderId"`
+	ActualPrice   string `json:"actualPrice"`
+	ActualQty     string `json:"actualQty"`
+	TriggerPrice  string `json:"triggerPrice"`
+	Price         string `json:"price"`
+	CreateTime    int64  `json:"createTime"`
+	UpdateTime    int64  `json:"updateTime"`
+	TriggerTime   int64  `json:"triggerTime"`
+}
+
 func (r *futuresOrderResponse) toFuturesOrder() *FuturesOrder {
 	price, _ := strconv.ParseFloat(r.Price, 64)
 	stopPrice, _ := strconv.ParseFloat(r.StopPrice, 64)
@@ -103,6 +123,51 @@ func (r *futuresOrderResponse) toFuturesOrder() *FuturesOrder {
 		Quantity:      origQty,
 		ExecutedQty:   execQty,
 		AvgPrice:      avgPrice,
+		CreatedAt:     createdAt,
+	}
+}
+
+func (r *futuresAlgoOrderResponse) toFuturesOrder() *FuturesOrder {
+	price, _ := strconv.ParseFloat(r.Price, 64)
+	stopPrice, _ := strconv.ParseFloat(r.TriggerPrice, 64)
+	quantity, _ := strconv.ParseFloat(r.Quantity, 64)
+	actualQty, _ := strconv.ParseFloat(r.ActualQty, 64)
+	actualPrice, _ := strconv.ParseFloat(r.ActualPrice, 64)
+
+	status := exchange.OrderStatus(r.AlgoStatus)
+	switch r.AlgoStatus {
+	case "NEW":
+		status = exchange.OrderStatusNew
+	case "CANCELED":
+		status = exchange.OrderStatusCanceled
+	case "EXPIRED":
+		status = exchange.OrderStatusExpired
+	case "REJECTED":
+		status = exchange.OrderStatusRejected
+	}
+	if r.ActualOrderID != "" && actualQty > 0 {
+		status = exchange.OrderStatusFilled
+	}
+
+	var createdAt time.Time
+	if r.UpdateTime > 0 {
+		createdAt = time.UnixMilli(r.UpdateTime)
+	} else if r.CreateTime > 0 {
+		createdAt = time.UnixMilli(r.CreateTime)
+	}
+
+	return &FuturesOrder{
+		OrderID:       r.AlgoID,
+		ClientOrderID: r.ClientAlgoID,
+		Symbol:        r.Symbol,
+		Side:          exchange.OrderSide(r.Side),
+		Type:          r.OrderType,
+		Status:        status,
+		Price:         price,
+		StopPrice:     stopPrice,
+		Quantity:      quantity,
+		ExecutedQty:   actualQty,
+		AvgPrice:      actualPrice,
 		CreatedAt:     createdAt,
 	}
 }

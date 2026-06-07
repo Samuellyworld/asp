@@ -107,3 +107,25 @@ func TestMarginForPositionSize(t *testing.T) {
 		t.Fatalf("margin = %v, want 10", margin)
 	}
 }
+
+func TestCapMarginToAvailableBalance(t *testing.T) {
+	tests := []struct {
+		name    string
+		margin  float64
+		balance float64
+		want    float64
+	}{
+		{name: "below buffer", margin: 50, balance: 100, want: 50},
+		{name: "above buffer", margin: 100, balance: 100, want: 95},
+		{name: "zero balance leaves margin", margin: 10, balance: 0, want: 10},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CapMarginToAvailableBalance(tt.margin, tt.balance)
+			if got != tt.want {
+				t.Fatalf("CapMarginToAvailableBalance() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

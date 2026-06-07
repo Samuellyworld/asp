@@ -26,7 +26,7 @@ type SafetyConfig struct {
 	HardMaxLeverage        int     // absolute maximum leverage allowed
 	UserMaxLeverage        int     // user's configured maximum
 	MaxMarginPerTrade      float64 // max margin per position in usd
-	MinLiquidationDistance  float64 // minimum liquidation distance % at entry (e.g. 10)
+	MinLiquidationDistance float64 // minimum liquidation distance % at entry (e.g. 10)
 	RequireLeverageEnabled bool    // user must opt in to leverage
 }
 
@@ -62,7 +62,7 @@ func DefaultSafetyConfig() SafetyConfig {
 		HardMaxLeverage:        20,
 		UserMaxLeverage:        10,
 		MaxMarginPerTrade:      500,
-		MinLiquidationDistance:  10,
+		MinLiquidationDistance: 10,
 		RequireLeverageEnabled: true,
 	}
 }
@@ -146,13 +146,14 @@ func (s *SafetyChecker) Check(userID int, symbol string, leverage int, margin fl
 				Message: fmt.Sprintf("failed to check balance: %v", err),
 			})
 		} else {
+			usableBalance := CapMarginToAvailableBalance(balance, balance)
 			check = CheckResult{
 				Name:    "balance",
-				Passed:  balance >= margin,
-				Message: fmt.Sprintf("balance $%.2f sufficient for $%.2f margin", balance, margin),
+				Passed:  usableBalance >= margin,
+				Message: fmt.Sprintf("usable balance $%.2f sufficient for $%.2f margin", usableBalance, margin),
 			}
 			if !check.Passed {
-				check.Message = fmt.Sprintf("insufficient balance $%.2f for $%.2f margin", balance, margin)
+				check.Message = fmt.Sprintf("insufficient balance: usable $%.2f for $%.2f margin", usableBalance, margin)
 			}
 			checks = append(checks, check)
 		}

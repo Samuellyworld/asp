@@ -8,6 +8,7 @@ pydantic>=2.5.0
 # data processing
 numpy>=1.26.0
 pandas>=2.1.0
+psycopg[binary]>=3.1.18
 
 # machine learning
 scikit-learn>=1.4.0

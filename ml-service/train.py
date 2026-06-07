@@ -6,6 +6,8 @@
 # trains a pytorch lstm to predict crypto price direction and magnitude
 
 # %% imports
+import argparse
+from collections import defaultdict
 import numpy as np
 import json
 import os
@@ -18,6 +20,12 @@ try:
 except ImportError:
     TORCH_AVAILABLE = False
     print("pytorch not installed - training requires: pip install torch")
+
+try:
+    import psycopg
+    PSYCOPG_AVAILABLE = True
+except ImportError:
+    PSYCOPG_AVAILABLE = False
 
 # %% generate synthetic training data (replace with real historical data)
 def generate_training_data(n_samples=5000, seq_length=30):
@@ -50,6 +58,59 @@ def generate_training_data(n_samples=5000, seq_length=30):
         })
 
     return data
+
+
+def db_connect_kwargs():
+    """returns postgres connection settings from compose-compatible env vars"""
+    return {
+        "host": os.getenv("DATABASE_HOST", "postgres"),
+        "port": int(os.getenv("DATABASE_PORT", "5432")),
+        "user": os.getenv("DATABASE_USER", "trading_bot"),
+        "password": os.getenv("DATABASE_PASSWORD", "trading_bot_secret"),
+        "dbname": os.getenv("DATABASE_NAME", "trading_bot"),
+    }
+
+
+def load_candles_from_db(interval="4h", symbols=None, min_candles=120, limit_per_symbol=5000):
+    """loads real OHLCV candles from the bot's candles table, grouped by symbol"""
+    if not PSYCOPG_AVAILABLE:
+        raise RuntimeError("psycopg is not installed; rebuild ml-service after updating requirements.txt")
+
+    params = [interval, limit_per_symbol]
+    symbol_filter = ""
+    if symbols:
+        symbol_filter = "AND symbol = ANY(%s)"
+        params.insert(1, symbols)
+
+    query = f"""
+        WITH ranked AS (
+            SELECT
+                time, symbol, open, high, low, close, volume,
+                row_number() OVER (PARTITION BY symbol ORDER BY time DESC) AS rn
+            FROM candles
+            WHERE interval = %s
+              {symbol_filter}
+        )
+        SELECT symbol, open, high, low, close, volume
+        FROM ranked
+        WHERE rn <= %s
+        ORDER BY symbol, time ASC
+    """
+
+    grouped = defaultdict(list)
+    with psycopg.connect(**db_connect_kwargs()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            for symbol, open_p, high, low, close, volume in cur.fetchall():
+                grouped[symbol].append({
+                    "open": float(open_p),
+                    "high": float(high),
+                    "low": float(low),
+                    "close": float(close),
+                    "volume": float(volume),
+                })
+
+    return {symbol: candles for symbol, candles in grouped.items() if len(candles) >= min_candles}
 
 
 # %% feature engineering
@@ -94,6 +155,40 @@ def create_sequences(features, closes, seq_length=30, pred_horizon=1):
     return np.array(X), np.array(y)
 
 
+def prepare_dataset(candles_by_symbol, seq_length=30, pred_horizon=1):
+    """engineers, normalizes, and sequences candle groups without crossing symbols"""
+    engineered = {}
+    all_features = []
+
+    for symbol, candles in candles_by_symbol.items():
+        features, closes = feature_engineer(candles)
+        engineered[symbol] = (features, closes)
+        all_features.append(features)
+
+    if not all_features:
+        raise ValueError("no candle groups available for training")
+
+    stacked = np.vstack(all_features)
+    mean = stacked.mean(axis=0)
+    std = stacked.std(axis=0)
+    std[std == 0] = 1
+
+    X_parts, y_parts = [], []
+    for features, closes in engineered.values():
+        normalized = (features - mean) / std
+        X_sym, y_sym = create_sequences(normalized, closes, seq_length, pred_horizon)
+        if len(X_sym) > 0:
+            X_parts.append(X_sym)
+            y_parts.append(y_sym)
+
+    if not X_parts:
+        raise ValueError("not enough candles to create training sequences")
+
+    X = np.concatenate(X_parts, axis=0)
+    y = np.concatenate(y_parts, axis=0)
+    return X, y, mean, std
+
+
 # %% train the model
 def train_model(X_train, y_train, X_val, y_val, epochs=50, batch_size=32, lr=0.001):
     """trains the lstm model"""
@@ -117,6 +212,7 @@ def train_model(X_train, y_train, X_val, y_val, epochs=50, batch_size=32, lr=0.0
     y_val_t = torch.FloatTensor(y_val)
 
     best_val_loss = float("inf")
+    best_state = None
     patience = 10
     patience_counter = 0
 
@@ -147,35 +243,59 @@ def train_model(X_train, y_train, X_val, y_val, epochs=50, batch_size=32, lr=0.0
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             patience_counter = 0
-            best_state = model.state_dict().copy()
+            best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
         else:
             patience_counter += 1
             if patience_counter >= patience:
                 print(f"early stopping at epoch {epoch + 1}")
                 break
 
-    model.load_state_dict(best_state)
+    if best_state is not None:
+        model.load_state_dict(best_state)
     return model
 
 
 # %% main training script
 def main():
-    print("generating training data...")
-    data = generate_training_data(n_samples=5000)
+    parser = argparse.ArgumentParser(description="Train the LSTM price model")
+    parser.add_argument("--source", choices=["db", "synthetic"], default=os.getenv("TRAIN_DATA_SOURCE", "db"))
+    parser.add_argument("--interval", default=os.getenv("TRAIN_INTERVAL", "4h"))
+    parser.add_argument("--symbols", default=os.getenv("TRAIN_SYMBOLS", ""))
+    parser.add_argument("--min-candles", type=int, default=int(os.getenv("TRAIN_MIN_CANDLES", "120")))
+    parser.add_argument("--limit-per-symbol", type=int, default=int(os.getenv("TRAIN_LIMIT_PER_SYMBOL", "5000")))
+    parser.add_argument("--epochs", type=int, default=int(os.getenv("TRAIN_EPOCHS", "50")))
+    parser.add_argument("--model-dir", default=os.getenv("MODEL_PATH", "models"))
+    args = parser.parse_args()
 
-    print("engineering features...")
-    features, closes = feature_engineer(data)
+    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
 
-    # normalize
-    mean = features.mean(axis=0)
-    std = features.std(axis=0)
-    std[std == 0] = 1
-    normalized = (features - mean) / std
+    if args.source == "db":
+        print(f"loading real candles from database interval={args.interval} symbols={symbols or 'all'}...")
+        candles_by_symbol = load_candles_from_db(
+            interval=args.interval,
+            symbols=symbols or None,
+            min_candles=args.min_candles,
+            limit_per_symbol=args.limit_per_symbol,
+        )
+        if not candles_by_symbol:
+            raise RuntimeError(
+                f"no candle groups with at least {args.min_candles} candles for interval {args.interval}; "
+                "wait for ingestion or run with --source synthetic"
+            )
+        total_candles = sum(len(c) for c in candles_by_symbol.values())
+        print(f"loaded {total_candles} real candles across {len(candles_by_symbol)} symbols")
+    else:
+        print("generating synthetic training data...")
+        candles_by_symbol = {"SYNTH/USDT": generate_training_data(n_samples=5000)}
 
-    print("creating sequences...")
-    X, y = create_sequences(normalized, closes)
+    print("engineering features and creating sequences...")
+    X, y, mean, std = prepare_dataset(candles_by_symbol)
 
     # train/val split (80/20)
+    rng = np.random.default_rng(42)
+    order = rng.permutation(len(X))
+    X = X[order]
+    y = y[order]
     split = int(len(X) * 0.8)
     X_train, X_val = X[:split], X[split:]
     y_train, y_val = y[:split], y[split:]
@@ -184,22 +304,24 @@ def main():
     print(f"validation set: {len(X_val)} samples")
 
     print("training model...")
-    model = train_model(X_train, y_train, X_val, y_val)
+    model = train_model(X_train, y_train, X_val, y_val, epochs=args.epochs)
 
     if model is not None:
         # save model and scaler params
-        os.makedirs("models", exist_ok=True)
-        torch.save(model.state_dict(), "models/lstm_price.pt")
+        os.makedirs(args.model_dir, exist_ok=True)
+        model_path = os.path.join(args.model_dir, "lstm_price.pt")
+        scaler_path = os.path.join(args.model_dir, "scaler_params.json")
+        torch.save(model.state_dict(), model_path)
 
         scaler_params = {
             "mean": mean.tolist(),
             "std": std.tolist(),
         }
-        with open("models/scaler_params.json", "w") as f:
+        with open(scaler_path, "w") as f:
             json.dump(scaler_params, f)
 
-        print("model saved to models/lstm_price.pt")
-        print("scaler params saved to models/scaler_params.json")
+        print(f"model saved to {model_path}")
+        print(f"scaler params saved to {scaler_path}")
 
         # evaluate
         model.eval()

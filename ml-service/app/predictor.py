@@ -66,7 +66,7 @@ class PricePredictor:
     """wraps the lstm model with feature engineering and inference"""
 
     def __init__(self, model_dir: str = "models"):
-        self.model_dir = model_dir
+        self.model_dir = os.getenv("MODEL_PATH", model_dir)
         self.model: Optional[LSTMModel] = None
         self.scaler_params: Optional[dict] = None
         self.sequence_length = 30

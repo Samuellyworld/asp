@@ -766,6 +766,26 @@ func TestLiveMode_RejectsBybitPrimaryExchange(t *testing.T) {
 	}
 }
 
+func TestLiveConfirmationText_EnablesLiveMode(t *testing.T) {
+	env := newTestEnv()
+	u := env.seedActivatedUser(12345)
+	env.userRepo.credentials[u.ID].Exchange = "binance"
+	confirm := livetrading.NewConfirmationManager()
+	env.handler.SetTradingDeps(&TradingDeps{
+		Confirm:      confirm,
+		SafetyConfig: livetrading.DefaultSafetyConfig(),
+	})
+
+	env.handler.HandleUpdate(context.Background(), makeUpdate(12345, 100, livetrading.DefaultConfirmPhrase))
+
+	if !confirm.IsConfirmed(u.ID) {
+		t.Fatal("expected standalone live confirmation phrase to confirm user")
+	}
+	if !strings.Contains(env.bot.lastMessage(), "Live mode ON") {
+		t.Fatalf("expected live mode confirmation, got: %s", env.bot.lastMessage())
+	}
+}
+
 // --- /watchlist tests ---
 
 func TestWatchlist_Empty(t *testing.T) {

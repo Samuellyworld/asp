@@ -24,7 +24,7 @@ $$ LANGUAGE plpgsql;
 INSERT INTO watchlists (user_id, symbol, priority, is_active)
 SELECT id, 'ZEC/USDT', 11, TRUE
 FROM users
-WHERE is_active = TRUE
+WHERE is_activated = TRUE
 ON CONFLICT (user_id, symbol) DO UPDATE SET
     is_active = TRUE,
     priority = EXCLUDED.priority;

@@ -358,18 +358,19 @@ func runBot(cmd *cobra.Command, args []string) error {
 		MinLiquidationDistance: cfg.Leverage.LiquidationWarningPct,
 		RequireLeverageEnabled: true,
 	}
-	levSafetyChecker := leverage.NewSafetyChecker(levSafetyConfig, levBalanceProvider, levStatusProvider)
+	levLiveSafetyChecker := leverage.NewSafetyChecker(levSafetyConfig, levBalanceProvider, levStatusProvider)
+	levPaperSafetyChecker := leverage.NewSafetyChecker(levSafetyConfig, nil, levStatusProvider)
 
 	// funding tracker
 	fundingTracker := leverage.NewFundingTracker()
 
 	// paper leverage executor
-	levPaperExecutor := leverage.NewPaperExecutor(prices, levSafetyChecker, fundingTracker)
+	levPaperExecutor := leverage.NewPaperExecutor(prices, levPaperSafetyChecker, fundingTracker)
 	levPaperExecutor.SetStore(&leveragePositionStoreAdapter{repo: posRepo})
 	levPaperExecutor.SetTradeLogger(&leverageTradeLoggerAdapter{trades: tradeRepo, daily: dailyStatsRepo})
 
 	// live leverage executor
-	levLiveExecutor := leverage.NewLiveExecutor(futuresClient, keyDecryptor, levSafetyChecker, fundingTracker, markPrices)
+	levLiveExecutor := leverage.NewLiveExecutor(futuresClient, keyDecryptor, levLiveSafetyChecker, fundingTracker, markPrices)
 	levLiveExecutor.SetStore(&liveLeveragePositionStoreAdapter{repo: posRepo})
 	levLiveExecutor.SetTradeLogger(&leverageTradeLoggerAdapter{trades: tradeRepo, daily: dailyStatsRepo})
 	levLiveExecutor.SetAlerter(opsAlerts)
@@ -493,17 +494,18 @@ func runBot(cmd *cobra.Command, args []string) error {
 		discordHandler.SetExchangeRegistry(exchangeRegistry)
 
 		discordHandler.SetTradingDeps(&discord.TradingDeps{
-			OppManager:       oppManager,
-			PaperExecutor:    paperExecutor,
-			PaperMonitor:     paperMonitor,
-			LiveExecutor:     liveExecutor,
-			LiveMonitor:      liveMonitor,
-			Emergency:        emergencyStop,
-			Confirm:          confirmMgr,
-			SafetyConfig:     safetyConfig,
-			LevPaperExecutor: levPaperExecutor,
-			LevLiveExecutor:  levLiveExecutor,
-			LevMonitor:       levLiveMonitor,
+			OppManager:             oppManager,
+			PaperExecutor:          paperExecutor,
+			PaperMonitor:           paperMonitor,
+			LiveExecutor:           liveExecutor,
+			LiveMonitor:            liveMonitor,
+			Emergency:              emergencyStop,
+			Confirm:                confirmMgr,
+			SafetyConfig:           safetyConfig,
+			LevPaperExecutor:       levPaperExecutor,
+			LevLiveExecutor:        levLiveExecutor,
+			LevMonitor:             levLiveMonitor,
+			FuturesBalanceProvider: levBalanceProvider,
 		})
 
 		// register all slash commands (base + trading)

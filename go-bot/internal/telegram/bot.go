@@ -105,7 +105,7 @@ func (b *Bot) sendSingleMessage(chatID int64, text string) error {
 	if err != nil {
 		return fmt.Errorf("failed to send message: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusBadRequest {
 		body, _ := io.ReadAll(resp.Body)
@@ -116,7 +116,7 @@ func (b *Bot) sendSingleMessage(chatID int64, text string) error {
 			if err2 != nil {
 				return fmt.Errorf("failed to send plain message: %w", err2)
 			}
-			defer resp2.Body.Close()
+			defer func() { _ = resp2.Body.Close() }()
 			if resp2.StatusCode != http.StatusOK {
 				body2, _ := io.ReadAll(resp2.Body)
 				return fmt.Errorf("telegram api error (status %d): %s", resp2.StatusCode, string(body2))
@@ -155,7 +155,7 @@ func (b *Bot) SendMessageWithKeyboard(chatID int64, text string, keyboard *Inlin
 	if err != nil {
 		return fmt.Errorf("failed to send message with keyboard: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusBadRequest {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -169,7 +169,7 @@ func (b *Bot) SendMessageWithKeyboard(chatID int64, text string, keyboard *Inlin
 			if err2 != nil {
 				return fmt.Errorf("failed to send plain message with keyboard: %w", err2)
 			}
-			defer resp2.Body.Close()
+			defer func() { _ = resp2.Body.Close() }()
 			if resp2.StatusCode != http.StatusOK {
 				respBody2, _ := io.ReadAll(resp2.Body)
 				return fmt.Errorf("telegram api error (status %d): %s", resp2.StatusCode, string(respBody2))
@@ -254,7 +254,7 @@ func (b *Bot) EditMessageText(chatID int64, messageID int, text string, keyboard
 	if err != nil {
 		return fmt.Errorf("failed to edit message: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -284,7 +284,7 @@ func (b *Bot) AnswerCallbackQuery(queryID string, text string) error {
 	if err != nil {
 		return fmt.Errorf("failed to answer callback query: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	return nil
 }
@@ -301,7 +301,7 @@ func (b *Bot) DeleteMessage(chatID int64, messageID int) error {
 	if err != nil {
 		return fmt.Errorf("failed to delete message: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	return nil
 }
@@ -314,7 +314,7 @@ func (b *Bot) GetUpdates(offset int, timeout int) ([]Update, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get updates: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

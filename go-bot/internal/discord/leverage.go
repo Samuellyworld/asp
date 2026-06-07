@@ -113,8 +113,13 @@ func (h *Handler) componentLeverageSelection(ctx context.Context, interaction *I
 	}
 
 	positionSide := leverage.PositionSide(side)
-	if h.trading.Confirm != nil && h.trading.Confirm.IsConfirmed(userID) && h.trading.LevLiveExecutor != nil {
-		margin := plan.PositionSize
+	if h.isLiveEnabled(ctx, userID) && h.trading.LevLiveExecutor != nil {
+		margin, err := leverage.MarginForPositionSize(plan.PositionSize, lev)
+		if err != nil {
+			h.trading.OppManager.FailExecution(oppID, userID)
+			h.updateMessage(interaction, fmt.Sprintf("leverage execution failed: %v", err), nil, nil)
+			return
+		}
 		if h.trading.FuturesBalanceProvider != nil {
 			balance, err := h.trading.FuturesBalanceProvider.GetFuturesBalance(ctx, userID, "USDT")
 			if err != nil {
@@ -151,20 +156,27 @@ func (h *Handler) componentLeverageSelection(ctx context.Context, interaction *I
 		}
 		h.trading.OppManager.CompleteExecution(oppID, userID)
 		h.updateMessage(interaction, opportunity.FormatApprovedMessage(opp)+opportunity.FormatLeverageSelected(opp), nil, nil)
-		if margin < plan.PositionSize {
-			_ = h.bot.SendMessage(interaction.ChannelID, fmt.Sprintf("Position margin capped to available futures balance: $%.2f (AI suggested $%.2f).", margin, plan.PositionSize))
+		plannedMargin := plan.PositionSize / float64(lev)
+		if margin < plannedMargin {
+			_ = h.bot.SendMessage(interaction.ChannelID, fmt.Sprintf("Position margin capped to available futures balance: $%.2f (AI suggested $%.2f margin).", margin, plannedMargin))
 		}
 		_ = h.bot.SendMessage(interaction.ChannelID, leverage.FormatLeverageOpened(pos))
 		return
 	}
 
 	if h.trading.LevPaperExecutor != nil {
+		margin, err := leverage.MarginForPositionSize(plan.PositionSize, lev)
+		if err != nil {
+			h.trading.OppManager.FailExecution(oppID, userID)
+			h.updateMessage(interaction, fmt.Sprintf("leverage execution failed: %v", err), nil, nil)
+			return
+		}
 		pos, err := h.trading.LevPaperExecutor.OpenPosition(
 			userID,
 			opp.Symbol,
 			positionSide,
 			lev,
-			plan.PositionSize,
+			margin,
 			plan.StopLoss,
 			plan.TakeProfit,
 			"discord",

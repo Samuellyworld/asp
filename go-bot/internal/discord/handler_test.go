@@ -235,6 +235,14 @@ func (m *mockUserRepo) ListActive(_ context.Context) ([]*user.User, error) {
 	return nil, nil
 }
 
+func (m *mockUserRepo) SetLiveEnabled(_ context.Context, _ int, _ bool) error {
+	return nil
+}
+
+func (m *mockUserRepo) IsLiveEnabled(_ context.Context, _ int) (bool, error) {
+	return false, nil
+}
+
 func (m *mockUserRepo) SetLeverageEnabled(_ context.Context, _ int, _ bool) error {
 	return nil
 }

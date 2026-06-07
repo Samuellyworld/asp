@@ -49,3 +49,20 @@ jobs:
             fi
 
             ./scripts/deploy.sh
+
+            set -a
+            source .env
+            set +a
+
+            echo "--- Training ML model from database candles ---"
+            docker compose run --rm ml-service python train.py \
+              --source db \
+              --interval "${TRAIN_INTERVAL:-4h}" \
+              --symbols "${TRAIN_SYMBOLS:-}" \
+              --min-candles "${TRAIN_MIN_CANDLES:-120}" \
+              --limit-per-symbol "${TRAIN_LIMIT_PER_SYMBOL:-5000}" \
+              --epochs "${TRAIN_EPOCHS:-50}" \
+              --model-dir /app/models
+
+            echo "--- Restarting ML service with trained model ---"
+            docker compose restart ml-service

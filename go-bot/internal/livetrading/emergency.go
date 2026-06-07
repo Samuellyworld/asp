@@ -82,7 +82,13 @@ func (c *ConfirmationManager) Confirm(userID int, input string) bool {
 	if input != c.phrase {
 		return false
 	}
+	c.SetConfirmed(userID)
+	return true
+}
 
+// marks a user as confirmed without checking phrase input.
+// Used to restore persisted live-mode acknowledgement into runtime memory.
+func (c *ConfirmationManager) SetConfirmed(userID int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -91,7 +97,6 @@ func (c *ConfirmationManager) Confirm(userID int, input string) bool {
 		Confirmed:   true,
 		ConfirmedAt: time.Now(),
 	}
-	return true
 }
 
 // checks whether a user has confirmed risk acknowledgment

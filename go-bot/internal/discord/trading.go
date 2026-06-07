@@ -242,7 +242,7 @@ func (h *Handler) handleLiveMode(ctx context.Context, interaction *Interaction) 
 
 	input := getOption(interaction, "confirmation")
 	if input == "" {
-		if h.trading.Confirm.IsConfirmed(userID) {
+		if h.isLiveEnabled(ctx, userID) {
 			h.respondEphemeral(interaction, "live trading is already enabled.")
 		} else {
 			h.respondEphemeral(interaction, livetrading.FormatConfirmPrompt(h.trading.SafetyConfig))
@@ -251,10 +251,29 @@ func (h *Handler) handleLiveMode(ctx context.Context, interaction *Interaction) 
 	}
 
 	if h.trading.Confirm.Confirm(userID, input) {
+		if err := h.userSvc.EnableLive(ctx, userID); err != nil {
+			h.trading.Confirm.Revoke(userID)
+			h.respondEphemeral(interaction, fmt.Sprintf("failed to save live mode: %v", err))
+			return
+		}
 		h.respond(interaction, livetrading.FormatConfirmSuccess(h.trading.SafetyConfig), nil, nil)
 	} else {
 		h.respondEphemeral(interaction, fmt.Sprintf("incorrect phrase. type exactly: %s", h.trading.Confirm.Phrase()))
 	}
+}
+
+func (h *Handler) isLiveEnabled(ctx context.Context, userID int) bool {
+	if h.trading != nil && h.trading.Confirm != nil && h.trading.Confirm.IsConfirmed(userID) {
+		return true
+	}
+	enabled, err := h.userSvc.IsLiveEnabled(ctx, userID)
+	if err != nil || !enabled {
+		return false
+	}
+	if h.trading != nil && h.trading.Confirm != nil {
+		h.trading.Confirm.SetConfirmed(userID)
+	}
+	return true
 }
 
 // closes all live positions
@@ -270,7 +289,60 @@ func (h *Handler) handleEmergencyStop(ctx context.Context, interaction *Interact
 	}
 
 	closed, errors := h.trading.Emergency.Execute(userID)
-	h.respond(interaction, livetrading.FormatEmergencyStop(userID, closed, errors), nil, nil)
+	levClosed, levErrors := h.closeLiveLeveragePositions(userID)
+	if h.trading.Confirm != nil {
+		h.trading.Confirm.Revoke(userID)
+	}
+	msg := livetrading.FormatEmergencyStop(userID, closed, errors)
+	msg += formatLeverageEmergencyStop(levClosed, levErrors)
+	if err := h.userSvc.DisableLive(ctx, userID); err != nil {
+		msg += fmt.Sprintf("\n\nfailed to disable live mode after emergency stop: %v", err)
+	}
+	if err := h.userSvc.DisableLeverage(ctx, userID); err != nil {
+		msg += fmt.Sprintf("\n\nfailed to disable leverage mode after emergency stop: %v", err)
+	}
+	h.respond(interaction, msg, nil, nil)
+}
+
+func (h *Handler) closeLiveLeveragePositions(userID int) ([]*leverage.LeveragePosition, []error) {
+	if h.trading == nil || h.trading.LevLiveExecutor == nil {
+		return nil, nil
+	}
+
+	positions := h.trading.LevLiveExecutor.OpenPositions(userID)
+	var closed []*leverage.LeveragePosition
+	var errors []error
+	for _, pos := range positions {
+		p, err := h.trading.LevLiveExecutor.Close(pos.ID, "emergency_stop")
+		if err != nil {
+			errors = append(errors, fmt.Errorf("failed to close futures %s (%s): %w", pos.ID, pos.Symbol, err))
+			continue
+		}
+		closed = append(closed, p)
+	}
+	return closed, errors
+}
+
+func formatLeverageEmergencyStop(closed []*leverage.LeveragePosition, errors []error) string {
+	if len(closed) == 0 && len(errors) == 0 {
+		return "\n\nFutures positions: none"
+	}
+
+	var b strings.Builder
+	b.WriteString("\n\nFutures Emergency Stop")
+	if len(closed) > 0 {
+		fmt.Fprintf(&b, "\nClosed: %d", len(closed))
+		for _, pos := range closed {
+			fmt.Fprintf(&b, "\n• %s %s PnL: $%.2f", pos.Symbol, pos.Side, pos.PnL)
+		}
+	}
+	if len(errors) > 0 {
+		fmt.Fprintf(&b, "\nErrors: %d", len(errors))
+		for _, err := range errors {
+			fmt.Fprintf(&b, "\n• %v", err)
+		}
+	}
+	return b.String()
 }
 
 // shows scanner status
@@ -303,7 +375,7 @@ func (h *Handler) componentOppApprove(ctx context.Context, interaction *Interact
 	}
 
 	// route to live or paper executor
-	if h.trading.Confirm != nil && h.trading.Confirm.IsConfirmed(userID) && h.trading.LiveExecutor != nil {
+	if h.isLiveEnabled(ctx, userID) && h.trading.LiveExecutor != nil {
 		pos, err := h.trading.LiveExecutor.Execute(opp)
 		if err != nil {
 			if !strings.Contains(err.Error(), "CRITICAL") {

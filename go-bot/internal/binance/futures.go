@@ -35,9 +35,11 @@ type FuturesClient struct {
 }
 
 type futuresSymbolFilter struct {
-	QuantityStep float64
-	PriceTick    float64
-	MinQuantity  float64
+	QuantityStep      float64
+	QuantityPrecision int
+	PriceTick         float64
+	PricePrecision    int
+	MinQuantity       float64
 }
 
 type futuresExchangeInfoResponse struct {
@@ -113,10 +115,18 @@ func (c *FuturesClient) PlaceOrder(ctx context.Context, symbol string, side exch
 	params.Set("symbol", toBinanceSymbol(symbol))
 	params.Set("side", string(side))
 	params.Set("type", string(orderType))
-	params.Set("quantity", formatFloat(quantity))
+	if hasFilter {
+		params.Set("quantity", formatFloatWithMaxPrecision(quantity, filter.QuantityPrecision))
+	} else {
+		params.Set("quantity", formatFloat(quantity))
+	}
 
 	if orderType == exchange.OrderTypeLimit {
-		params.Set("price", formatFloat(price))
+		if hasFilter {
+			params.Set("price", formatFloatWithMaxPrecision(price, filter.PricePrecision))
+		} else {
+			params.Set("price", formatFloat(price))
+		}
 		params.Set("timeInForce", "GTC")
 	}
 
@@ -138,8 +148,13 @@ func (c *FuturesClient) PlaceStopMarket(ctx context.Context, symbol string, side
 	params.Set("symbol", toBinanceSymbol(symbol))
 	params.Set("side", string(side))
 	params.Set("type", "STOP_MARKET")
-	params.Set("quantity", formatFloat(quantity))
-	params.Set("stopPrice", formatFloat(stopPrice))
+	if hasFilter {
+		params.Set("quantity", formatFloatWithMaxPrecision(quantity, filter.QuantityPrecision))
+		params.Set("stopPrice", formatFloatWithMaxPrecision(stopPrice, filter.PricePrecision))
+	} else {
+		params.Set("quantity", formatFloat(quantity))
+		params.Set("stopPrice", formatFloat(stopPrice))
+	}
 
 	return c.postFuturesOrder(ctx, params, apiKey, apiSecret)
 }
@@ -159,8 +174,13 @@ func (c *FuturesClient) PlaceTakeProfitMarket(ctx context.Context, symbol string
 	params.Set("symbol", toBinanceSymbol(symbol))
 	params.Set("side", string(side))
 	params.Set("type", "TAKE_PROFIT_MARKET")
-	params.Set("quantity", formatFloat(quantity))
-	params.Set("stopPrice", formatFloat(stopPrice))
+	if hasFilter {
+		params.Set("quantity", formatFloatWithMaxPrecision(quantity, filter.QuantityPrecision))
+		params.Set("stopPrice", formatFloatWithMaxPrecision(stopPrice, filter.PricePrecision))
+	} else {
+		params.Set("quantity", formatFloat(quantity))
+		params.Set("stopPrice", formatFloat(stopPrice))
+	}
 
 	return c.postFuturesOrder(ctx, params, apiKey, apiSecret)
 }
@@ -300,9 +320,11 @@ func (c *FuturesClient) getSymbolFilter(ctx context.Context, symbol string) (fut
 			switch f.FilterType {
 			case "LOT_SIZE":
 				parsed.QuantityStep, _ = strconv.ParseFloat(f.StepSize, 64)
+				parsed.QuantityPrecision = stepPrecision(f.StepSize)
 				parsed.MinQuantity, _ = strconv.ParseFloat(f.MinQty, 64)
 			case "PRICE_FILTER":
 				parsed.PriceTick, _ = strconv.ParseFloat(f.TickSize, 64)
+				parsed.PricePrecision = stepPrecision(f.TickSize)
 			}
 		}
 		if parsed.QuantityStep <= 0 && parsed.PriceTick <= 0 {
@@ -329,6 +351,30 @@ func roundToStep(value, step float64) float64 {
 		return value
 	}
 	return math.Round(value/step) * step
+}
+
+func stepPrecision(step string) int {
+	step = strings.TrimSpace(step)
+	if dot := strings.IndexByte(step, '.'); dot >= 0 {
+		frac := strings.TrimRight(step[dot+1:], "0")
+		return len(frac)
+	}
+	return 0
+}
+
+func formatFloatWithMaxPrecision(v float64, precision int) string {
+	if precision < 0 {
+		return formatFloat(v)
+	}
+	s := strconv.FormatFloat(v, 'f', precision, 64)
+	if strings.Contains(s, ".") {
+		s = strings.TrimRight(s, "0")
+		s = strings.TrimRight(s, ".")
+	}
+	if s == "-0" {
+		return "0"
+	}
+	return s
 }
 
 // posts a futures order and returns the parsed response

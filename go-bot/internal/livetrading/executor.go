@@ -747,6 +747,9 @@ func (e *Executor) finalizeClose(posID string, reason string, closePrice float64
 	if e.losses != nil && pos.PnL < 0 {
 		e.losses.RecordLoss(pos.UserID, pos.PnL)
 	}
+	if e.breaker != nil {
+		e.breaker.RecordTrade(pos.UserID, pos.PnL)
+	}
 
 	e.closed = append(e.closed, pos)
 	if len(e.closed) > 1000 {

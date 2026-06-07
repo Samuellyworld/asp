@@ -17,7 +17,7 @@ func newTestFuturesServer(t *testing.T, handler http.HandlerFunc) (*httptest.Ser
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/fapi/v1/exchangeInfo") {
 			w.WriteHeader(http.StatusOK)
-			writeTestResponse(t, w, []byte(`{"symbols":[{"symbol":"BTCUSDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.10"},{"filterType":"LOT_SIZE","minQty":"0.001","stepSize":"0.001"}]},{"symbol":"BNBUSDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.010"},{"filterType":"LOT_SIZE","minQty":"0.01","stepSize":"0.01"}]}]}`))
+			writeTestResponse(t, w, []byte(`{"symbols":[{"symbol":"BTCUSDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.10"},{"filterType":"LOT_SIZE","minQty":"0.001","stepSize":"0.001"}]},{"symbol":"BNBUSDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.010"},{"filterType":"LOT_SIZE","minQty":"0.01","stepSize":"0.01"}]},{"symbol":"XRPUSDT","filters":[{"filterType":"PRICE_FILTER","tickSize":"0.0001"},{"filterType":"LOT_SIZE","minQty":"0.1","stepSize":"0.1"}]}]}`))
 			return
 		}
 		handler(w, r)
@@ -280,6 +280,27 @@ func TestFuturesPlaceOrder_FormatsQuantityToSymbolStep(t *testing.T) {
 	}
 	if gotQuantity != "0.08" {
 		t.Errorf("quantity = %s, want 0.08", gotQuantity)
+	}
+}
+
+func TestFuturesPlaceOrder_FormatsQuantityWithoutFloatNoise(t *testing.T) {
+	var gotQuantity string
+	server, client := newTestFuturesServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("failed to parse form: %v", err)
+		}
+		gotQuantity = r.FormValue("quantity")
+		w.WriteHeader(http.StatusOK)
+		writeTestResponse(t, w, []byte(futuresMarketOrderJSON()))
+	})
+	defer server.Close()
+
+	_, err := client.PlaceOrder(context.Background(), "XRP/USDT", exchange.SideBuy, exchange.OrderTypeMarket, 126.66, 0, "key", "secret")
+	if err != nil {
+		t.Fatalf("PlaceOrder() error: %v", err)
+	}
+	if gotQuantity != "126.6" {
+		t.Errorf("quantity = %s, want 126.6", gotQuantity)
 	}
 }
 

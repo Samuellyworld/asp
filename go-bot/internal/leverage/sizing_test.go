@@ -97,3 +97,13 @@ func TestMarginCappedAtBalance(t *testing.T) {
 		}
 	}
 }
+
+func TestMarginForPositionSize(t *testing.T) {
+	margin, err := MarginForPositionSize(100, 10)
+	if err != nil {
+		t.Fatalf("MarginForPositionSize() error: %v", err)
+	}
+	if margin != 10 {
+		t.Fatalf("margin = %v, want 10", margin)
+	}
+}

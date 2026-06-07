@@ -560,6 +560,9 @@ func (e *LiveExecutor) finalizeClose(posID string, reason string, closePrice flo
 		e.closed = e.closed[len(e.closed)-1000:]
 	}
 	delete(e.positions, posID)
+	if e.breaker != nil {
+		e.breaker.RecordTrade(pos.UserID, pos.PnL)
+	}
 	e.mu.Unlock()
 
 	e.persistClosed(pos)

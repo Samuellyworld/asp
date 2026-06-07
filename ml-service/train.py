@@ -8,6 +8,7 @@
 # %% imports
 import argparse
 from collections import defaultdict
+import csv
 import numpy as np
 import json
 import os
@@ -113,6 +114,43 @@ def load_candles_from_db(interval="4h", symbols=None, min_candles=120, limit_per
                     "close": float(close),
                     "volume": float(volume),
                 })
+
+    return {symbol: candles for symbol, candles in grouped.items() if len(candles) >= min_candles}
+
+
+def load_candles_from_csv(path, symbols=None, min_candles=120):
+    """loads OHLCV candles from a CSV dataset, grouped by symbol.
+
+    Required columns: open, high, low, close, volume.
+    Optional columns: symbol, timestamp.
+    If symbol is omitted, all rows are grouped under DATASET/USDT.
+    """
+    wanted = set(symbols or [])
+    grouped = defaultdict(list)
+    default_symbol = "DATASET/USDT"
+
+    with open(path, newline="") as f:
+        reader = csv.DictReader(f)
+        required = {"open", "high", "low", "close", "volume"}
+        missing = required - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(f"dataset missing required columns: {', '.join(sorted(missing))}")
+
+        for row in reader:
+            symbol = (row.get("symbol") or default_symbol).strip()
+            if wanted and symbol not in wanted:
+                continue
+            grouped[symbol].append({
+                "timestamp": row.get("timestamp") or "",
+                "open": float(row["open"]),
+                "high": float(row["high"]),
+                "low": float(row["low"]),
+                "close": float(row["close"]),
+                "volume": float(row["volume"]),
+            })
+
+    for candles in grouped.values():
+        candles.sort(key=lambda c: c["timestamp"])
 
     return {symbol: candles for symbol, candles in grouped.items() if len(candles) >= min_candles}
 
@@ -302,7 +340,8 @@ def train_model(X_train, y_train, X_val, y_val, epochs=50, batch_size=32, lr=0.0
 # %% main training script
 def main():
     parser = argparse.ArgumentParser(description="Train the LSTM price model")
-    parser.add_argument("--source", choices=["db", "synthetic"], default=os.getenv("TRAIN_DATA_SOURCE", "db"))
+    parser.add_argument("--source", choices=["db", "csv", "synthetic"], default=os.getenv("TRAIN_DATA_SOURCE", "db"))
+    parser.add_argument("--dataset", default=os.getenv("TRAIN_DATASET", ""))
     parser.add_argument("--interval", default=os.getenv("TRAIN_INTERVAL", "4h"))
     parser.add_argument("--symbols", default=os.getenv("TRAIN_SYMBOLS", ""))
     parser.add_argument("--min-candles", type=int, default=int(os.getenv("TRAIN_MIN_CANDLES", "120")))
@@ -328,6 +367,21 @@ def main():
             )
         total_candles = sum(len(c) for c in candles_by_symbol.values())
         print(f"loaded {total_candles} real candles across {len(candles_by_symbol)} symbols")
+    elif args.source == "csv":
+        if not args.dataset:
+            raise RuntimeError("--dataset is required when --source csv")
+        print(f"loading candles from csv dataset={args.dataset} symbols={symbols or 'all'}...")
+        candles_by_symbol = load_candles_from_csv(
+            args.dataset,
+            symbols=symbols or None,
+            min_candles=args.min_candles,
+        )
+        if not candles_by_symbol:
+            raise RuntimeError(
+                f"no candle groups with at least {args.min_candles} candles in {args.dataset}"
+            )
+        total_candles = sum(len(c) for c in candles_by_symbol.values())
+        print(f"loaded {total_candles} csv candles across {len(candles_by_symbol)} symbols")
     else:
         print("generating synthetic training data...")
         candles_by_symbol = {"SYNTH/USDT": generate_training_data(n_samples=5000)}
